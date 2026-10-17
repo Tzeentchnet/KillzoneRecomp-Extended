@@ -1,5 +1,4 @@
 #include "kz_vu.h"
-#include "kz_crash.h"
 
 #include "kzvu.h"
 #include "kzvu0_capture.h"
@@ -533,7 +532,6 @@ namespace
 
 bool kzVuInstall(std::string *error)
 {
-    kzCrashTraceInstall(); // debugging aid (KZ_CRASH_TRACE=1), installed with the first host hooks
     const char *mode = std::getenv("KZ_VU");
     const char *mode0 = std::getenv("KZ_VU0");
     const bool vu1Builtin = mode && std::strcmp(mode, "builtin") == 0;

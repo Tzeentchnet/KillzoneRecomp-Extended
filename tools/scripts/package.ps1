@@ -2,11 +2,12 @@
 # Contains no game code or data: the player points the launcher at their own Killzone (USA) disc image; the small boot
 # files are extracted from it on first run into disc\.
 # Usage: package.ps1 [-Config RelWithDebInfo] [-WithPdb]
-param([string]$Config = "RelWithDebInfo", [switch]$WithPdb)
+param([string]$Config = "RelWithDebInfo", [switch]$WithPdb, [string]$Root = $env:KZ_ROOT, [string]$Destination)
+. "$PSScriptRoot\kz_paths.ps1"
 $ErrorActionPreference = 'Stop'
-$root = 'D:\KillzoneRecomp'
+$root = Resolve-KzRoot $Root
 $src = "$root\build\$Config"
-$dst = "$root\dist\Killzone"
+$dst = if ($Destination) { [IO.Path]::GetFullPath($Destination) } else { "$root\dist\Killzone" }
 
 if (-not (Test-Path "$src\killzone.exe")) { throw "build first: $src\killzone.exe missing" }
 # Update in place: replace the program files only. The player's data in the folder stays: killzone.ini (settings),

@@ -1335,3 +1335,168 @@ bursts (3.5, 3.5, 0, 0, 0, 3.4 ...) were first read as video. A fixed text regio
 - The exact trigger of the live-only blended frames (see above); the fix removes the code path rather than the trigger.
 - CAS frame-time cost; gameplay was verified by replay equality (0.0000 diff) rather than a fresh live gameplay burst after the fix.
 - Not edited (owned by others): the launcher's SMAA/Sharpening descriptions (`src/kz_launcher.cpp`).
+
+## VU-01 portable interpreter isolation (2026-10-17)
+
+### Existing portable path
+
+- PS2Recomp already contains a cycle-accurate `VU1Interpreter` used by the runtime for both VU1 and VU0. The game
+  selects it with `KZ_VU=builtin` and `KZ_VU0=interp`.
+- When both built-in modes are selected, `kzVuInstall` returns before `kzvuInit`; no PCSX2 microVU object, x86
+  emitter, or JIT code cache is compiled into the portable conformance target or initialized by that runtime path.
+- The previous `ext/kzvu` build could not serve as an ARM64 gate: its CMake file deliberately requires MSVC x64,
+  defines x86/SSE/AVX flags, and always compiles microVU even when `KzvuConfig::useJit` is false.
+
+### Isolation and corpus
+
+- `KZ_PORTABLE_VU_ONLY=ON` is now an early top-level CMake path. It configures `ext/kzvu/portable` without the
+  Windows preflight, private generated tree, SDL, renderers, or any PCSX2 microVU source.
+- The `kzvu_interpreter_core` target compiles only PS2Recomp's three VU interpreter translation units. Apple Silicon
+  uses the already locked sse2neon revision; `ext/PS2Recomp` remains clean at
+  `cc1fc7d87930b48d20abd52974d1be77368eb60a`.
+- `kzvu_interpreter_conformance` performs 28 deterministic checks across arithmetic, four-cycle FMAC flag
+  visibility, dependent-pipeline stalls, branch delay slots, masked LQ/SQ behavior, wrapping XGKICK packets,
+  generation-driven decoded-code invalidation, bounded execution/resume, E- and T-bit stops, reset, and reuse.
+- The standalone test glue now provides a real default-constructed `GS` object rather than binding a `GS&` to raw
+  byte storage. XGKICK still routes through the lightweight `PS2Memory` capture, so no renderer is linked.
+
+### Evidence and remaining gate
+
+- Fresh portable-only configure/build/test on Windows: pass; only seven compile/link steps, all inside the
+  interpreter target and conformance executable.
+- MSVC `kzvu_interpreter_conformance`: 28/28 checks passed.
+- clang-cl `kzvu_interpreter_conformance`: 28/28 checks passed.
+- Existing MSVC microVU/PCSX2/PS2Recomp differential test: passed.
+- Complete ISO-free suites after adding the gate: MSVC 10/10 and clang-cl 10/10.
+- Strict dependency verification: 28 passed, 0 warnings, 0 failures. Generated inventory and resume-table checks:
+  pass. `git diff --check`: pass.
+- **Not yet verified:** native AppleClang ARM64 configure, compile, and execution. VU-01 remains in progress, and
+  VU-02 must not begin, until `cmake --preset macos-arm64`, `cmake --build --preset macos-arm64`, and the prescribed
+  `ctest --preset macos-arm64 ...` command pass on Apple Silicon.
+
+## MAC-01 renderer-free host smoke implementation (2026-10-17)
+
+### Darwin host boundary
+
+- `host/src/core_macos.mm` replaces the generic unsupported backend on Apple hosts. It implements executable-path
+  discovery, UTF-8 paths, environment mutation, monotonic timing through the shared core, pthread naming, ARM64/NEON
+  feature reporting, and the ARM64 FPCR flush-to-zero mode used for guest execution.
+- Anonymous mappings use `mmap`/`mprotect`; instruction publication uses `sys_icache_invalidate`. The backend rejects
+  writable-and-executable mappings rather than weakening W^X. The host component test now publishes and executes a
+  two-instruction AArch64 function after a read-write to read-execute transition.
+- Cocoa metrics are isolated in Objective-C++ and accept only the opaque `NativeWindow::cocoa` handle. They require
+  the main thread and report backing-pixel dimensions plus the `NSWindow` backing scale. Crash reporting, stack
+  sampling, and statistical profiling remain explicit unsupported errors on macOS.
+
+### Isolated build and smoke corpus
+
+- `KZ_MACOS_PHASE0_ONLY=ON` configures only `kz_host_core`, the two SDL host smokes, and the portable VU interpreter.
+  It does not inspect the private generated tree or configure game code, PCSX2 microVU, or a renderer.
+- SDL is built from the locked `SDL3-3.4.16.tar.gz` source archive
+  (`sha256 7322236cd12090c3eb40b9728be4d49c76f66ad17d04369584d4ecad5cf77c68`), not an unpinned package-manager
+  installation. Strict dependency verification now covers both the Windows development archive and this source tree.
+- `kz_host_window_smoke` creates a hidden high-density SDL window, verifies the platform-native handle and drawable
+  metrics, delivers a registered user event through the SDL queue, and tears the window down.
+- `kz_host_audio_smoke` opens the default playback device, validates its negotiated format, resumes the stream,
+  observes and services the callback with silence, pauses it, and destroys the stream. Windows CTest uses SDL's dummy
+  audio driver for hermetic automation; macOS intentionally exercises the default CoreAudio path.
+
+### Evidence and remaining gate
+
+- Focused clang-cl host suite: 3/3 passed.
+- Complete ISO-free suites: MSVC 12/12 and clang-cl 12/12.
+- Strict dependency verification: 31 passed, 0 warnings, 0 failures. Generated inventory and resume-table checks:
+  pass. `git diff --check`: pass.
+- **Not yet verified:** configuration, compilation, Cocoa main-thread behavior, the CoreAudio callback, AArch64 code
+  publication, and teardown under native AppleClang on Apple Silicon. MAC-01 remains in progress and GS-01 remains
+  blocked until the prescribed native host-smoke command passes.
+
+## Boot dispatch restoration and renderer isolation (2026-10-17)
+
+### Why a known-working upstream still failed locally
+
+- The failure was not evidence that upstream PS2Recomp could not execute Killzone. The local private input corpus had
+  diverged from the executable control-flow surface expected by the recompiler.
+- The previous normalization reconstructed discontiguous Ghidra ranges from the exported start plus body size. That
+  omitted executable continuations, partial final MIPS instructions, terminal branch delay slots, shared entries, and
+  callbacks that Ghidra did not publish as function starts.
+- PS2Recomp uses the low bit of `ctx->pc` as `PS2_TAIL_MARK`. Allowing an odd normalized end can therefore decode to
+  the preceding aligned address and create a self-dispatch loop. Both starts and ends must remain four-byte aligned.
+- Schema-3 normalization now clamps discontiguous bodies, rounds partial instructions to complete MIPS words, and
+  includes terminal branch/call/return delay slots. The final map has 35,352 records: 4,269 clamped, 154
+  instruction-aligned, and 903 delay-slot-extended.
+- Raw Ghidra maximum bounds are not a safe substitute. Thousands of discontiguous bodies span unrelated code or data;
+  the schema-3 transformation preserves only instruction-level evidence around the exported body.
+
+### Fixed-point dispatch closure
+
+- Regeneration now treats both emitted tail targets and generated resume cases as executable evidence and closes them
+  to a fixed point. Generated resume PCs are not restricted to the ELF section named `.text`.
+- The first pass found 2,277 emitted tails and 7,419 resume targets. The second pass found 15 additional resume
+  targets. Closure converged with 9,681 unique generated entries after overlap.
+- The merged configuration has 4 explicit entries, 24,953 discovered entries, 36 locked hooks, and 9,681 generated
+  closure entries, for 34,666 configured entries.
+- The generated tree has 31,998 files, 31,996 translation units, 31,995 generated functions, 142 generated stubs,
+  132,656 dispatch entries, 100,661 dispatchable resume cases, and 20,528 resume owners. PS2Recomp reports 101,715
+  resumable entry points across 20,955 owner functions.
+- Registration is global and first-registration-wins. Overlapping wrappers can contain the same resume PC, so the
+  correct invariant is that every distinct generated resume PC is present somewhere in the global dispatch table.
+  Requiring every overlapping owner to receive the same address incorrectly reported 3,098 failures.
+- The original resume blocker at `0x004E9224` already had a valid generated switch case but lacked a global dispatch
+  entry. It is now registered to its generated owner, and the manifest verifier enforces the global invariant.
+
+### Callback and SIF boundaries
+
+- Materialized callbacks require narrow structural rules. Publishing every prologue, return, or in-text constant would
+  hide corrupted targets and admit embedded VU/data words.
+- Discovery now accepts materialized leaf returns, materialized stack-decrement prologues, and materialized targets at
+  an unambiguous post-return boundary (`jr $ra`, its mandatory delay slot, optional known padding, then the target).
+  Only 15 of 252 otherwise-unclassified materialized in-text values satisfy the post-return rule.
+- The stack-prologue rule recovered `0x002B4288`, `0x004888E8`, and callback `0x004BBF50`. The latter is materialized
+  at `0x003440D4..0x003440E0`, passed to a registration routine, and begins in a Ghidra range gap.
+- The post-return rule recovered the FilePS2 command handler at `0x0014B6A0`. Guest code materializes it at
+  `0x0014B804..0x0014B80C` and passes it to `sceSifAddCmdHandler` at `0x0014B810`.
+- `0x002B3158` has legitimate dual ownership: it is both the `sceSifInitRpc` entry and the delay-slot instruction of
+  the preceding return. It is an explicit configured entry and is rebound authoritatively after generated-table
+  initialization so first-registration-wins cannot leave a generated owner in the runtime hook slot.
+- The fixed hook manifest now contains 37 unique signatures. `sceSifInitRpc` uses a 20-byte signature because its
+  first 16 bytes also occur at `0x002B66F8`.
+
+### FilePS2 completion and ISO mounting
+
+- When both `--elf` and `--iso` are supplied, the boot path now extracts and mounts the disc files at `cdrom0:` rather
+  than leaving the explicit ELF's directory as the disc root. `PFILE_R.IRX` and the later boot modules are therefore
+  available to the guest while the ISO still backs raw sector reads.
+- The IOP completes FilePS2 RPC SID `0x66662012`, function `0x320`, and posts command ID 0 to the EE handler at
+  `0x0014B6A0`.
+- Threaded IOP delivery can conceal a missing EE callback. Posting reports success when it queues the command, and the
+  later EE-side drain discards the boolean returned by `dispatchSifCommand`. A missing handler therefore left the
+  guest completion counter unchanged without emitting the usual missing-target diagnostic.
+- With the callback dispatchable, boot advances through FilePS2 completion and all subsequent observed IOP module
+  loads. The current probes produce no missing-target diagnostic.
+
+### D3D11/D3D12 split
+
+- A 15-second timeline recorded 862 DMA1 kicks, 861 completed VIF/GIF jobs, and 845 GS presents. Longer D3D11 probes
+  reached DMA 3,699 and VIF 3,696, with active PATH1 traffic, thousands of VU1 XGKICK packets, and increasing
+  primitive counts.
+- GS state matches known-good Killzone behavior: `PMODE=0x8063`, `SMODE2=1`, and framebuffer bases alternate between
+  `0` and `0x70`. Guest execution and frame production are no longer stalled.
+- On an NVIDIA GeForce RTX 5070 with driver `32.0.16.1742`, D3D11 captures remain exactly all-zero pixels through
+  90 seconds despite that healthy guest and GS state.
+- The same executable, ELF, ISO, and guest state render correctly through D3D12. A persisted-config probe, with no
+  `KZ_RENDERER` override, selected D3D12 and captured advancing SCEA/legal intro frames at 4, 8, and 12 seconds.
+- The local MSVC configuration now persists `Renderer=d3d12`. D3D11 remains selectable; the launcher tells users to
+  try D3D12 when D3D11 presents a black frame. This is a working configuration and backend isolation, not a claim
+  that the D3D11 defect has been repaired.
+- `dev9: unknown dev9 hardware` and unhandled `cdvdman:78` remain nonfatal; neither prevents D3D12 rendering.
+
+### Final Windows evidence
+
+- A second regeneration converged to 31,998 files with **0 changed/new and 0 removed**.
+- Resume-table verification: 132,656 dispatch entries, 100,661 resume cases, 31,995 generated targets; pass.
+- Generated inventory and schema-3 provenance lock: pass, including all 37 unique fixed hook signatures.
+- Strict offline dependency and PS2Recomp patch reconstruction: 31 passed, 0 warnings, 0 failures.
+- Final MSVC ISO-free suite: 12/12 passed.
+- Final clang-cl ISO-free suite: 12/12 passed.
+- Persisted D3D12 12-second visual probe: exit code 0 and three nonblack, advancing captures.

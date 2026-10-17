@@ -10,7 +10,9 @@ list (only in a vblank); done = DONE_POST (VIF1 worker finished the list); prese
 push (GS_QUEUED, 1 = nothing waiting) and the time the producer waited for the GS thread (GS_THROTTLE).
 """
 import bisect, statistics, sys
-sys.path.insert(0, r'D:\KillzoneRecomp\tools\scripts')
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from tl_analyze import load, pct
 
 LIMITER = 1834768

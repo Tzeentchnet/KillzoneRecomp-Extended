@@ -310,7 +310,7 @@ namespace
                     section("Output");
                     if (beginRows("output"))
                     {
-                        row("Renderer", "Direct3D 11 is the tested default.");
+                        row("Renderer", "If Direct3D 11 shows a black frame, use Direct3D 12.");
                         enumCombo<KzRenderer>("##renderer", cfg.renderer,
                                               {{KzRenderer::D3D11, "Direct3D 11"}, {KzRenderer::D3D12, "Direct3D 12"}, {KzRenderer::Vulkan, "Vulkan"}});
                         row("Internal resolution", "Higher = sharper edges. Auto matches your display.");

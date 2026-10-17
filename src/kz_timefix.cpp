@@ -1,5 +1,6 @@
 #include "kz_timefix.h"
 
+#include "kz_hook_addresses.h"
 #include "ps2_runtime.h"
 
 #include <algorithm>
@@ -28,8 +29,8 @@
 //            original at 30..inf fps (+6 % at 120 fps), settle time 0.075 s (-9 %).
 namespace
 {
-    constexpr uint32_t kLookAccel = 0x0023E8C8u;
-    constexpr uint32_t kApplyLook = 0x0021C550u;
+    constexpr uint32_t kLookAccel = kz_hook::LookAcceleration;
+    constexpr uint32_t kApplyLook = kz_hook::ApplyLook;
     constexpr float kLagTau = 0.075f;
     constexpr uint32_t kGameObjectPtr = 0x00559178u;
     constexpr uint32_t kNowSeconds = 0x0055F0FCu; // DAT_0055f0fc: the engine clock in seconds (float)

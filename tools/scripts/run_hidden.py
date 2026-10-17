@@ -14,7 +14,11 @@ for kv in sys.argv[3:]:
     os.environ[k] = v
 os.environ.pop('PS2X_HEADLESS', None)
 os.environ['KZ_AUDIO_VOLUME'] = '0'  # never audible
-iso = r'C:\Users\drakolord\Downloads\Killzone (USA)\Killzone (USA).iso'
+iso = os.environ.get('KZ_ISO')
+if not iso:
+    raise SystemExit('set KZ_ISO to the user-supplied disc image')
+if not os.path.isfile(iso):
+    raise SystemExit('KZ_ISO does not exist: ' + iso)
 p = HiddenProcess(os.path.join(exe_dir, 'killzone.exe'), ['--no-launcher', '--iso', iso], exe_dir, desktop='kz_hidden_run')
 time.sleep(seconds)
 p.kill()

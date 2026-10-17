@@ -1,6 +1,7 @@
 #include "kz_post.h"
 
 #include "kz_config.h"
+#include "kz_hook_addresses.h"
 
 #include "ps2_runtime.h"
 
@@ -32,13 +33,13 @@
 // 0x1EF640) are not touched.
 namespace
 {
-    constexpr uint32_t kGlowPass = 0x0015DFC0u;
-    constexpr uint32_t kFrameBlend = 0x0015F768u;
-    constexpr uint32_t kLensBlur = 0x001A9308u;
-    constexpr uint32_t kPostRender = 0x001EF640u;      // post-process render (a0 = PostProcess object)
+    constexpr uint32_t kGlowPass = kz_hook::GlowPass;
+    constexpr uint32_t kFrameBlend = kz_hook::FrameBlend;
+    constexpr uint32_t kLensBlur = kz_hook::LensBlur;
+    constexpr uint32_t kPostRender = kz_hook::PostRender; // post-process render (a0 = PostProcess object)
     constexpr uint32_t kNoiseStrengthOffset = 0x284u;  // film grain alpha; the pass is skipped below 2/255
-    constexpr uint32_t kZoneParams = 0x00339C38u;
-    constexpr uint32_t kLodScale = 0x001C2168u;
+    constexpr uint32_t kZoneParams = kz_hook::ZoneParams;
+    constexpr uint32_t kLodScale = kz_hook::LodScale;
     constexpr uint32_t kRamMask = 0x01FFFFFFu;
 
     bool g_motionBlur = false;

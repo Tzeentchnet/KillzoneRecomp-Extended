@@ -1,0 +1,157 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "win-rel-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "environment": {
+        "KZ_NINJA": "${sourceDir}/tools/dl/ninja/ninja.exe"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "FETCHCONTENT_UPDATES_DISCONNECTED": true
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "win-msvc-rel",
+      "displayName": "Windows x64 MSVC RelWithDebInfo",
+      "description": "Pinned dependency preflight and an MSVC x64 Ninja build.",
+      "inherits": "win-rel-base",
+      "cacheVariables": {
+        "KZ_TOOLCHAIN": "msvc"
+      }
+    },
+    {
+      "name": "win-clang-rel",
+      "displayName": "Windows x64 clang-cl RelWithDebInfo",
+      "description": "Pinned dependency preflight and a clang-cl x64 Ninja build using KZ_LLVM_BIN.",
+      "inherits": "win-rel-base",
+      "cacheVariables": {
+        "KZ_TOOLCHAIN": "clang-cl"
+      }
+    },
+    {
+      "name": "macos-arm64",
+      "displayName": "macOS Apple Silicon Phase 0",
+      "description": "Renderer-free host smoke and portable VU gates without x86 microVU or game-derived sources.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "BUILD_TESTING": true,
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "FETCHCONTENT_UPDATES_DISCONNECTED": true,
+        "KZ_MACOS_PHASE0_ONLY": true
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "win-msvc-rel",
+      "configurePreset": "win-msvc-rel",
+      "targets": [
+        "killzone"
+      ]
+    },
+    {
+      "name": "win-clang-rel",
+      "configurePreset": "win-clang-rel",
+      "targets": [
+        "killzone"
+      ]
+    },
+    {
+      "name": "win-msvc-tests",
+      "configurePreset": "win-msvc-rel",
+      "targets": [
+        "killzone",
+        "kzspu2_test",
+        "kzvu_test",
+        "kzvu_interpreter_conformance",
+        "kzvu0_test",
+        "kzgs_test",
+        "kzipu_test",
+        "kz_host_core_test",
+        "kz_host_window_smoke",
+        "kz_host_audio_smoke"
+      ]
+    },
+    {
+      "name": "win-clang-tests",
+      "configurePreset": "win-clang-rel",
+      "targets": [
+        "killzone",
+        "kzspu2_test",
+        "kzvu_test",
+        "kzvu_interpreter_conformance",
+        "kzvu0_test",
+        "kzgs_test",
+        "kzipu_test",
+        "kz_host_core_test",
+        "kz_host_window_smoke",
+        "kz_host_audio_smoke"
+      ]
+    },
+    {
+      "name": "macos-arm64",
+      "configurePreset": "macos-arm64",
+      "targets": [
+        "kz_host_core_test",
+        "kz_host_window_smoke",
+        "kz_host_audio_smoke",
+        "kzvu_interpreter_conformance"
+      ]
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "win-msvc-rel",
+      "configurePreset": "win-msvc-rel",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "win-clang-rel",
+      "configurePreset": "win-clang-rel",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "macos-arm64",
+      "configurePreset": "macos-arm64",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    }
+  ]
+}

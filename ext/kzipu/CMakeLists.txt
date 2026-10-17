@@ -82,24 +82,42 @@ target_include_directories(kzipu PRIVATE
 target_include_directories(kzipu PUBLIC "${KZIPU_ROOT}/include")
 
 if(KZIPU_BUILD_TEST)
-	set(FF "${KZIPU_FFMPEG_DIR}")
-	if(NOT EXISTS "${FF}/include/libavcodec/avcodec.h")
-		message(FATAL_ERROR "kzipu_test needs FFmpeg at KZIPU_FFMPEG_DIR (${FF}); build the game once or set the path")
-	endif()
 	add_executable(kzipu_test "${KZIPU_ROOT}/test/kzipu_test.cpp")
-	target_link_libraries(kzipu_test PRIVATE kzipu "${FF}/bin/avcodec.lib" "${FF}/bin/avutil.lib")
-	target_include_directories(kzipu_test PRIVATE "${FF}/include")
+	if(TARGET ffmpeg_avcodec AND TARGET ffmpeg_avutil)
+		# ExternalProject populates these headers at build time, after CMake validates imported include paths.
+		get_target_property(_kzipu_ffmpeg_include_dirs ffmpeg_avcodec INTERFACE_INCLUDE_DIRECTORIES)
+		foreach(_kzipu_ffmpeg_include_dir IN LISTS _kzipu_ffmpeg_include_dirs)
+			if(NOT _kzipu_ffmpeg_include_dir MATCHES "^\\$<")
+				file(MAKE_DIRECTORY "${_kzipu_ffmpeg_include_dir}")
+			endif()
+		endforeach()
+		target_link_libraries(kzipu_test PRIVATE kzipu ffmpeg_avcodec ffmpeg_avutil)
+	elseif(EXISTS "${KZIPU_FFMPEG_DIR}/include/libavcodec/avcodec.h")
+		set(FF "${KZIPU_FFMPEG_DIR}")
+		target_link_libraries(kzipu_test PRIVATE kzipu "${FF}/bin/avcodec.lib" "${FF}/bin/avutil.lib")
+		target_include_directories(kzipu_test PRIVATE "${FF}/include")
+	else()
+		message(FATAL_ERROR
+			"kzipu_test needs the root ffmpeg targets or FFmpeg at KZIPU_FFMPEG_DIR (${KZIPU_FFMPEG_DIR})")
+	endif()
 	target_compile_features(kzipu_test PRIVATE cxx_std_20)
 	target_compile_definitions(kzipu_test PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
 	target_compile_options(kzipu_test PRIVATE /utf-8 /W3 /wd4244 /wd4267)
-	# The FFmpeg DLLs (and the DLLs they import) are copied next to the test.
-	file(GLOB KZIPU_FF_DLLS "${FF}/bin/*.dll")
-	add_custom_command(TARGET kzipu_test POST_BUILD
-		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${KZIPU_FF_DLLS} "$<TARGET_FILE_DIR:kzipu_test>"
-		COMMENT "Copying FFmpeg DLLs next to kzipu_test")
+	if(COMMAND ps2x_stage_ffmpeg_runtime_dlls)
+		ps2x_stage_ffmpeg_runtime_dlls(kzipu_test)
+	else()
+		# The standalone build copies FFmpeg and its transitive runtime DLLs beside the test.
+		file(GLOB KZIPU_FF_DLLS "${FF}/bin/*.dll")
+		add_custom_command(TARGET kzipu_test POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different ${KZIPU_FF_DLLS} "$<TARGET_FILE_DIR:kzipu_test>"
+			COMMENT "Copying FFmpeg DLLs next to kzipu_test")
+	endif()
 
 	# Link check: kzipu + kzvu + kzgs in one executable, in two library orders. Fails to link on any duplicate symbol.
 	if(EXISTS "${KZIPU_KZVU_LIB}" AND EXISTS "${KZIPU_KZGS_LIB}")
+		if(NOT TARGET kz_host_core)
+			add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../host" "${CMAKE_CURRENT_BINARY_DIR}/kz_host")
+		endif()
 		set(_kzgs_deps "${KZIPU_ROOT}/../kzgs/deps/deps/lib")
 		set(_kzgs_libs "${KZIPU_KZGS_LIB}"
 			"${_kzgs_deps}/zstd.lib" "${_kzgs_deps}/libpng16.lib" "${_kzgs_deps}/libwebp.lib" "${_kzgs_deps}/jpeg.lib"
@@ -111,9 +129,9 @@ if(KZIPU_BUILD_TEST)
 			target_include_directories(kzipu_linkcheck_${_order} PRIVATE "${KZIPU_ROOT}/../kzvu/include" "${KZIPU_ROOT}/../kzgs/include")
 			target_compile_features(kzipu_linkcheck_${_order} PRIVATE cxx_std_20)
 			if(_order STREQUAL "ab")
-				target_link_libraries(kzipu_linkcheck_${_order} PRIVATE kzipu "${KZIPU_KZVU_LIB}" ${_kzgs_libs})
+				target_link_libraries(kzipu_linkcheck_${_order} PRIVATE kzipu "${KZIPU_KZVU_LIB}" ${_kzgs_libs} kz_host_core)
 			else()
-				target_link_libraries(kzipu_linkcheck_${_order} PRIVATE ${_kzgs_libs} "${KZIPU_KZVU_LIB}" kzipu)
+				target_link_libraries(kzipu_linkcheck_${_order} PRIVATE ${_kzgs_libs} "${KZIPU_KZVU_LIB}" kzipu kz_host_core)
 			endif()
 			target_link_options(kzipu_linkcheck_${_order} PRIVATE /DELAYLOAD:zstd.dll /DELAYLOAD:libpng16.dll
 				/DELAYLOAD:libwebp.dll /DELAYLOAD:jpeg62.dll /DELAYLOAD:dxcompiler.dll)

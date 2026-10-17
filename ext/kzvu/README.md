@@ -17,8 +17,7 @@ MTGS or MTVU.
 
 ## Build
 
-The only supported toolchain is MSVC x64 (VS 2026 / 14.51), using CMake 3.24 or newer with Ninja. Keep `-j` at 4 on
-this machine.
+The PCSX2 microVU library supports MSVC x64, using CMake 3.24 or newer with Ninja. Keep `-j` at 4 on this machine.
 
 ```sh
 cmd //c "tools\scripts\vsenv.bat cmake -S ext\kzvu -B ext\kzvu\build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo"
@@ -28,6 +27,27 @@ ext/kzvu/build/kzvu_test.exe          # exit code 0 = pass; --no-bench, --bench-
 
 Both RelWithDebInfo and Release are built and tested. A clean build is about 30 translation units and takes about 12 s at `-j 4`.
 The result is `kzvu.lib`, about 12 MB with debug info.
+
+### Portable interpreter conformance
+
+`portable/` is a separate VU-01 target around PS2Recomp's cycle-accurate interpreter. It compiles only
+`ps2_vu1_core.cpp`, `ps2_vu1_upper.cpp`, and `ps2_vu1_lower.cpp`; it does not compile or initialize PCSX2 microVU,
+the x86 emitter, renderers, or game-derived sources. The locked PS2Recomp checkout remains unmodified.
+
+On Apple Silicon:
+
+```sh
+cmake --preset macos-arm64
+cmake --build --preset macos-arm64
+ctest --preset macos-arm64 --output-on-failure -R '^kzvu_interpreter_'
+```
+
+The conformance executable covers arithmetic, FMAC flags, branches, stalls, memory masks and latency, wrapping
+XGKICK, decoded-code invalidation, bounded execution/resume, reset/reuse, and T-bit lifecycle. ARM builds use the
+locked sse2neon revision. The existing `kzvu_test` remains the Windows microVU/interpreter differential test.
+
+The game runtime already exposes this portable fallback with `KZ_VU=builtin` and `KZ_VU0=interp`. When both are
+selected, `kzVuInstall` returns without initializing `kzvu` or its JIT code cache.
 
 Using it from the game's CMake:
 

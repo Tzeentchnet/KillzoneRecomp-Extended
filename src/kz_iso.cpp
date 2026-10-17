@@ -2,12 +2,19 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 
 namespace
 {
     constexpr uint32_t kSector = 2048;
+
+    bool isoAccessDisabled()
+    {
+        const char *value = std::getenv("KZ_ISO_FREE");
+        return value && *value && *value != '0';
+    }
 
     uint32_t le32(const uint8_t *p)
     {
@@ -33,6 +40,11 @@ namespace
 
 bool KzIso::open(const std::filesystem::path &path, std::string *error)
 {
+    if (isoAccessDisabled())
+    {
+        if (error) *error = "disc access is disabled by KZ_ISO_FREE";
+        return false;
+    }
     uint8_t pvd[kSector];
     if (!readAt(path, 16ull * kSector, pvd, sizeof(pvd)))
     {
@@ -109,6 +121,11 @@ bool KzIso::read(const KzIsoFile &file, std::vector<uint8_t> &out) const
 KzDiscCheck kzCheckDisc(const std::filesystem::path &isoPath)
 {
     KzDiscCheck r;
+    if (isoAccessDisabled())
+    {
+        r.message = "Disc access is disabled by KZ_ISO_FREE.";
+        return r;
+    }
     if (isoPath.empty())
     {
         r.message = "No disc image selected.";

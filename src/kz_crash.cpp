@@ -1,10 +1,12 @@
-#include "kz_crash.h"
+#include "kz_host/core.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #include <dbghelp.h>
 
@@ -64,7 +66,7 @@ namespace
     }
 }
 
-void kzCrashTraceInstall()
+void kz::host::installCrashReporterIfRequested()
 {
     const char *v = std::getenv("KZ_CRASH_TRACE");
     if (v && *v && *v != '0')

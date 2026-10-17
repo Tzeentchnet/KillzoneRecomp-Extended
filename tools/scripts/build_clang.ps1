@@ -1,12 +1,16 @@
 # Opt-in clang-cl build of the runner into build\<Name> (the shipping build stays MSVC: build.bat).
-#   build_clang.ps1 [-Name clang] [-Cmake '-DKZ_CLANG_LTO=thin -DCMAKE_AR=D:/LLVM/bin/llvm-lib.exe'] [-Jobs 12] [-LlvmBin D:\LLVM\bin]
+#   build_clang.ps1 [-Name clang] [-Cmake '-DKZ_CLANG_LTO=thin'] [-Jobs 12] -LlvmBin <LLVM bin>
 # Variants (docs/findings.md "clang-cl build"): plain = no -Cmake; LTO = -DKZ_CLANG_LTO=thin plus the llvm-lib archiver;
 # PGO = a -DKZ_CLANG_PGO_GEN=ON build, one gameplay run with LLVM_PROFILE_FILE=<dir>\kz_%p.profraw, llvm-profdata merge, then
-# -DKZ_CLANG_PGO_USE=<merged .profdata>. Everything (build, temp) stays on D:.
+# -DKZ_CLANG_PGO_USE=<merged .profdata>.
 # The first run copies build\RelWithDebInfo's FFmpeg prefix and shader cache (no re-download) and points FetchContent at its
 # dependency sources (read only).
-param([string]$Name = 'clang', [string]$Cmake = '', [int]$Jobs = 12, [string]$LlvmBin = 'D:\LLVM\bin')
-$wd = 'D:\KillzoneRecomp'; $ref = "$wd\build\RelWithDebInfo"; $b = "$wd\build\$Name"
+param([string]$Name = 'clang', [string]$Cmake = '', [int]$Jobs = 12, [string]$LlvmBin = $env:KZ_LLVM_BIN, [string]$Root = $env:KZ_ROOT)
+. "$PSScriptRoot\kz_paths.ps1"
+$wd = Resolve-KzRoot $Root
+if ([string]::IsNullOrWhiteSpace($LlvmBin)) { throw 'Specify -LlvmBin or set KZ_LLVM_BIN.' }
+$LlvmBin = (Resolve-Path -LiteralPath $LlvmBin).Path
+$ref = "$wd\build\RelWithDebInfo"; $b = "$wd\build\$Name"
 $tmp = "$wd\work\tmp"; New-Item -ItemType Directory -Force $tmp, "$b\ThirdParty" | Out-Null
 $env:TEMP = $tmp; $env:TMP = $tmp
 if (-not (Test-Path "$b\ThirdParty\ffmpeg-prefix")) { Copy-Item -Recurse "$ref\ThirdParty\ffmpeg-prefix" "$b\ThirdParty\ffmpeg-prefix" }

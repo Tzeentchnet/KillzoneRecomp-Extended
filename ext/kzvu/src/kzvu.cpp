@@ -5,6 +5,7 @@
 #include "kzvu.h"
 
 #include "common/FPControl.h"
+#include "kz_host/core.h"
 
 #include <cstring>
 #include <immintrin.h>
@@ -130,6 +131,17 @@ bool kzvuInit(const KzvuConfig& cfg, std::string* err)
 	{
 		kzvuSetConfig(cfg);
 		return true;
+	}
+
+	const kz::host::CpuFeatures host = kz::host::cpuFeatures();
+	if (host.architecture != kz::host::CpuArchitecture::X86_64 ||
+		(host.simd != kz::host::SimdLevel::Sse41 &&
+		 host.simd != kz::host::SimdLevel::Avx &&
+		 host.simd != kz::host::SimdLevel::Avx2))
+	{
+		if (err)
+			*err = "microVU requires an x86-64 host with SSE4.1";
+		return false;
 	}
 
 	x86Emitter::use_avx = g_cpu.vectorISA >= ProcessorFeatures::VectorISA::AVX;

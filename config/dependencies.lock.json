@@ -1,0 +1,457 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-17",
+  "project": {
+    "repository": "https://github.com/Tzeentchnet/KillzoneRecomp-Extended.git",
+    "audited_baseline": "5f0700079f9ac4e14799d66d01747dbcdcec55f6",
+    "upstream": "https://github.com/drakolordx7/KillzoneRecomp.git"
+  },
+  "patch_stack": {
+    "repository_path": "ext/PS2Recomp",
+    "patch_directory": "patches/ps2recomp",
+    "base_commit": "75d729ce40d7eed9649fd4bb05628dee520f3d0c",
+    "target_commit": "cc1fc7d87930b48d20abd52974d1be77368eb60a",
+    "target_tree": "58dc47cf3750a3808b78b61bf6297b17e25f437f",
+    "canonical_patch": {
+      "path": "patches/ps2recomp/combined.lock.diff",
+      "changed_paths": 59,
+      "sha256": "906a38a3a4a8e8d99945e5bad5e428bab729193d5439236398a718b90a7d47cf"
+    },
+    "patches": [
+      {
+        "path": "0001-recomp-resume-points-for-standalone-entry-blocks.patch",
+        "sha256": "88881eea2b7f855c11884be3682e0a03313070e34dd268fdcdb1c3a0bf93429e"
+      },
+      {
+        "path": "0002-runtime-headless-pad-provider-host-gs.patch",
+        "sha256": "ac5672010991240d56bd395480b5481ce77a5d2e9b7c95ba8a2027bf7cf69850"
+      },
+      {
+        "path": "0003-iop-cdvd-image-search-and-trayreq.patch",
+        "sha256": "6e112a34b59d1abccbb1670254c6b6e724b9de6a94fd9fa00a84caaef99c1580"
+      },
+      {
+        "path": "0004-mpeg-hle-killzone-movies.patch",
+        "sha256": "d3a55418aea8c831a8b4160f91cad7a6d12f7d096e225971d73c4e324c712b38"
+      },
+      {
+        "path": "0005-vif1-direct-image-continuation.patch",
+        "sha256": "a59d6fedb36ee0a7b8c06bf3a1ef6bba562d19b8c8ba2fecf4c36a84e9185484"
+      },
+      {
+        "path": "0006-spu2-host-audio.patch",
+        "sha256": "7bdad2532db1d463b4e52b9746f1f568870984df72c531c7253f55e2b9369300"
+      },
+      {
+        "path": "0007-vu0-microvu.patch",
+        "sha256": "deb3276ec0800b5169db1e4db34cc219bd86cdb2807c5a4cdf88baf937b32bba"
+      },
+      {
+        "path": "0008-runtime-unwind-arena-iop-import-cache.patch",
+        "sha256": "67a62cff81797cdfb94001ed69b0f8f961a5ce958223d1cd681d63b590fec036"
+      },
+      {
+        "path": "0009-ps2-float-semantics.patch",
+        "sha256": "64a8c64caf6598063ff3194b87af828ace47c77bb1ea40fbd9ea5b22b7395447"
+      },
+      {
+        "path": "0010-vif1-unpack-dma-chains-quadword-loads-mmi.patch",
+        "sha256": "d69d96eb721fa86a4d60b1f5d1384c40293e399b5fc041de2b23a456271d7202"
+      },
+      {
+        "path": "0011-iop-batched-advance.patch",
+        "sha256": "63198d90fd0cf2a37a74e724268e7555e8e1bea73b94ac17a8bd93e74e2d7850"
+      },
+      {
+        "path": "0012-iop-scheduler-idle-fastpath-exclusive-host-gs.patch",
+        "sha256": "1aaf0137279102071dff900b2850b2193ffe9181bd0bebbb136c5b2b5a7aa873"
+      },
+      {
+        "path": "0013-iop-rpc-semaphore-wait.patch",
+        "sha256": "f228b784bbae2a885027ab2cde53302f3a013257a715a3782ba9bd3f1506eece"
+      },
+      {
+        "path": "0014-jalr-resume-only-return.patch",
+        "sha256": "a01f7a49f6b016f1f5ef123539da138cf2b2a2edb610e4f49b9b14bda71b0327"
+      },
+      {
+        "path": "0015-iop-thread.patch",
+        "sha256": "6a518fb6f1bbacf41aacaff5f457fa52f3230c91049ed21fa1921539e86c8ca7"
+      },
+      {
+        "path": "0016-vif1-worker-thread.patch",
+        "sha256": "af1f66394f28fd1b5f59edd93b2c0d3ba975311fd4106d0979bb6b6650f35ccb"
+      },
+      {
+        "path": "0017-codegen-register-locals.patch",
+        "sha256": "f1122ef100b89e339029f103ca0e64a1164ef33bb95ebe65fa0ed6244793be5a"
+      },
+      {
+        "path": "0018-scheduler-event-fastpath.patch",
+        "sha256": "0a98c9bc89ff91e92a211ade6b3465b9d101ac2fec8ed79df54b50d024ce9d31"
+      },
+      {
+        "path": "0019-vu0-sched-locks.patch",
+        "sha256": "1cab0d2199e6baa0c1a2b83a9033d39d5ba4761fe31582e5b15b120a1fc7e3b8"
+      },
+      {
+        "path": "0020-guest-io-copies.patch",
+        "sha256": "1d63a6c5fabfc0fe7530668c4f7ef1eb2c8191608a91f5af1cb7c4d5af7a55c8"
+      },
+      {
+        "path": "0021-iop-rpc-offload.patch",
+        "sha256": "0cca183f7f55ffd4cef4ad6e804168883840d04d680c45454342ba4e4f413e49"
+      },
+      {
+        "path": "0022-vif-worker-hotpath.patch",
+        "sha256": "ee4f682104e818cf8ddaeb82faeff5da2673cf7a1ec3f595b78a149d662433d0"
+      },
+      {
+        "path": "0023-codegen-dispatch.patch",
+        "sha256": "bb4eb3d8cc8afadd6313b9e654a965c501edac6d44e8f336eae4c3f82d020708"
+      },
+      {
+        "path": "0025-frame-pipeline.patch",
+        "sha256": "56dd2a7ec0aeb5a6e6ed405e60374244f2946c92b1f6b1d51e38fd2e25f4d225"
+      },
+      {
+        "path": "0026-pad-pressure-order.patch",
+        "sha256": "340160240ed28933af951b0894d61cd0c8b63d4380377d7b1eb2676e908240e5"
+      },
+      {
+        "path": "0027-fmv-audio-sdremote-demux-callbacks.patch",
+        "sha256": "c50d3f21fa791014f88ac64d0c20a4689b135d9c72292d8a37d12cbc08d32d4f"
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "id": "ps2recomp",
+      "kind": "git-submodule",
+      "source_url": "https://github.com/drakolordx7/PS2Recomp.git",
+      "revision": "cc1fc7d87930b48d20abd52974d1be77368eb60a",
+      "license": "GPL-3.0-only",
+      "redistribution": "Copyleft; distribute corresponding source and notices.",
+      "acquisition": "git submodule update --init --recursive",
+      "local": {
+        "path": "ext/PS2Recomp",
+        "required_in_strict": true,
+        "clean": true
+      }
+    },
+    {
+      "id": "pcsx2",
+      "kind": "git-checkout",
+      "source_url": "https://github.com/PCSX2/pcsx2.git",
+      "revision": "646df006a4688063e56c0826e7ea4b8bb0c112c4",
+      "license": "GPL-3.0-or-later",
+      "redistribution": "Copyleft; distribute corresponding source and notices.",
+      "acquisition": "Clone the exact revision into ext/pcsx2 without local modifications.",
+      "local": {
+        "path": "ext/pcsx2",
+        "required_in_strict": true,
+        "clean": true
+      }
+    },
+    {
+      "id": "sdl3-vc",
+      "kind": "archive",
+      "source_url": "https://github.com/libsdl-org/SDL/releases/download/release-3.4.16/SDL3-devel-3.4.16-VC.zip",
+      "revision": "release-3.4.16",
+      "asset_id": 541452399,
+      "size": 16864776,
+      "sha256": "1a784cb2a5c64d56fe7a62090fe9d242d9865f235e4ea9678f1a6ba4e693e7de",
+      "license": "Zlib",
+      "redistribution": "Permitted with the zlib license notice.",
+      "acquisition": "Download the locked archive, retain it for verification, and extract it under ext/sdl3.",
+      "local": {
+        "archive": "ext/sdl3/SDL3-devel-3.4.16-VC.zip",
+        "directory": "ext/sdl3/SDL3-3.4.16",
+        "markers": [
+          "cmake/SDL3Config.cmake"
+        ],
+        "required_in_strict": true
+      }
+    },
+    {
+      "id": "sdl3-source",
+      "kind": "archive",
+      "source_url": "https://github.com/libsdl-org/SDL/releases/download/release-3.4.16/SDL3-3.4.16.tar.gz",
+      "revision": "release-3.4.16",
+      "asset_id": 541452173,
+      "size": 15640667,
+      "sha256": "7322236cd12090c3eb40b9728be4d49c76f66ad17d04369584d4ecad5cf77c68",
+      "license": "Zlib",
+      "redistribution": "Permitted with the zlib license notice.",
+      "acquisition": "Download the locked source archive, retain it for verification, and extract it as ext/sdl3/SDL3-3.4.16-source.",
+      "local": {
+        "archive": "ext/sdl3/SDL3-3.4.16.tar.gz",
+        "directory": "ext/sdl3/SDL3-3.4.16-source",
+        "markers": [
+          "CMakeLists.txt",
+          "include/SDL3/SDL.h"
+        ],
+        "required_in_strict": true
+      },
+      "declaration_checks": [
+        {
+          "file": "CMakeLists.txt",
+          "contains": [
+            "ext/sdl3/SDL3-3.4.16-source"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "pcsx2-windows-dependencies",
+      "kind": "archive",
+      "source_url": "https://api.github.com/repos/PCSX2/pcsx2-windows-dependencies/releases/assets/619873001",
+      "revision": "release-asset-619873001",
+      "asset_id": 619873001,
+      "release_id": 406182417,
+      "size": 172750623,
+      "sha256": "a3133c7841e8fbdab6f4d1d5ad8efec31fb1ecda95ffed39f4d1f36bb7eb0007",
+      "license": "NOASSERTION",
+      "redistribution": "Review required for every bundled component before redistribution.",
+      "acquisition": "Download asset 619873001 with application/octet-stream, retain the archive, and extract it under ext/kzgs/deps.",
+      "local": {
+        "archive": "ext/kzgs/deps/pcsx2-windows-dependencies.7z",
+        "directory": "ext/kzgs/deps/deps",
+        "markers": [
+          "include/zstd.h"
+        ],
+        "required_in_strict": true
+      }
+    },
+    {
+      "id": "ffmpeg-msvc",
+      "kind": "archive",
+      "source_url": "https://github.com/System233/ffmpeg-msvc-prebuilt/releases/download/n7.1-241205/ffmpeg-n7.1-241205-lgpl-amd64-shared.zip",
+      "revision": "n7.1-241205",
+      "asset_id": 211200471,
+      "size": 35240955,
+      "sha256": "b985887dbca8c0a9a4c47f9d2bac7ec3ab994335b1b7fe7000bdb1dcd772ac68",
+      "license": "LGPL-2.1-or-later (FFmpeg artifact); MIT (packaging repository)",
+      "redistribution": "Review FFmpeg LGPL configuration, notices, and relinking obligations before release.",
+      "acquisition": "CMake ExternalProject downloads the exact release artifact; validate it against this checksum.",
+      "declaration_checks": [
+        {
+          "file": "ext/PS2Recomp/ps2xRuntime/CMakeLists.txt",
+          "contains": [
+            "set(FFMPEG_PREBUILT_TAG \"n7.1-241205\")",
+            "ffmpeg-${FFMPEG_PREBUILT_TAG}-lgpl-amd64-shared.zip"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "imgui",
+      "kind": "cmake-git",
+      "source_url": "https://github.com/ocornut/imgui.git",
+      "declared_ref": "v1.92.7-docking",
+      "revision": "b1bcb12a624af7509894c8e77dd47416997777fa",
+      "license": "MIT",
+      "redistribution": "Permitted with the MIT license notice.",
+      "acquisition": "CMake FetchContent; the lock records the immutable tag resolution.",
+      "declaration": {
+        "file": "ext/PS2Recomp/ps2xRuntime/CMakeLists.txt",
+        "name": "imgui"
+      }
+    },
+    {
+      "id": "raylib",
+      "kind": "cmake-git",
+      "source_url": "https://github.com/raysan5/raylib.git",
+      "declared_ref": "5.5",
+      "revision": "c1ab645ca298a2801097931d1079b10ff7eb9df8",
+      "license": "Zlib",
+      "redistribution": "Permitted with the zlib license notice.",
+      "acquisition": "CMake FetchContent; the lock records the immutable tag resolution.",
+      "declaration": {
+        "file": "ext/PS2Recomp/ps2xRuntime/CMakeLists.txt",
+        "name": "raylib"
+      }
+    },
+    {
+      "id": "rlimgui",
+      "kind": "cmake-git",
+      "source_url": "https://github.com/raylib-extras/rlImGui.git",
+      "declared_ref": "Raylib_5_5",
+      "revision": "118221c8a532501a3c2c236b62950877cbefc2b4",
+      "license": "Zlib",
+      "redistribution": "Permitted with the zlib license notice.",
+      "acquisition": "CMake FetchContent; the lock records the immutable tag resolution.",
+      "declaration": {
+        "file": "ext/PS2Recomp/ps2xRuntime/CMakeLists.txt",
+        "name": "rlImGui"
+      }
+    },
+    {
+      "id": "sse2neon",
+      "kind": "cmake-git",
+      "source_url": "https://github.com/DLTcollab/sse2neon.git",
+      "declared_ref": "v1.9.1",
+      "revision": "92f6de174717aef09033ad21568d5bb9e5470404",
+      "license": "MIT",
+      "redistribution": "Permitted with the MIT license notice.",
+      "acquisition": "CMake FetchContent for ARM targets; the lock records the immutable tag resolution.",
+      "declaration": {
+        "file": "ext/PS2Recomp/CMakeLists.txt",
+        "name": "sse2neon"
+      }
+    },
+    {
+      "id": "nlohmann-json",
+      "kind": "cmake-git",
+      "source_url": "https://github.com/nlohmann/json.git",
+      "declared_ref": "v3.11.3",
+      "revision": "9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03",
+      "license": "MIT",
+      "redistribution": "Permitted with the MIT license notice.",
+      "acquisition": "CMake FetchContent for ps2xAnalyzer; the lock records the immutable tag resolution.",
+      "declaration": {
+        "file": "ext/PS2Recomp/ps2xAnalyzer/CMakeLists.txt",
+        "name": "nlohmann_json"
+      }
+    },
+    {
+      "id": "elfio",
+      "kind": "cmake-git",
+      "source_url": "https://github.com/serge1/ELFIO.git",
+      "declared_ref": "Release_3.12",
+      "revision": "8ae6cec5d60495822ecd57d736f66149da9b1830",
+      "license": "MIT",
+      "redistribution": "Permitted with the MIT license notice.",
+      "acquisition": "CMake FetchContent for ps2xRecomp; the lock records the immutable tag resolution.",
+      "declaration": {
+        "file": "ext/PS2Recomp/ps2xRecomp/CMakeLists.txt",
+        "name": "elfio"
+      }
+    },
+    {
+      "id": "toml11",
+      "kind": "cmake-git",
+      "source_url": "https://github.com/ToruNiina/toml11.git",
+      "declared_ref": "v4.4.0",
+      "revision": "be08ba2be2a964edcdb3d3e3ea8d100abc26f286",
+      "license": "MIT",
+      "redistribution": "Permitted with the MIT license notice.",
+      "acquisition": "CMake FetchContent for ps2xRecomp; the lock records the immutable tag resolution.",
+      "declaration": {
+        "file": "ext/PS2Recomp/ps2xRecomp/CMakeLists.txt",
+        "name": "toml11"
+      }
+    },
+    {
+      "id": "fmt",
+      "kind": "cmake-git",
+      "source_url": "https://github.com/fmtlib/fmt.git",
+      "declared_ref": "12.1.0",
+      "revision": "407c905e45ad75fc29bf0f9bb7c5c2fd3475976f",
+      "license": "MIT",
+      "redistribution": "Permitted with the MIT license notice.",
+      "acquisition": "CMake FetchContent for ps2xRecomp; the lock records the immutable tag resolution.",
+      "declaration": {
+        "file": "ext/PS2Recomp/ps2xRecomp/CMakeLists.txt",
+        "name": "fmt"
+      }
+    },
+    {
+      "id": "libdwarf",
+      "kind": "cmake-git",
+      "source_url": "https://github.com/davea42/libdwarf-code.git",
+      "declared_ref": "v2.2.0",
+      "revision": "2e088b983562860f497b4fd789a3e61524eb857c",
+      "license": "NOASSERTION",
+      "redistribution": "Review required before redistributing binaries or source bundles.",
+      "acquisition": "CMake FetchContent for ps2xRecomp; the lock records the immutable tag resolution.",
+      "declaration": {
+        "file": "ext/PS2Recomp/ps2xRecomp/CMakeLists.txt",
+        "name": "libdwarf"
+      }
+    },
+    {
+      "id": "rabbitizer",
+      "kind": "cmake-git",
+      "source_url": "https://github.com/Decompollaborate/rabbitizer.git",
+      "declared_ref": "1.14.3",
+      "revision": "d5804fa488474830a47fbf9f3693048ec1e45589",
+      "license": "MIT",
+      "redistribution": "Permitted with the MIT license notice.",
+      "acquisition": "CMake FetchContent for ps2xRecomp; the lock records the immutable tag resolution.",
+      "declaration": {
+        "file": "ext/PS2Recomp/ps2xRecomp/CMakeLists.txt",
+        "name": "rabbitizer"
+      }
+    }
+  ],
+  "cmake_fetchcontent_scan": [
+    "ext/PS2Recomp/CMakeLists.txt",
+    "ext/PS2Recomp/ps2xRuntime/CMakeLists.txt",
+    "ext/PS2Recomp/ps2xAnalyzer/CMakeLists.txt",
+    "ext/PS2Recomp/ps2xRecomp/CMakeLists.txt"
+  ],
+  "declaration_checks": [
+    {
+      "file": "CMakeLists.txt",
+      "contains": [
+        "ext/sdl3/SDL3-3.4.16/cmake"
+      ]
+    }
+  ],
+  "tool_requirements": [
+    {
+      "id": "python",
+      "requirement": "3.11 or newer",
+      "reason": "Repository scripts import tomllib."
+    },
+    {
+      "id": "cmake",
+      "requirement": "3.24 or newer",
+      "reason": "The PCSX2 component libraries require CMake 3.24."
+    },
+    {
+      "id": "temurin-jdk",
+      "requirement": "Exactly 21.0.12.1+1",
+      "source_url": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip",
+      "size": 205073461,
+      "sha256": "f9d6e191ab098c0d416e7d588a24420a8621cd2f4720dab2459b8b7b2d2d8b4e",
+      "local": {
+        "archive": "tools/dl/OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip",
+        "directory": "tools/jdk-21.0.12.1+1",
+        "markers": [
+          "bin/java.exe"
+        ]
+      },
+      "reason": "Ghidra 12.1.3 requires a supported JDK for deterministic headless function-map export."
+    },
+    {
+      "id": "ghidra",
+      "requirement": "Exactly 12.1.3",
+      "source_url": "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.3_build/ghidra_12.1.3_PUBLIC_20260817.zip",
+      "size": 569445154,
+      "sha256": "93a5d11a9ad510622acaaf908c556a7b9b764d338e78a7567f3689bf5081fd54",
+      "local": {
+        "archive": "tools/dl/ghidra_12.1.3_PUBLIC_20260817.zip",
+        "directory": "tools/ghidra_12.1.3_PUBLIC",
+        "markers": [
+          "support/analyzeHeadless.bat"
+        ]
+      },
+      "reason": "The PS2Recomp exporter supplies the function and executable-label boundaries used for regeneration."
+    },
+    {
+      "id": "ninja",
+      "requirement": "Exactly 1.13.2",
+      "source_url": "https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-win.zip",
+      "size": 291570,
+      "sha256": "07fc8261b42b20e71d1720b39068c2e14ffcee6396b76fb7a795fb460b78dc65",
+      "reason": "The documented Windows build uses the Ninja generator."
+    },
+    {
+      "id": "msvc-build-tools",
+      "requirement": "Visual Studio Build Tools 2022 or newer with the Desktop development with C++ workload",
+      "reason": "VS Code is the primary IDE, but the renderer and component libraries require the MSVC x64 headers, libraries, MASM, and Windows SDK."
+    }
+  ]
+}

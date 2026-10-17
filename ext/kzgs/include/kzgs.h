@@ -21,6 +21,8 @@
 // forwarding packets, and raise INTC_GS itself.
 #pragma once
 
+#include "kz_host/core.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -99,10 +101,11 @@ struct KzgsConfig
 	bool debugDevice = false;                          // D3D/Vulkan validation layer
 };
 
-// Creates the GS thread and the render device on window `hwnd` (a Win32 HWND; the window must outlive kzgsClose).
+// Creates the GS thread and render device on `window`, which must outlive kzgsClose. An empty handle is surfaceless.
+// The current renderer backends accept Win32 windows and reject other native-window types explicitly.
 // `privRegs` is the caller's 0x2000-byte privileged register block (see above); it is read at open and at every
 // kzgsVsync. Returns false with a message in *err on failure. Only one kzgs instance can be open at a time.
-bool kzgsOpen(void* hwnd, const KzgsConfig& cfg, uint8_t* privRegs, std::string* err = nullptr);
+bool kzgsOpen(const kz::host::NativeWindow& window, const KzgsConfig& cfg, uint8_t* privRegs, std::string* err = nullptr);
 
 // Destroys the device and joins the GS thread. Safe to call when not open.
 void kzgsClose();

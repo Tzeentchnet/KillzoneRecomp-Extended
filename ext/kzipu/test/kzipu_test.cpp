@@ -1029,7 +1029,7 @@ private:
 // ---------------------------------------------------------------------------------------------------------------------
 int main(int argc, char** argv)
 {
-	std::string iso = "C:\\Users\\drakolord\\Downloads\\Killzone (USA)\\Killzone (USA).iso";
+	std::string iso;
 	fs::path outDir = fs::path(__FILE__).parent_path() / "out";
 	size_t videos = 2, maxFrames = 20, esMb = 10;
 	for (int i = 1; i < argc; i++)
@@ -1040,6 +1040,11 @@ int main(int argc, char** argv)
 		else if (a == "--videos" && i + 1 < argc) videos = std::stoul(argv[++i]);
 		else if (a == "--frames" && i + 1 < argc) maxFrames = std::stoul(argv[++i]);
 		else if (a == "--es-mb" && i + 1 < argc) esMb = std::stoul(argv[++i]);
+	}
+	if (iso.empty())
+	{
+		std::printf("FAIL: specify --iso with an authorized disc image\n");
+		return 2;
 	}
 	constexpr double kMinPsnr = 30.0;
 	std::error_code ec;

@@ -229,8 +229,6 @@ static State RunKzvu(const Program& p, bool jit)
 alignas(64) static uint8_t g_rcode[0x4000];
 alignas(64) static uint8_t g_rdata[0x4000];
 static PS2Memory* g_rmem = nullptr;
-alignas(16) static uint8_t g_fakeGs[64];
-static GS& FakeGs() { return *reinterpret_cast<GS*>(g_fakeGs); }
 
 static State RunRecomp(VU1Interpreter& vu, const Program& p)
 {
@@ -244,7 +242,7 @@ static State RunRecomp(VU1Interpreter& vu, const Program& p)
 	g_recompGifPackets.clear();
 
 	const uint64_t c0 = vu.state().cycles;
-	vu.execute(g_rcode, sizeof(g_rcode), g_rdata, sizeof(g_rdata), FakeGs(), g_rmem, p.startPc, p.top, p.itop, 1u << 24);
+	vu.execute(g_rcode, sizeof(g_rcode), g_rdata, sizeof(g_rdata), recompGs(), g_rmem, p.startPc, p.top, p.itop, 1u << 24);
 
 	State s;
 	const VU1State& st = vu.state();
@@ -1133,13 +1131,13 @@ int main(int argc, char** argv)
 			recompMarkCodeModified(g_rmem);
 			std::memcpy(g_rdata, p.data.data(), sizeof(g_rdata));
 			for (int i = 0; i < 50; i++)
-				recomp.execute(g_rcode, sizeof(g_rcode), g_rdata, sizeof(g_rdata), FakeGs(), g_rmem, 0, 0, 0, 1u << 24);
+				recomp.execute(g_rcode, sizeof(g_rcode), g_rdata, sizeof(g_rdata), recompGs(), g_rmem, 0, 0, 0, 1u << 24);
 			g_recompGifPackets.clear();
 			const uint64_t c0 = recomp.state().cycles;
 			const auto t0 = std::chrono::steady_clock::now();
 			for (int i = 0; i < benchRuns; i++)
 			{
-				recomp.execute(g_rcode, sizeof(g_rcode), g_rdata, sizeof(g_rdata), FakeGs(), g_rmem, 0, 0, 0, 1u << 24);
+				recomp.execute(g_rcode, sizeof(g_rcode), g_rdata, sizeof(g_rdata), recompGs(), g_rmem, 0, 0, 0, 1u << 24);
 				if (g_recompGifPackets.size() > 64)
 					g_recompGifPackets.clear();
 			}

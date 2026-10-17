@@ -1,0 +1,366 @@
+{
+  "schema_version": 1,
+  "executable": {
+    "name": "SCUS_974.02",
+    "serial": "SCUS-97402",
+    "size": 4311692,
+    "sha256": "7d3c8ee59c9800ea5238e7ce62bfd09825eb50867123f71a42b81142b6842169",
+    "crc32": "114e85f8",
+    "entry": "0x00146F30",
+    "text": {
+      "address": "0x00140000",
+      "offset": "0x00001000",
+      "size": "0x003D3340",
+      "sha256": "186cf7dadb230d3c54916a07f4e308ed819ad8143f173977c6c838d17f2d48af"
+    }
+  },
+  "function_map": {
+    "schema_version": 3,
+    "ghidra_version": "12.1.3",
+    "normalization": "clamp_bodies_align_instructions_extend_delay_slots_v3",
+    "exporter_sha256": "ca2691c4182d6a2e262829451b76e8469687d2715eae749a14223bc3d9a56bca",
+    "function_count": 16045,
+    "code_label_count": 19307,
+    "csv_record_count": 35352,
+    "clamped_record_count": 4269,
+    "instruction_aligned_record_count": 154,
+    "delay_slot_extended_record_count": 903
+  },
+  "generated": {
+    "file_count": 31998,
+    "translation_unit_count": 31996,
+    "function_translation_unit_count": 16040,
+    "entry_translation_unit_count": 15953,
+    "thunk_translation_unit_count": 2,
+    "registration_translation_unit_count": 1,
+    "generated_function_count": 31995,
+    "generated_stub_function_count": 142,
+    "supplemental_entry_point_count": 24953,
+    "recompiler_input_record_count": 35350,
+    "synthesized_entry_point_count": 18718,
+    "folded_nested_entry_block_count": 8559,
+    "folded_standalone_entry_block_count": 13514,
+    "resumable_entry_point_count": 101715,
+    "resume_owner_function_count": 20955,
+    "resume_case_dispatch_entry_count": 100661,
+    "resume_case_owner_function_count": 20528,
+    "dispatch_entry_count": 132656,
+    "dispatch_unique_target_count": 31995,
+    "additional_entry_point_count": 120433,
+    "recompiled_record_count": 35208,
+    "stub_record_count": 142,
+    "skipped_record_count": 0,
+    "decode_failure_count": 0,
+    "indirect_fallback_promotion_count": 157,
+    "indirect_fallback_entry_count": 12205,
+    "unhandled_instruction_count": 379,
+    "correctness_critical_fallback_count": 0,
+    "correctness_critical_failure_count": 0,
+    "function_table": {
+      "base": "0x00140000",
+      "end": "0x00513324",
+      "slot_count": 1002697
+    },
+    "files": {
+      "ps2_recompiled_functions.h": {
+        "size": 2729189,
+        "sha256": "3bcd6fc7423952e43bff2336e4018b6d5200e45d678fd4e284dd2c3854f0e12e"
+      },
+      "ps2_recompiled_stubs.h": {
+        "size": 12161,
+        "sha256": "7569dfb7c42ae1229e39447d387469d0ebd9c1f7c349cbdd9518826052a32f0e"
+      },
+      "register_functions.cpp": {
+        "size": 11061100,
+        "sha256": "73ca1fd5b1aa0b51999b01715f2b796a119a7b9de07a1ffedf9f482df289cebd"
+      }
+    }
+  },
+  "instruction_patches": [
+    {
+      "address": "0x001BFEA0",
+      "original": "0x46000000",
+      "replacement": "0x00000000",
+      "original_sha256": "514970ce425bbbe11b969e5cd683f4c1b7722f7f026b45006c53a8031b2fc32e"
+    },
+    {
+      "address": "0x001BFEB4",
+      "original": "0x00052842",
+      "replacement": "0x00052802",
+      "original_sha256": "840caa0cb2c549385cd117e08c3c2caa2df44372603807146e81769c87b5b486"
+    },
+    {
+      "address": "0x001BFEB8",
+      "original": "0x00031842",
+      "replacement": "0x00031802",
+      "original_sha256": "22f86f615e9d882922a91bd90bdcbc6431fb26a5f8c4df74235502940b8f87b6"
+    },
+    {
+      "address": "0x001BFF3C",
+      "original": "0x00021042",
+      "replacement": "0x00021002",
+      "original_sha256": "f8f6441c3b626fe868abafe77574b13fd7dd5d859ed4f76d62d36fad6eb2cf42"
+    }
+  ],
+  "hooks": [
+    {
+      "symbol": "GameEntry",
+      "kind": "executable_entry",
+      "address": "0x00146F30",
+      "signature_size": 16,
+      "signature_sha256": "df1615d82cac6f0f86859ec5cb6528d77de51e72d9da44eec38baee100d2d2a8"
+    },
+    {
+      "symbol": "FileReadAsync",
+      "kind": "debug_hook",
+      "address": "0x0014D790",
+      "signature_size": 80,
+      "signature_sha256": "321140a3ca6bdc72b684dc11acb7b7453095532160730ef759d640097c05585f"
+    },
+    {
+      "symbol": "FilePoll",
+      "kind": "debug_hook",
+      "address": "0x0014DAD0",
+      "signature_size": 16,
+      "signature_sha256": "51a7d76d3d04ef24feab1ed2db041aabf2fadb4aebad5dd90652c0cfc1dd7171"
+    },
+    {
+      "symbol": "TimelineKick",
+      "kind": "debug_hook",
+      "address": "0x00150090",
+      "signature_size": 16,
+      "signature_sha256": "28eccc8624c27d66bdb83b2d55901cc8f581095b664ae495ae798c29e9ec80ab"
+    },
+    {
+      "symbol": "TimelineKickCheck",
+      "kind": "debug_hook",
+      "address": "0x00151FC8",
+      "signature_size": 16,
+      "signature_sha256": "3db9f217ac4ecee1cc3f338d5fb3c48acac18f9e64a96a5511867fe9735041a8"
+    },
+    {
+      "symbol": "TimelineVblank",
+      "kind": "debug_hook",
+      "address": "0x00152018",
+      "signature_size": 16,
+      "signature_sha256": "8de63ecb311ba2a5a93f695716dbb4f723ad340be81211f6dec28059b2691693"
+    },
+    {
+      "symbol": "GlowPass",
+      "kind": "hook",
+      "address": "0x0015DFC0",
+      "signature_size": 32,
+      "signature_sha256": "3f21ef5591a8d2cc42aa93390c31fc874aeef11ad53c2325db946fa0b265c0a6"
+    },
+    {
+      "symbol": "FrameBlend",
+      "kind": "hook",
+      "address": "0x0015F768",
+      "signature_size": 16,
+      "signature_sha256": "ed0c002f9c68ea77064bc2c082b28bc65b17580968a053fc5c2a4a53fed39e84"
+    },
+    {
+      "symbol": "TimelineWaitD1Idle",
+      "kind": "debug_hook",
+      "address": "0x001759C0",
+      "signature_size": 24,
+      "signature_sha256": "9a32f051123d8e32199091ec7188c83f41c0d709d095aa0db7068941ee289cdd"
+    },
+    {
+      "symbol": "TimelineWaitVblankKick",
+      "kind": "debug_hook",
+      "address": "0x001759F8",
+      "signature_size": 16,
+      "signature_sha256": "36e1388619f7cef542f2e9658264dfecf93eac82e8e2c9482317cb2bf096a27f"
+    },
+    {
+      "symbol": "LensBlur",
+      "kind": "hook",
+      "address": "0x001A9308",
+      "signature_size": 16,
+      "signature_sha256": "2c35d35bff95bf648755f80dbaedfc755f3e236045994fceac033e58d7bc057f"
+    },
+    {
+      "symbol": "VirtualKeyboard",
+      "kind": "hook",
+      "address": "0x001B0DF0",
+      "signature_size": 20,
+      "signature_sha256": "8cc6d167873834505d125577e329ccb9e2999d53d517a0e1d28f98b03d072e14"
+    },
+    {
+      "symbol": "VirtualKeyboardAddChar",
+      "kind": "lookup",
+      "address": "0x001B17A0",
+      "signature_size": 16,
+      "signature_sha256": "9adaa0d5e3ad8d2f0deb8f195294c736ee0346e7cc18c4968288f4eb26a5b1a5"
+    },
+    {
+      "symbol": "VirtualKeyboardBackspace",
+      "kind": "lookup",
+      "address": "0x001B18D8",
+      "signature_size": 20,
+      "signature_sha256": "582b4f6f605e5933e4d275817b590805a63223e64a51da8bff677164384d37a8"
+    },
+    {
+      "symbol": "PadButtonValue",
+      "kind": "debug_hook",
+      "address": "0x001B33B8",
+      "signature_size": 16,
+      "signature_sha256": "a17d3b5fa723c47b05d8dd56cc25fa65d86b4b87a6ef97da3660d908d5c052b6"
+    },
+    {
+      "symbol": "TimelineFrameLimiter",
+      "kind": "debug_hook",
+      "address": "0x001BFF10",
+      "signature_size": 20,
+      "signature_sha256": "a5e51cbfe674f76540819265466481d6cea41d5246b418f7d681af07becc45c1"
+    },
+    {
+      "symbol": "LodScale",
+      "kind": "hook",
+      "address": "0x001C2168",
+      "signature_size": 16,
+      "signature_sha256": "6bed1dadb699b982ffc8cce4834cebd4b2b212cebc814b0d1418a51d72476943"
+    },
+    {
+      "symbol": "PostRender",
+      "kind": "hook",
+      "address": "0x001EF640",
+      "signature_size": 16,
+      "signature_sha256": "f891da93775fdc2d5d8af6ab5bbacf399c1e199e0a1c83d3ce9d9496854aae08"
+    },
+    {
+      "symbol": "ApplyLook",
+      "kind": "hook",
+      "address": "0x0021C550",
+      "signature_size": 16,
+      "signature_sha256": "9fa0ac26b9915c2652aaa2e8281f3d86d32422bdf35c7d6de830ca7b2413fc56"
+    },
+    {
+      "symbol": "LookAcceleration",
+      "kind": "hook",
+      "address": "0x0023E8C8",
+      "signature_size": 16,
+      "signature_sha256": "f59a576fb3ed2103fa85f7f8800119d446361075b7964e1322db1509331ba949"
+    },
+    {
+      "symbol": "PitchAutoCentre",
+      "kind": "hook",
+      "address": "0x0023E9C8",
+      "signature_size": 16,
+      "signature_sha256": "eb5a8380017227c29a43ce5a44b591c3d71b7d42f872da60ed0c9c9fc73cfd1b"
+    },
+    {
+      "symbol": "ControllerUpdate",
+      "kind": "hook",
+      "address": "0x0023EE08",
+      "signature_size": 16,
+      "signature_sha256": "982c07ffcc37e42c159430bd1a6227c13c530a13f36ca33966cab2b52686aabf"
+    },
+    {
+      "symbol": "SifInitRpc",
+      "kind": "hook",
+      "address": "0x002B3158",
+      "signature_size": 20,
+      "signature_sha256": "a9fdcc0948335d5251c9f7c9287aa3473cafb46e44d6d9aec3f4723327b8ffd9"
+    },
+    {
+      "symbol": "SifStopModule",
+      "kind": "hook",
+      "address": "0x002B5AF0",
+      "signature_size": 16,
+      "signature_sha256": "307e5ebbb07e261f2302e55017683cfef6533d947224eda8a444e45654c847ba"
+    },
+    {
+      "symbol": "SifUnloadModule",
+      "kind": "hook",
+      "address": "0x002B5CF8",
+      "signature_size": 16,
+      "signature_sha256": "3371869e49b83602dd9ccad51ebdce846a50275f6ec801264a675c1b81d77709"
+    },
+    {
+      "symbol": "SifSearchModuleByName",
+      "kind": "hook",
+      "address": "0x002B5D88",
+      "signature_size": 16,
+      "signature_sha256": "e89975be6275f1815a406e1d2080c88fefb50a901a23ef1783379999916e7aca"
+    },
+    {
+      "symbol": "SifLoadModule",
+      "kind": "hook",
+      "address": "0x002B6060",
+      "signature_size": 16,
+      "signature_sha256": "1d4d4796760b38216bb45f5f2170fa9fdb3cb5e3c55b585e010ac802b44edc7d"
+    },
+    {
+      "symbol": "MovieRead",
+      "kind": "hook",
+      "address": "0x002DEB98",
+      "signature_size": 16,
+      "signature_sha256": "c2e64fbbe0d22fb0adcf328bec25a3227d330d752f4a790c1b725907c6537250"
+    },
+    {
+      "symbol": "MovieOpen",
+      "kind": "hook",
+      "address": "0x002DED00",
+      "signature_size": 44,
+      "signature_sha256": "05df28d0c8e1d221ef75dd3f9fd8bf9d52f8dadeb2784cace95a164b1cd09204"
+    },
+    {
+      "symbol": "MovieInputEnd",
+      "kind": "hook",
+      "address": "0x002DF800",
+      "signature_size": 16,
+      "signature_sha256": "916600a03f3a03ee6aa8fc6d5606feec6ac6d15deba77789c54759520b83e2d5"
+    },
+    {
+      "symbol": "MovieFeed",
+      "kind": "debug_hook",
+      "address": "0x002E0AC0",
+      "signature_size": 16,
+      "signature_sha256": "27b547cb95af91c2621a2e70053cca61d38202dfc49be61e93bc3b2bd5d9d45b"
+    },
+    {
+      "symbol": "MovieAudioFeed",
+      "kind": "debug_hook",
+      "address": "0x002E19C0",
+      "signature_size": 20,
+      "signature_sha256": "5dfe3e4af846cceab0895bc5ba9498f920b8bc83fc1c96e3ac5cb1fd0805c409"
+    },
+    {
+      "symbol": "MovieAudioFull",
+      "kind": "debug_hook",
+      "address": "0x002E1A40",
+      "signature_size": 16,
+      "signature_sha256": "f629a3ab60e27afdb8f5b4ba7f260c29384dc35f91d3ea65e0aca1efe5f05309"
+    },
+    {
+      "symbol": "ZoneParams",
+      "kind": "hook",
+      "address": "0x00339C38",
+      "signature_size": 16,
+      "signature_sha256": "9a50fb46db3a589d0bf58a88fab69b0742985b120fc5d20ddafa7fe0e4012c7b"
+    },
+    {
+      "symbol": "KeyboardModuleInit",
+      "kind": "hook",
+      "address": "0x003D7490",
+      "signature_size": 16,
+      "signature_sha256": "e13de07c0e7d3abfeedea84c6b2fcd8bd204ef79fd54cba6f21ec9452f793210"
+    },
+    {
+      "symbol": "StreamOpen",
+      "kind": "debug_hook",
+      "address": "0x00496168",
+      "signature_size": 32,
+      "signature_sha256": "2cab9f8b890241b7fd55e49c63f59f27ae6ac1ee9ef62567ab5ce44001960c84"
+    },
+    {
+      "symbol": "StreamRead",
+      "kind": "debug_hook",
+      "address": "0x004963B8",
+      "signature_size": 32,
+      "signature_sha256": "a36009aa5e5d9f54fc790df1edf42b09dc4ee140128999df01c25edee5d09738"
+    }
+  ]
+}

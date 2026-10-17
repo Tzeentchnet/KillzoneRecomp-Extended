@@ -3,8 +3,11 @@
 # A variant is name=ENV1=v1;ENV2=v2 (empty = defaults). Every run: KZ_FPS=120 KZ_IPU=off, the scripted input of the task, run_headless.ps1.
 # fps = (vif counter at t=200 - at t=150) / 50 from the [headless] lines; mean CPU load of the machine over the run is logged next to it.
 # Output: work\<Tag>_<variant>_<round>\ (stderr.log, gs_*.png), a summary line per run and the median per variant at the end.
-param([string]$Tag, [int]$Rounds = 3, [string]$VariantList, [string]$Config = 'tl', [int]$Seconds = 235, [switch]$Timeline, [switch]$Ipu)
-$wd = 'D:\KillzoneRecomp'
+param([string]$Tag, [int]$Rounds = 3, [string]$VariantList, [string]$Config = 'tl', [int]$Seconds = 235, [switch]$Timeline, [switch]$Ipu, [string]$Root = $env:KZ_ROOT, [string]$Iso = $env:KZ_ISO, [string]$Elf = $env:KZ_GAME_ELF)
+. "$PSScriptRoot\kz_paths.ps1"
+$wd = Resolve-KzRoot $Root
+$iso = Resolve-KzRequiredFile $Iso KZ_ISO Iso
+$elf = Resolve-KzRequiredFile $Elf KZ_GAME_ELF Elf
 $results = @{}
 $Variants = @($VariantList -split '\|')   # 'name=ENV=v;ENV2=v2|name2=' (a real array does not survive powershell -File)
 for ($r = 1; $r -le $Rounds; $r++) {
@@ -15,7 +18,7 @@ for ($r = 1; $r -le $Rounds; $r++) {
         $run = "${Tag}_${name}_$r"
         if ($Timeline) { $envset = ("KZ_TIMELINE=$wd\work\$run.csv;" + $envset).TrimEnd(';') }
         $load = Start-Process typeperf -ArgumentList '"\Processor(_Total)\% Processor Time"', '-si', '1', '-sc', "$($Seconds + 30)", '-o', "$wd\work\$run.load.csv", '-y' -PassThru -WindowStyle Hidden
-        $a = @('-NoProfile', '-File', "$wd\tools\scripts\tl_run.ps1", '-Name', $run, '-EnvSet', "`"$envset`"", '-Config', $Config, '-Seconds', "$Seconds")
+        $a = @('-NoProfile', '-File', "$wd\tools\scripts\tl_run.ps1", '-Name', $run, '-EnvSet', "`"$envset`"", '-Config', $Config, '-Seconds', "$Seconds", '-Root', "`"$wd`"", '-Iso', "`"$iso`"", '-Elf', "`"$elf`"")
         if ($Ipu) { $a += '-Ipu' }
         $p = Start-Process powershell -ArgumentList $a -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput "$wd\work\$run.out"
         Stop-Process -Id $load.Id -Force -ErrorAction SilentlyContinue

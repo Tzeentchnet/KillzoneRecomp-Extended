@@ -1,8 +1,16 @@
 # Local patches to submodules
 
-Applied on top of `ext/PS2Recomp` (upstream ran-j/PS2Recomp @ 75d729c). Re-apply after a fresh clone with:
+The numbered patches are historical topic-level records. They overlap, omit
+some final squash cleanup, and are not a linear `git apply` series. The
+generated `ps2recomp/combined.lock.diff` is the canonical base-to-gitlink
+reproduction patch. A fresh clone obtains the same tree through the pinned
+`ext/PS2Recomp` gitlink. Run:
 
-    git -C ext/PS2Recomp apply ../../patches/ps2recomp/*.patch
+    python tools/scripts/verify_deps.py
+
+The verifier checks every normalized topic-patch hash, validates the canonical
+patch hash, applies the canonical patch to the locked base, and requires the
+resulting tree to equal the pinned submodule tree.
 
 - `0001-recomp-resume-points-for-standalone-entry-blocks.patch` — the recompiler skipped resume-point registration
   for every `entry_*` function, assuming they are synthetic wrappers nested in a real function. Ghidra's export names

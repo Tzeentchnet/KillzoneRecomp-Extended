@@ -605,7 +605,12 @@ namespace
     }
 }
 
-bool kzGsAttach(PS2Runtime &runtime, void *hwnd, int windowHeight, const KzConfig &cfg, std::string *error)
+bool kzGsAttach(
+    PS2Runtime &runtime,
+    const kz::host::NativeWindow &window,
+    int windowHeight,
+    const KzConfig &cfg,
+    std::string *error)
 {
     GsState &s = gs();
     s.runtime = &runtime;
@@ -615,7 +620,7 @@ bool kzGsAttach(PS2Runtime &runtime, void *hwnd, int windowHeight, const KzConfi
     s.windowHeight = windowHeight;
     snapshotPrivRegs(s, s.privRegs);
     KzgsConfig kc = toKzgs(cfg, windowHeight);
-    if (!kzgsOpen(hwnd, kc, s.privRegs, error))
+    if (!kzgsOpen(window, kc, s.privRegs, error))
         return false;
     runtime.gs().setRasterBackend(std::make_unique<SkipDrawBackend>());
     PS2HostGs hooks;
