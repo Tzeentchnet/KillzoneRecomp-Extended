@@ -1,9 +1,9 @@
 # KillzoneRecomp execution handoff
 
-**Last updated:** 2026-10-17 15:04 PDT
+**Last updated:** 2026-10-17 16:03 PDT
 **Workspace:** `E:\Git\Killzone`
 **Implementation repository:** `E:\Git\Killzone\KillzoneRecomp-Extended`
-**Branch / implementation commit:** `master` / `3d4ebbbd4f74268ea2e326d3380cd49a4f5a1511`
+**Branch / implementation commit:** `master` / `cc7fc9cb51b84afc1fbf2208f26497bf6681b460`
 **PS2Recomp revision:** `cc1fc7d87930b48d20abd52974d1be77368eb60a`
 **GitHub origin:** `Tzeentchnet/KillzoneRecomp-Extended` is private during
 cleanup; the public upstream remains unchanged.
@@ -36,9 +36,10 @@ git submodule status --recursive
 ```
 
 The integrated work from BASE-01 through PORT-01, the Windows-validated
-implementations of VU-01 and MAC-01, and the boot/dispatch restoration are
-committed in `3d4ebbbd4f74268ea2e326d3380cd49a4f5a1511`. Preserve any future
-unrelated working-tree changes rather than resetting or cleaning them.
+implementations of VU-01 and MAC-01, the boot/dispatch restoration, and the
+memory-card and MPEG ownership corrections are committed through
+`cc7fc9cb51b84afc1fbf2208f26497bf6681b460`. Preserve any unrelated
+working-tree changes rather than resetting or cleaning them.
 
 ## 2. Parallelization labels
 
@@ -66,7 +67,7 @@ worktree, use subagents only for bounded read-only inventories.
 | BASE-03 | Complete | Checked MSVC and clang-cl presets configure successfully |
 | TEST-01 | Complete | Hermetic ISO-free CTest layer and disabled-by-default BYOD test |
 | TEST-02 | Complete | D3D11, D3D12, and Vulkan deterministic golden tests |
-| GEN-01 | Complete | 132,656 dispatch entries, 100,661 globally dispatchable resume cases, 37 locked hook signatures |
+| GEN-01 | Complete | 132,656 dispatch entries, 100,661 globally dispatchable resume cases, 42 locked hook signatures |
 | PORT-01 | Complete | Renderer-free `kz_host_core`; MSVC and clang-cl builds and host component tests pass |
 
 Latest Windows validation:
@@ -76,11 +77,13 @@ MSVC ISO-free:    12/12 passed
 clang-cl ISO-free: 12/12 passed
 Portable VU:      28/28 checks passed with MSVC and clang-cl
 Host smoke:       3/3 passed with MSVC and clang-cl
-Generated inventory: PASS
-Resume table: PASS
+Strict dependencies: 31 passed, 0 warnings, 0 failures
+Generated inventory: PASS with 42 locked hook signatures
+Resume table: PASS with 132,656 dispatch entries, 100,661 resume cases, and 31,995 targets
 Deterministic regeneration: 31,998 files, 0 changed/new, 0 removed
-Persisted D3D12 visual probe: PASS at 4 s, 8 s, and 12 s
-Visible MSVC D3D12 window: running and responsive
+Complete D3D12 movie probe: visible decoded frames at 35, 40, 45, and 50 s
+Minimized D3D12 boot probe: physical MCSERV, successful host memory-card operations, and main menu at 80 s
+Visible corrected MSVC D3D12 session: responsive Killzone window with nonblack logo frame; left running
 git diff --check: PASS
 ```
 
@@ -88,13 +91,17 @@ The current private generated tree has 31,996 generated translation units and
 31,995 generated functions. Retail content and generated game-derived source
 remain ignored and must not be committed.
 
-The Windows guest now boots through FilePS2 completion and produces continuous
-VIF/VU1/GIF/GS work without a missing dispatch target. On the current NVIDIA
-GeForce RTX 5070 driver (`32.0.16.1742`), D3D11 still presents an all-black
-image even though the guest and GS counters advance. D3D12 renders the intro
-correctly. The local MSVC `killzone.ini` therefore persists `Renderer=d3d12`;
-the launcher also directs users with a D3D11 black frame to D3D12. D3D11
-remains available and is not claimed fixed.
+The Windows guest now boots through FilePS2 completion, completes host
+memory-card operations while physical `MCSERV.IRX` remains loaded, renders the
+opening movies, and reaches the main menu. Authoritative bindings prevent
+overlapping generated owners from shadowing three memory-card and two MPEG
+runtime stubs. The MPEG wrappers establish `$ra` as the return PC before a
+handler can suspend, so asynchronous decoder waits resume in the guest caller.
+On the current NVIDIA GeForce RTX 5070 driver (`32.0.16.1742`), D3D11 still
+presents an all-black image even though the guest and GS counters advance.
+D3D12 renders correctly. The local MSVC `killzone.ini` therefore persists
+`Renderer=d3d12`; the launcher also directs users with a D3D11 black frame to
+D3D12. D3D11 remains available and is not claimed fixed.
 
 ## 4. Current Phase 0 dependency graph
 
@@ -427,14 +434,14 @@ Safe parallel work: ARM-01, native VU-01 acceptance, and the human legal/distrib
 ```
 
 ```text
-Task: Windows boot dispatch restoration and renderer isolation
+Task: Windows boot, movie, and menu restoration
 Owner/session: Copilot SDK implementation session, 2026-10-17
 Machine: Windows x64, NVIDIA GeForce RTX 5070 driver 32.0.16.1742, MSVC 19.44.35229.0, and clang-cl 23.1.3
 Status: complete for guest boot and D3D12 visual acceptance; D3D11 remains a reproducible backend/driver-specific black-output issue
 Files changed: config/killzone.toml; config/generated-manifest.json; tools/scripts/normalize_function_map.py; tools/scripts/find_code_pointers.py; tools/scripts/regen.py; tools/scripts/kz_generated_manifest.py; tools/scripts/inventory_generated.py; src/kz_hook_addresses.h; src/kz_overrides.cpp; src/kz_main.cpp; src/kz_launcher.cpp; README.md; docs/findings.md; HANDOFF.md; private work/functions.csv metadata and generated outputs
-Acceptance commands and exact results: deterministic regeneration produced 31,998 files with 0 changed/new and 0 removed; resume table PASS with 132,656 dispatch entries, 100,661 resume cases, and 31,995 targets; generated inventory PASS with 37 unique hook signatures; strict dependency and patch reconstruction 31 passed, 0 warnings, 0 failures; MSVC build and ISO-free 12/12 PASS; clang-cl build and ISO-free 12/12 PASS; persisted D3D12 headless run exited 0 and captured correct advancing intro frames at 4 s, 8 s, and 12 s; the visible MSVC build opened a responsive Killzone window and was left running; git diff --check PASS; integrated implementation committed as 3d4ebbbd4f74268ea2e326d3380cd49a4f5a1511
-New facts or decisions: upstream PS2Recomp was not the failed assumption. The private local function corpus omitted executable continuations, delay slots, generated resume PCs, and materialized callbacks. Schema-3 range normalization, fixed-point tail/resume closure, and narrow callback-boundary discovery restore global dispatchability. Explicit ELF plus ISO boot now remounts extracted disc files at cdrom0:. D3D11 and D3D12 receive the same valid GS stream, but only D3D12 produces nonblack output on this driver.
+Acceptance commands and exact results: deterministic regeneration produced 31,998 files with 0 changed/new and 0 removed; resume table PASS with 132,656 dispatch entries, 100,661 resume cases, and 31,995 targets; generated inventory PASS with 42 unique hook signatures; strict dependency and patch reconstruction 31 passed, 0 warnings, 0 failures; MSVC build and ISO-free 12/12 PASS; clang-cl build and ISO-free 12/12 PASS; D3D12 probes rendered decoded FMV frames at 35, 40, 45, and 50 seconds and reached the main menu at 75-80 seconds; the minimized probe kept physical MCSERV, completed host memory-card operations, and reported no MCSERV semaphore timeout; the rebuilt visible client opened a responsive Killzone game window and a 45-second capture contained the rendered Killzone logo rather than a black frame; git diff --check PASS; implementation committed as cc7fc9cb51b84afc1fbf2208f26497bf6681b460
+New facts or decisions: upstream PS2Recomp was not the failed assumption. The private local function corpus omitted executable continuations, delay slots, generated resume PCs, and materialized callbacks. Schema-3 range normalization, fixed-point tail/resume closure, and narrow callback-boundary discovery restore global dispatchability. Explicit ELF plus ISO boot now remounts extracted disc files at cdrom0:. First-registration-wins also allowed overlapping generated owners to shadow three configured memory-card stubs and two MPEG stubs. Authoritative local bindings restore coherent host memory-card state. Killzone-specific MPEG wrappers set `pc=$ra` before invoking handlers because `sceMpegGetPicture` may suspend; without that contract, the saved context resumed at the handler entry and looped instead of returning to the guest caller. D3D11 and D3D12 receive the same valid GS stream, but only D3D12 produces nonblack output on this driver.
 Blocker and minimal reproducer: D3D11 remains exactly black through a 90-second capture while D3D12 renders with the same executable, ELF, ISO, settings, and guest state. This does not block D3D12 play-testing. Native Apple Silicon acceptance remains unavailable on this Windows host.
-Next command: perform the manual visual test in the running D3D12 window; after Windows play-testing, continue the native macOS acceptance commands in the VU-01 and MAC-01 records
+Next command: continue the manual visual test in the running D3D12 window; after Windows play-testing, continue the native macOS acceptance commands in the VU-01 and MAC-01 records
 Safe parallel work: bounded D3D11 backend investigation may proceed independently of native ARM-01, VU-01, and MAC-01 acceptance
 ```
