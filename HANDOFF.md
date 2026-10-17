@@ -1,9 +1,9 @@
 # KillzoneRecomp execution handoff
 
-**Last updated:** 2026-10-17 15:00 PDT
+**Last updated:** 2026-10-17 15:04 PDT
 **Workspace:** `E:\Git\Killzone`
 **Implementation repository:** `E:\Git\Killzone\KillzoneRecomp-Extended`
-**Branch / HEAD:** `master` / `5f0700079f9ac4e14799d66d01747dbcdcec55f6`
+**Branch / implementation commit:** `master` / `3d4ebbbd4f74268ea2e326d3380cd49a4f5a1511`
 **PS2Recomp revision:** `cc1fc7d87930b48d20abd52974d1be77368eb60a`
 **GitHub origin:** `Tzeentchnet/KillzoneRecomp-Extended` is private during
 cleanup; the public upstream remains unchanged.
@@ -35,10 +35,10 @@ git status --short --untracked-files=all
 git submodule status --recursive
 ```
 
-The working tree is intentionally dirty and contains the uncommitted work from
-BASE-01 through PORT-01 plus the Windows-validated implementations of VU-01
-and MAC-01. Do not reset, clean, restore, or overwrite unrelated changes. No
-commit has been created.
+The integrated work from BASE-01 through PORT-01, the Windows-validated
+implementations of VU-01 and MAC-01, and the boot/dispatch restoration are
+committed in `3d4ebbbd4f74268ea2e326d3380cd49a4f5a1511`. Preserve any future
+unrelated working-tree changes rather than resetting or cleaning them.
 
 ## 2. Parallelization labels
 
@@ -372,9 +372,9 @@ tools\scripts\cmake_preset.ps1 -Preset win-clang-rel -Action build -Target kz_ho
   reverting files wholesale.
 - Keep the GitHub origin private until repository cleanup and an explicit
   human decision to publish it. Agents must not change repository visibility.
-- A different machine cannot receive the current uncommitted implementation
-  through Git. Before macOS execution, obtain explicit user authorization to
-  create a commit or an exact private patch bundle.
+- A different machine may fetch the committed implementation from the private
+  `origin/master`. Retail content, private function maps, and generated sources
+  remain excluded and must be provisioned separately on an authorized host.
 
 ## 10. Required end-of-session update
 
@@ -421,7 +421,7 @@ Status: in progress - implementation and Windows smoke complete; native AppleCla
 Files changed: CMakeLists.txt; CMakePresets.json; config/dependencies.lock.json; host/CMakeLists.txt; host/src/core_macos.mm; host/test/core_test.cpp; host/test/window_smoke.cpp; host/test/audio_smoke.cpp; README.md; docs/findings.md; ../plan.md; ../KillzoneRecomp_Master_PRD.md; HANDOFF.md
 Acceptance commands and exact results: focused clang-cl host suite 3/3; MSVC ISO-free 12/12; clang-cl ISO-free 12/12; dependency verification 31 passed, 0 warnings, 0 failures; generated inventory PASS; resume table PASS; git diff --check PASS
 New facts or decisions: the macOS Phase 0 preset builds the checksum-locked SDL 3.4.16 source; Darwin mappings enforce W^X and explicitly invalidate the instruction cache; Cocoa metrics require the main thread; Windows audio automation uses SDL dummy while native macOS acceptance uses CoreAudio
-Blocker and minimal reproducer: AppleClang ARM64 execution is unavailable on this Windows host, and this uncommitted tree cannot move to the macOS machine without user-authorized commit or private patch transfer. No implementation failure is known.
+Blocker and minimal reproducer: AppleClang ARM64 execution is unavailable on this Windows host. The committed source can now move through the private origin; no implementation failure is known.
 Next command: cmake --preset macos-arm64 && cmake --build --preset macos-arm64 && ctest --preset macos-arm64 --output-on-failure -R '^kz_host_(window|audio)_smoke$'
 Safe parallel work: ARM-01, native VU-01 acceptance, and the human legal/distribution disposition; GS-01 remains blocked on native MAC-01 acceptance and VU-02 remains blocked on native VU-01 acceptance
 ```
@@ -432,7 +432,7 @@ Owner/session: Copilot SDK implementation session, 2026-10-17
 Machine: Windows x64, NVIDIA GeForce RTX 5070 driver 32.0.16.1742, MSVC 19.44.35229.0, and clang-cl 23.1.3
 Status: complete for guest boot and D3D12 visual acceptance; D3D11 remains a reproducible backend/driver-specific black-output issue
 Files changed: config/killzone.toml; config/generated-manifest.json; tools/scripts/normalize_function_map.py; tools/scripts/find_code_pointers.py; tools/scripts/regen.py; tools/scripts/kz_generated_manifest.py; tools/scripts/inventory_generated.py; src/kz_hook_addresses.h; src/kz_overrides.cpp; src/kz_main.cpp; src/kz_launcher.cpp; README.md; docs/findings.md; HANDOFF.md; private work/functions.csv metadata and generated outputs
-Acceptance commands and exact results: deterministic regeneration produced 31,998 files with 0 changed/new and 0 removed; resume table PASS with 132,656 dispatch entries, 100,661 resume cases, and 31,995 targets; generated inventory PASS with 37 unique hook signatures; strict dependency and patch reconstruction 31 passed, 0 warnings, 0 failures; MSVC build and ISO-free 12/12 PASS; clang-cl build and ISO-free 12/12 PASS; persisted D3D12 headless run exited 0 and captured correct advancing intro frames at 4 s, 8 s, and 12 s; the visible MSVC build opened a responsive Killzone window and was left running; git diff --check PASS before this documentation update
+Acceptance commands and exact results: deterministic regeneration produced 31,998 files with 0 changed/new and 0 removed; resume table PASS with 132,656 dispatch entries, 100,661 resume cases, and 31,995 targets; generated inventory PASS with 37 unique hook signatures; strict dependency and patch reconstruction 31 passed, 0 warnings, 0 failures; MSVC build and ISO-free 12/12 PASS; clang-cl build and ISO-free 12/12 PASS; persisted D3D12 headless run exited 0 and captured correct advancing intro frames at 4 s, 8 s, and 12 s; the visible MSVC build opened a responsive Killzone window and was left running; git diff --check PASS; integrated implementation committed as 3d4ebbbd4f74268ea2e326d3380cd49a4f5a1511
 New facts or decisions: upstream PS2Recomp was not the failed assumption. The private local function corpus omitted executable continuations, delay slots, generated resume PCs, and materialized callbacks. Schema-3 range normalization, fixed-point tail/resume closure, and narrow callback-boundary discovery restore global dispatchability. Explicit ELF plus ISO boot now remounts extracted disc files at cdrom0:. D3D11 and D3D12 receive the same valid GS stream, but only D3D12 produces nonblack output on this driver.
 Blocker and minimal reproducer: D3D11 remains exactly black through a 90-second capture while D3D12 renders with the same executable, ELF, ISO, settings, and guest state. This does not block D3D12 play-testing. Native Apple Silicon acceptance remains unavailable on this Windows host.
 Next command: perform the manual visual test in the running D3D12 window; after Windows play-testing, continue the native macOS acceptance commands in the VU-01 and MAC-01 records
