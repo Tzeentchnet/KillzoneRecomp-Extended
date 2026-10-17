@@ -9,6 +9,7 @@
 #include "kz_ipu.h"
 #include "kz_sif_modules.h"
 #include "ps2_runtime.h"
+#include "ps2_stubs.h"
 #include "runtime/ee_scheduler.h"
 #include "runtime/ps2_timeline.h"
 
@@ -30,6 +31,9 @@ namespace
         {kz_hook::SifInitRpc, "sceSifInitRpc"},
         {kz_hook::SifLoadModule, "sceSifLoadModule"},
         {kz_hook::SifStopModule, "SifStopModule"}, // sceSifStopModule(modid, arg_len, args, *result)
+        {kz_hook::McInit, "sceMcInit"},
+        {kz_hook::McGetInfo, "sceMcGetInfo"},
+        {kz_hook::McFormat, "sceMcFormat"},
     };
 
     // Library functions the runtime has no handler for; implemented in kz_sif_modules.cpp.
@@ -47,10 +51,23 @@ namespace
         setReturnS32(ctx, 0);
     }
 
-    const CustomBinding kCustom[] = {
+    void kzSceMpegGetPicture(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        ctx->pc = getRegU32(ctx, 31);
+        ps2_stubs::sceMpegGetPicture(rdram, ctx, runtime);
+    }
 
+    void kzSceMpegClearRefBuff(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        ctx->pc = getRegU32(ctx, 31);
+        ps2_stubs::sceMpegClearRefBuff(rdram, ctx, runtime);
+    }
+
+    const CustomBinding kCustom[] = {
         {kz_hook::SifSearchModuleByName, &kzSceSifSearchModuleByName, "sceSifSearchModuleByName"},
         {kz_hook::SifUnloadModule, &kzSceSifUnloadModule, "sceSifUnloadModule"},
+        {kz_hook::MpegGetPicture, &kzSceMpegGetPicture, "sceMpegGetPicture"},
+        {kz_hook::MpegClearRefBuff, &kzSceMpegClearRefBuff, "sceMpegClearRefBuff"},
         {kz_hook::KeyboardModuleInit, &kzLgkbmInit, "lgkbm init"},
     };
 

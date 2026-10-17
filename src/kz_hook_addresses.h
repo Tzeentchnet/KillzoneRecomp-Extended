@@ -31,6 +31,9 @@ namespace kz_hook
     inline constexpr uint32_t SifUnloadModule = 0x002B5CF8u;
     inline constexpr uint32_t SifSearchModuleByName = 0x002B5D88u;
     inline constexpr uint32_t SifLoadModule = 0x002B6060u;
+    inline constexpr uint32_t McInit = 0x002BE788u;
+    inline constexpr uint32_t McGetInfo = 0x002BF180u;
+    inline constexpr uint32_t McFormat = 0x002BF458u;
     inline constexpr uint32_t MovieRead = 0x002DEB98u;
     inline constexpr uint32_t MovieOpen = 0x002DED00u;
     inline constexpr uint32_t MovieInputEnd = 0x002DF800u;
@@ -38,6 +41,8 @@ namespace kz_hook
     inline constexpr uint32_t MovieAudioFeed = 0x002E19C0u;
     inline constexpr uint32_t MovieAudioFull = 0x002E1A40u;
     inline constexpr uint32_t ZoneParams = 0x00339C38u;
+    inline constexpr uint32_t MpegGetPicture = 0x003CD750u;
+    inline constexpr uint32_t MpegClearRefBuff = 0x003CD9F8u;
     inline constexpr uint32_t KeyboardModuleInit = 0x003D7490u;
     inline constexpr uint32_t StreamOpen = 0x00496168u;
     inline constexpr uint32_t StreamRead = 0x004963B8u;
