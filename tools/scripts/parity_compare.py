@@ -6,11 +6,15 @@ Port events come from the script times (the script clock is the vsync counter ov
 within a tick); PCSX2 events are the '#ev' lines parity_pcsx2.py writes (vsync of the pad write).
 """
 import sys, os
-sys.path.insert(0, r'D:\KillzoneRecomp\tools\scripts')
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get("KZ_ROOT", SCRIPT_DIR.parents[1])).resolve()
+sys.path.insert(0, str(SCRIPT_DIR))
 from parity_analyze import Run
 import numpy as np
 
-W = r'D:\KillzoneRecomp\work'
+W = str(ROOT / "work")
 MAG, WST, FL, CRA, CRB = 'w:0x180', 'w:0xE0', 'c:0xE0', 'c:0x374', 'c:0x370'
 
 

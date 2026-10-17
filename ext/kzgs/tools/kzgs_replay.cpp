@@ -337,7 +337,9 @@ int main(int argc, char** argv)
 	HWND hidden_window = nullptr; // --window: a hidden window of the --present size, so the swap chain and the final-scale path (Bilinear Sharp pre-scale) match the game
 	if (use_window && present_w > 0 && present_h > 0)
 		hidden_window = CreateWindowExW(0, L"STATIC", L"kzgs_replay", WS_POPUP, 0, 0, present_w, present_h, nullptr, nullptr, nullptr, nullptr);
-	if (!kzgsOpen(hidden_window, cfg, regs, &err))
+	const kz::host::NativeWindow native_window =
+		hidden_window ? kz::host::NativeWindow::win32(hidden_window) : kz::host::NativeWindow{};
+	if (!kzgsOpen(native_window, cfg, regs, &err))
 	{
 		std::fprintf(stderr, "kzgsOpen failed: %s\n", err.c_str());
 		return 1;

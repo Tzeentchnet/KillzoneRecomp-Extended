@@ -1,14 +1,16 @@
 // kzgs: glue between the public API (src/kzgs.cpp) and the host shims (shim/*.cpp).
 #pragma once
 
+#include "kz_host/core.h"
+
 #include <cstdint>
 #include <functional>
 #include <string>
 
 namespace kzgs
 {
-	// Window handed to PCSX2 through Host::AcquireRenderWindow(). nullptr = surfaceless (no swap chain).
-	void SetRenderWindow(void* hwnd);
+	// Window handed to PCSX2 through Host::AcquireRenderWindow(). An empty handle is surfaceless.
+	void SetRenderWindow(const kz::host::NativeWindow& window);
 
 	// Last error reported by the GS through Host::ReportErrorAsync / ReportFormattedErrorAsync (thread-safe).
 	void ClearLastError();

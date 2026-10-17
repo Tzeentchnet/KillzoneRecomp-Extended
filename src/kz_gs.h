@@ -7,14 +7,19 @@
 // image uploads, VRAM reads), but its software rasterizer is skipped.
 
 #include "kz_config.h"
+#include "kz_host/core.h"
 
 #include <string>
 
 class PS2Runtime;
 
-// hwnd = Win32 window to render into, or nullptr for an offscreen (headless) device. windowHeight drives the
-// automatic internal resolution.
-bool kzGsAttach(PS2Runtime &runtime, void *hwnd, int windowHeight, const KzConfig &cfg, std::string *error);
+// An empty native window selects an offscreen device. windowHeight drives the automatic internal resolution.
+bool kzGsAttach(
+    PS2Runtime &runtime,
+    const kz::host::NativeWindow &window,
+    int windowHeight,
+    const KzConfig &cfg,
+    std::string *error);
 void kzGsDetach();
 
 // Main-thread notifications; applied on the game thread at the next vblank.

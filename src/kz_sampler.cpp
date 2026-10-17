@@ -2,7 +2,7 @@
 // dbghelp and prints the top frames. Generated functions are named FUN_<ee address>, so the output shows which
 // guest code is running — the main tool for diagnosing hangs during bring-up.
 
-#include "kz_sampler.h"
+#include "kz_host/core.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -72,8 +72,10 @@ namespace
     }
 }
 
-void kzStartStackSampler(int intervalSeconds, int maxFrames, const char *path)
+void kz::host::startStackSampler(int intervalSeconds, int maxFrames, const std::filesystem::path &path)
 {
+    if (intervalSeconds <= 0 || maxFrames <= 0 || path.empty())
+        throw Error(ErrorCode::InvalidArgument, 0, "Stack sampling requires a positive interval/frame count and an output path");
     std::thread([=]() {
         HANDLE process = GetCurrentProcess();
         SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
@@ -81,12 +83,21 @@ void kzStartStackSampler(int intervalSeconds, int maxFrames, const char *path)
         const DWORD self = GetCurrentThreadId();
         for (int n = 1;; ++n)
         {
-            std::this_thread::sleep_for(std::chrono::seconds(intervalSeconds));
-            FILE *out = std::fopen(path, "a");
+            sleepFor(std::chrono::seconds(intervalSeconds));
+            FILE *out = _wfopen(path.c_str(), L"a");
             if (!out)
+            {
+                std::fprintf(stderr, "[kz-host] cannot append stack samples to %ls\n", path.c_str());
                 continue;
+            }
             std::fprintf(out, "=== sample %d (t=%ds)\n", n, n * intervalSeconds);
             HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+            if (snap == INVALID_HANDLE_VALUE)
+            {
+                std::fprintf(out, "[kz-host] CreateToolhelp32Snapshot failed with Win32 error %lu\n", GetLastError());
+                std::fclose(out);
+                continue;
+            }
             THREADENTRY32 te = {sizeof(te)};
             for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te))
             {

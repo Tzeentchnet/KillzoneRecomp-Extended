@@ -1,10 +1,6 @@
 #include "kz_config.h"
 #include "kz_input.h"
-
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
+#include "kz_host/core.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -65,9 +61,9 @@ namespace
 
 std::filesystem::path kzConfigPath()
 {
-    wchar_t exe[MAX_PATH] = {};
-    GetModuleFileNameW(nullptr, exe, MAX_PATH);
-    return std::filesystem::path(exe).parent_path() / "killzone.ini";
+    if (const char *overridePath = std::getenv("KZ_CONFIG"); overridePath && *overridePath)
+        return std::filesystem::absolute(overridePath).lexically_normal();
+    return kz::host::executableDirectory() / "killzone.ini";
 }
 
 KzConfig kzLoadConfig(const std::filesystem::path &path)

@@ -186,13 +186,14 @@ int main(int argc, char **argv)
     SDL_Init(SDL_INIT_VIDEO);
     SDL_Window *win = SDL_CreateWindow("gs_replay", 1280, 896, SDL_WINDOW_HIDDEN);
     void *hwnd = SDL_GetPointerProperty(SDL_GetWindowProperties(win), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+    const kz::host::NativeWindow nativeWindow = kz::host::NativeWindow::win32(hwnd);
     alignas(16) static uint8_t regs[0x2000] = {};
     std::string err;
     kzgsSetLogCallback([](int level, const char *msg) {
         if (level <= 1)
             std::fprintf(stderr, "[kzgs] %s\n", msg);
     });
-    if (!kzgsOpen(hwnd, cfg, regs, &err))
+    if (!kzgsOpen(nativeWindow, cfg, regs, &err))
     {
         std::fprintf(stderr, "kzgsOpen failed: %s\n", err.c_str());
         return 1;

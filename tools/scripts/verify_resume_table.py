@@ -1,70 +1,104 @@
-"""Static check of a generated tree: every function-table entry whose address is not the start of the function it points to
-must be a `case` of that function's resume switch (otherwise a resume at that address would restart the function from
-its first instruction). Also reports table entries pointing at unknown functions and, for functions generated in dsp
-mode (ps2_cg_dsp.h), that every `goto label_X` has its label.
-Usage: verify_resume_table.py <generated dir>"""
-import os, re, sys
+"""Validate the generated dispatch table, source ownership, and resume switches."""
 
-gen = sys.argv[1]
-table_file = None
-for name in os.listdir(gen):
-    if name.endswith('.cpp') and 'function_table' in name.lower():
-        table_file = name
-if table_file is None:
-    for name in os.listdir(gen):
-        if name.endswith('.cpp') and not name.startswith(('FUN_', 'entry_', 'caseD_')):
-            with open(os.path.join(gen, name), errors='replace') as f:
-                if 'g_ps2RecompiledFunctionTable[' in f.read(20000):
-                    table_file = name
-                    break
-print('table file:', table_file)
-entries = re.findall(r'g_ps2RecompiledFunctionTable\[\d+\] = (\w+); // 0x([0-9a-f]+)',
-                     open(os.path.join(gen, table_file), errors='replace').read())
-print('table entries:', len(entries))
+from __future__ import annotations
 
-cases_cache = {}
-start_cache = {}
+import argparse
+import re
+import sys
+from pathlib import Path
+
+from kz_generated_manifest import (
+    ROOT,
+    format_errors,
+    inspect_resume_cases,
+    inspect_resume_table,
+    load_manifest,
+    parse_int,
+)
 
 
-def info(fn):
-    if fn in cases_cache:
-        return start_cache[fn], cases_cache[fn]
-    path = os.path.join(gen, fn + '.cpp')
-    if not os.path.exists(path):
-        cases_cache[fn] = None
-        start_cache[fn] = None
-        return None, None
-    text = open(path, errors='replace').read()
-    m = re.search(r'// Address: 0x([0-9a-f]+) - 0x([0-9a-f]+)', text)
-    start = int(m.group(1), 16) if m else None
-    cases = {int(c, 16) for c in re.findall(r'case 0x([0-9A-Fa-f]+)u: goto label_', text)}
-    labels = set(re.findall(r'^label_([0-9a-f]+):', text, re.M))
-    gotos = set(re.findall(r'goto label_([0-9a-f]+);', text))
-    missing = gotos - labels
-    if missing:
-        print('MISSING LABELS in', fn, sorted(missing)[:5])
-    cases_cache[fn] = cases
-    start_cache[fn] = start
-    return start, cases
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("generated", nargs="?", type=Path, default=ROOT / "generated")
+    parser.add_argument("--manifest", type=Path, default=ROOT / "config" / "generated-manifest.json")
+    args = parser.parse_args()
+
+    try:
+        inventory = inspect_resume_table(args.generated)
+        resume_cases = inspect_resume_cases(inventory)
+        manifest = load_manifest(args.manifest)
+    except (FileNotFoundError, OSError, ValueError) as error:
+        print(f"[FAIL] {error}", file=sys.stderr)
+        return 1
+
+    errors = [*inventory.errors, *resume_cases.errors]
+    expected = manifest["generated"]
+    expected_table = expected["function_table"]
+    executable_entry = parse_int(manifest["executable"]["entry"])
+    startup_entries = [
+        entry for entry in inventory.entries if entry.address == executable_entry
+    ]
+    if len(startup_entries) != 1:
+        errors.append(
+            f"ELF entry 0x{executable_entry:08X} has {len(startup_entries)} dispatch entries"
+        )
+    else:
+        startup_source = args.generated / f"{startup_entries[0].target}.cpp"
+        startup_text = startup_source.read_text(encoding="utf-8", errors="replace")
+        startup_range = re.search(
+            r"// Address:\s*0x([0-9A-Fa-f]+)\s*-\s*0x([0-9A-Fa-f]+)",
+            startup_text,
+        )
+        if not startup_range:
+            errors.append(f"ELF entry source has no generated address range: {startup_source.name}")
+        else:
+            startup_end = int(startup_range.group(2), 16)
+            publishes_fallthrough = re.search(
+                rf"ps2DspTail\(ctx,\s*0x{startup_end:X}u\)",
+                startup_text,
+                flags=re.IGNORECASE,
+            )
+            if publishes_fallthrough and startup_end not in inventory.dispatch_addresses:
+                errors.append(
+                    f"ELF entry fallthrough 0x{startup_end:08X} has no dispatch entry"
+                )
+    comparisons = {
+        "generated file count": (len(inventory.all_files), expected["file_count"]),
+        "translation unit count": (len(inventory.cpp_files), expected["translation_unit_count"]),
+        "generated function count": (len(inventory.declarations), expected["generated_function_count"]),
+        "generated stub function count": (
+            len(inventory.stub_declarations),
+            expected["generated_stub_function_count"],
+        ),
+        "dispatch entry count": (len(inventory.entries), expected["dispatch_entry_count"]),
+        "dispatch target count": (len(inventory.dispatch_targets), expected["dispatch_unique_target_count"]),
+        "resume-case dispatch entry count": (
+            resume_cases.resumable_entry_count,
+            expected["resume_case_dispatch_entry_count"],
+        ),
+        "resume-case owner count": (
+            resume_cases.owner_function_count,
+            expected["resume_case_owner_function_count"],
+        ),
+        "function table base": (inventory.base, parse_int(expected_table["base"])),
+        "function table end": (inventory.end, parse_int(expected_table["end"])),
+        "function table slot count": (inventory.slot_count, expected_table["slot_count"]),
+    }
+    for label, (actual, locked) in comparisons.items():
+        if actual != locked:
+            errors.append(f"{label} is {actual}, locked manifest requires {locked}")
+
+    if errors:
+        print(format_errors(errors), file=sys.stderr)
+        return 1
+    print(
+        "Resume table verification: PASS "
+        f"({len(inventory.entries)} dispatch entries, "
+        f"{resume_cases.resumable_entry_count} resume cases, "
+        f"{len(inventory.dispatch_targets)} generated targets)"
+    )
+    return 0
 
 
-bad = 0
-unknown = 0
-mapped_inside = 0
-for fn, addr_hex in entries:
-    addr = int(addr_hex, 16)
-    start, cases = info(fn)
-    if cases is None:
-        # stubs / library functions are declared in a stubs file, not one file per function
-        unknown += 1
-        continue
-    if start is None or addr == start:
-        continue
-    mapped_inside += 1
-    if addr not in cases:
-        bad += 1
-        if bad <= 20:
-            print(f'NOT A RESUME CASE: table 0x{addr:x} -> {fn} (function starts 0x{start:x})')
-print(f'entries mapped to a function containing the address: {mapped_inside}; without a resume case: {bad}; '
-      f'no function file (stubs): {unknown}')
-sys.exit(1 if bad else 0)
+if __name__ == "__main__":
+    raise SystemExit(main())

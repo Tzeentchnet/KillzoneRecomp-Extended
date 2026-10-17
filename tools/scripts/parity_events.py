@@ -1,6 +1,8 @@
 """Print the state-change timeline of a parity log: python parity_events.py <csv> <rate> [word ...]"""
 import sys
-sys.path.insert(0, r'D:\KillzoneRecomp\tools\scripts')
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from parity_analyze import Run
 import numpy as np
 r = Run(sys.argv[1], float(sys.argv[2]))

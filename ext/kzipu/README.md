@@ -225,7 +225,11 @@ What the recompiled game does, from `generated/` (read-only observation):
 
 ## Test (`test/kzipu_test.cpp`)
 
-The test runs on the real disc image, `C:\Users\drakolord\Downloads\Killzone (USA)\Killzone (USA).iso`.
+The BYOD test requires an explicitly authorized disc image:
+
+```text
+kzipu_test --iso <path-to-disc-image>
+```
 
 1. It reads the ISO9660 root and scans `FILES*.DAT` for PSS videos. A video starts with an MPEG-2 pack header
    directly followed by a system header. There are 66 videos across `FILES.DAT`-`FILES03.DAT`, alternating 512x448

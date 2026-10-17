@@ -8,6 +8,10 @@
 cmake_minimum_required(VERSION 3.24)
 project(kzgs C CXX ASM_MASM)
 
+if(NOT TARGET kz_host_core)
+	add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../host" "${CMAKE_CURRENT_BINARY_DIR}/kz_host")
+endif()
+
 if(NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
 	message(FATAL_ERROR "kzgs only supports MSVC x64.")
 endif()
@@ -290,7 +294,7 @@ list(TRANSFORM KZGS_GS_SRCS PREPEND "${P2SRC}/")
 
 file(GLOB KZGS_SHIM_SRCS CONFIGURE_DEPENDS "${KZGS_ROOT}/shim/*.cpp")
 add_library(kzgs_gs OBJECT ${KZGS_GS_SRCS} ${KZGS_SHIM_SRCS})
-target_link_libraries(kzgs_gs PRIVATE kzgs_flags)
+target_link_libraries(kzgs_gs PRIVATE kzgs_flags kz_host_core)
 target_precompile_headers(kzgs_gs PRIVATE "${P2SRC}/PrecompiledHeader.h")
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -308,6 +312,7 @@ add_library(kzgs STATIC
 	$<TARGET_OBJECTS:kzgs_gs>
 )
 target_link_libraries(kzgs PRIVATE kzgs_flags)
+target_link_libraries(kzgs PUBLIC kz_host_core)
 target_precompile_headers(kzgs PRIVATE "${P2SRC}/PrecompiledHeader.h")
 target_include_directories(kzgs PUBLIC "${KZGS_ROOT}/include")
 target_include_directories(kzgs PRIVATE "${KZGS_ROOT}/third_party/smaa")
@@ -358,7 +363,7 @@ if(KZGS_BUILD_TEST)
 	add_executable(kzgs_test "${KZGS_ROOT}/test/kzgs_test.cpp")
 	target_link_libraries(kzgs_test PRIVATE kzgs)
 	target_compile_features(kzgs_test PRIVATE cxx_std_20)
-	target_compile_definitions(kzgs_test PRIVATE KZGS_TEST_OUT_DIR="${KZGS_ROOT}/test")
+	target_compile_definitions(kzgs_test PRIVATE KZGS_TEST_OUT_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-output")
 	kzgs_stage_resources(kzgs_test)
 endif()
 

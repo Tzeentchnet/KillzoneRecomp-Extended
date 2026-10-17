@@ -12,15 +12,17 @@
 # (work/pcsx2_drive/shots), and the log is work/pcsx2_drive/drive.log.
 # Path used for the 2026-09-29 gameplay reference (savestates 09/10): start (menu), cross x5 (Game, Campaign, profile,
 # level, Easy), cross (Templar), start + cross (skip the intro movie), save 9.
-import os, shutil, struct, subprocess, sys, time
+import argparse, os, shutil, struct, subprocess, sys, time
+from pathlib import Path
 
-sys.path.insert(0, r'D:\KillzoneRecomp\tools\scripts')
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
 from pine import Pine
 
-ROOT = r'D:\KillzoneRecomp'
+ROOT = str(Path(os.environ.get("KZ_ROOT", SCRIPT_DIR.parents[1])).resolve())
 W = os.path.join(ROOT, 'work', 'pcsx2_drive')
 PCSX2 = os.path.join(ROOT, 'tools', 'pcsx2')
-ISO = r'C:\Users\drakolord\Downloads\Killzone (USA)\Killzone (USA).iso'
+ISO = ''
 PNACH_SRC = os.path.join(ROOT, 'tools', 'scripts', 'pcsx2_pad_hook.pnach')
 PNACH_DST = os.path.join(PCSX2, 'patches', 'SCUS-97402_CAAEC49C.pnach')
 INI = os.path.join(PCSX2, 'inis', 'PCSX2.ini')
@@ -29,7 +31,7 @@ BTN = {'select': 0x0001, 'start': 0x0008, 'up': 0x0010, 'right': 0x0020, 'down':
        'cross': 0x4000, 'square': 0x8000}
 
 
-def make_memcard():
+def make_memcard(port_save):
     root = os.path.join(PCSX2, 'memcards', 'KZ.ps2')
     os.makedirs(root, exist_ok=True)
     sb = bytearray(b'\xff' * 0x2000)  # PS2 memory card superblock of an 8 MB card
@@ -45,13 +47,44 @@ def make_memcard():
     open(os.path.join(root, '_pcsx2_superblock'), 'wb').write(sb)
     save = os.path.join(root, 'BASCUS-974024BCCDDB8')
     if not os.path.exists(save):
-        shutil.copytree(os.path.join(ROOT, 'game', 'mc0', 'BASCUS-974024BCCDDB8'), save)
+        shutil.copytree(port_save, save)
 
 
 def main():
+    global ROOT, W, PCSX2, ISO, PNACH_SRC, PNACH_DST, INI
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--root', default=os.environ.get('KZ_ROOT', ROOT))
+    parser.add_argument('--iso', default=os.environ.get('KZ_ISO'))
+    parser.add_argument('--pcsx2-dir', default=os.environ.get('KZ_PCSX2_DIR'))
+    parser.add_argument('--port-save', default=os.environ.get('KZ_PORT_SAVE'))
+    args = parser.parse_args()
+    if not args.iso:
+        parser.error('specify --iso or set KZ_ISO')
+    if not args.port_save:
+        parser.error('specify --port-save or set KZ_PORT_SAVE')
+
+    ROOT = str(Path(args.root).expanduser().resolve())
+    ISO = str(Path(args.iso).expanduser().resolve())
+    PCSX2 = str(
+        Path(args.pcsx2_dir).expanduser().resolve()
+        if args.pcsx2_dir
+        else Path(ROOT) / 'tools' / 'pcsx2'
+    )
+    port_save = str(Path(args.port_save).expanduser().resolve())
+    if not os.path.isfile(ISO):
+        parser.error(f'ISO does not exist: {ISO}')
+    if not os.path.isfile(os.path.join(PCSX2, 'pcsx2-qt.exe')):
+        parser.error(f'PCSX2 executable does not exist under {PCSX2}')
+    if not os.path.isdir(port_save):
+        parser.error(f'port save directory does not exist: {port_save}')
+
+    W = os.path.join(ROOT, 'work', 'pcsx2_drive')
+    PNACH_SRC = os.path.join(ROOT, 'tools', 'scripts', 'pcsx2_pad_hook.pnach')
+    PNACH_DST = os.path.join(PCSX2, 'patches', 'SCUS-97402_CAAEC49C.pnach')
+    INI = os.path.join(PCSX2, 'inis', 'PCSX2.ini')
     os.makedirs(os.path.join(W, 'shots'), exist_ok=True)
     log = open(os.path.join(W, 'drive.log'), 'a', buffering=1)
-    make_memcard()
+    make_memcard(port_save)
     ini_backup = open(INI).read()
     if '[MemoryCards]' not in ini_backup:
         open(INI, 'w').write(ini_backup + '\n[MemoryCards]\nSlot1_Enable = true\nSlot1_Filename = KZ.ps2\nSlot2_Enable = false\n')

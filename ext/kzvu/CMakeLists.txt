@@ -8,6 +8,10 @@
 cmake_minimum_required(VERSION 3.24)
 project(kzvu C CXX)
 
+if(NOT TARGET kz_host_core)
+	add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../host" "${CMAKE_CURRENT_BINARY_DIR}/kz_host")
+endif()
+
 if(NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
 	message(FATAL_ERROR "kzvu only supports MSVC x64.")
 endif()
@@ -109,7 +113,7 @@ set(KZVU_VU_SRCS
 )
 file(GLOB KZVU_SHIM_SRCS CONFIGURE_DEPENDS "${KZVU_ROOT}/shim/*.cpp")
 add_library(kzvu_vu OBJECT ${KZVU_VU_SRCS} ${KZVU_SHIM_SRCS})
-target_link_libraries(kzvu_vu PRIVATE kzvu_flags)
+target_link_libraries(kzvu_vu PRIVATE kzvu_flags kz_host_core)
 target_include_directories(kzvu_vu PRIVATE "${KZVU_ROOT}/include") # kzvu.h, for the diagnostics in shim/unity/KzvuMicroVU.cpp
 set_source_files_properties(${KZVU_VU_SRCS} PROPERTIES COMPILE_OPTIONS "/FI${KZVU_ROOT}/shim/include/kzvu_prefix.h")
 
@@ -123,6 +127,7 @@ add_library(kzvu STATIC
 	$<TARGET_OBJECTS:kzvu_vu>
 )
 target_link_libraries(kzvu PRIVATE kzvu_flags)
+target_link_libraries(kzvu PUBLIC kz_host_core)
 set_source_files_properties("${KZVU_ROOT}/src/kzvu.cpp" PROPERTIES COMPILE_OPTIONS "/FI${KZVU_ROOT}/shim/include/kzvu_prefix.h")
 target_include_directories(kzvu PUBLIC "${KZVU_ROOT}/include")
 target_link_libraries(kzvu INTERFACE pathcch.lib)

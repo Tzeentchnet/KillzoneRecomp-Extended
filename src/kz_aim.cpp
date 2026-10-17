@@ -1,6 +1,7 @@
 #include "kz_aim.h"
 
 #include "kz_config.h"
+#include "kz_hook_addresses.h"
 #include "kz_input.h"
 
 #include "ps2_runtime.h"
@@ -35,12 +36,12 @@
 //            FUN_001b17a0(obj, ch)), but no USB keyboard is emulated. obj+0x21C == 1 while the keyboard is open.
 namespace
 {
-    constexpr uint32_t kCtrlUpdate = 0x0023EE08u;
-    constexpr uint32_t kApplyLook = 0x0021C550u;
-    constexpr uint32_t kPitchAutoCentre = 0x0023E9C8u;
-    constexpr uint32_t kVkKeyboard = 0x001B0DF0u;
-    constexpr uint32_t kVkAddChar = 0x001B17A0u;
-    constexpr uint32_t kVkBackspace = 0x001B18D8u;
+    constexpr uint32_t kCtrlUpdate = kz_hook::ControllerUpdate;
+    constexpr uint32_t kApplyLook = kz_hook::ApplyLook;
+    constexpr uint32_t kPitchAutoCentre = kz_hook::PitchAutoCentre;
+    constexpr uint32_t kVkKeyboard = kz_hook::VirtualKeyboard;
+    constexpr uint32_t kVkAddChar = kz_hook::VirtualKeyboardAddChar;
+    constexpr uint32_t kVkBackspace = kz_hook::VirtualKeyboardBackspace;
 
     constexpr float kRadPerCount = 0.05f * 3.14159265f / 180.0f; // at sensitivity 1.0: 0.05 degrees per count
     constexpr double kStaleSeconds = 0.25; // mouse motion older than this (menus, loading, pause) is dropped
@@ -331,7 +332,7 @@ void kzAimInstall(PS2Runtime &runtime)
     const bool vk = g_vkAddChar && g_vkBackspace && hook(runtime, kVkKeyboard, &vkKeyboard, g_origVkKeyboard);
     std::printf("[kz] keyboard text entry: %s\n", vk ? "installed" : "FAILED");
     if (std::getenv("KZ_PAD_LOG"))
-        hook(runtime, 0x001B33B8u, &buttonValue, g_origButtonValue);
+        hook(runtime, kz_hook::PadButtonValue, &buttonValue, g_origButtonValue);
 
     if (const char *v = std::getenv("KZ_AIM"); v && std::strcmp(v, "off") == 0)
     {

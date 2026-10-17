@@ -5,11 +5,11 @@
 
 #include "common/CrashHandler.h"
 #include "common/RedtapeWindows.h"
+#include "kz_host/core.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <intrin.h>
 #include <string>
 #include <vector>
 
@@ -32,27 +32,12 @@ thread_local VURegs* kzvu_vu0 = &vuRegs[0];
 static ProcessorFeatures DetectProcessorFeatures()
 {
 	ProcessorFeatures f = {};
-	int r[4];
-	__cpuid(r, 0);
-	const int max_leaf = r[0];
-	__cpuid(r, 1);
-	const bool osxsave = (r[2] >> 27) & 1;
-	const bool avx = (r[2] >> 28) & 1;
-	f.hasFMA = (r[2] >> 12) & 1;
-	bool ymm_os = false;
-	if (osxsave)
-		ymm_os = (_xgetbv(0) & 6) == 6;
-	bool avx2 = false;
-	if (max_leaf >= 7)
-	{
-		__cpuidex(r, 7, 0);
-		avx2 = (r[1] >> 5) & 1;
-		f.hasBMI2 = (r[1] >> 8) & 1;
-	}
-	if (avx && ymm_os)
-		f.vectorISA = avx2 ? ProcessorFeatures::VectorISA::AVX2 : ProcessorFeatures::VectorISA::AVX;
-	else
-		f.vectorISA = ProcessorFeatures::VectorISA::SSE4;
+	const kz::host::CpuFeatures host = kz::host::cpuFeatures();
+	f.hasFMA = host.fma;
+	f.hasBMI2 = host.bmi2;
+	f.vectorISA = host.simd == kz::host::SimdLevel::Avx2 ? ProcessorFeatures::VectorISA::AVX2 :
+		host.simd == kz::host::SimdLevel::Avx ? ProcessorFeatures::VectorISA::AVX :
+		ProcessorFeatures::VectorISA::SSE4;
 	f.hasSlowGather = false;
 	return f;
 }
@@ -81,8 +66,7 @@ void CPU_INT(EE_EventType n, s32 ecycle)
 }
 
 // ---- JIT code memory --------------------------------------------------------------------------------------------------
-static u8* s_code = nullptr;
-static u32 s_code_size = 0;
+static kz::host::MemoryMapping s_code;
 
 bool kzvu::AllocCodeCache(u32 bytes, std::string* err)
 {
@@ -91,28 +75,27 @@ bool kzvu::AllocCodeCache(u32 bytes, std::string* err)
 	// Anywhere in the address space is fine: the recompiled code reaches kzvu's globals (VU registers, VU memory,
 	// microVU state, all inside the executable image) through the text pointer register, and calls far functions
 	// indirectly, the same way PCSX2 places its code cache.
-	s_code = static_cast<u8*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
-	if (!s_code)
+	try
+	{
+		s_code = kz::host::MemoryMapping::allocate(bytes, kz::host::MemoryProtection::ReadWriteExecute);
+	}
+	catch (const kz::host::Error& error)
 	{
 		if (err)
-			*err = "VirtualAlloc of the microVU code cache failed (error " + std::to_string(GetLastError()) + ")";
+			*err = "microVU code-cache allocation failed: " + std::string(error.what());
 		return false;
 	}
-	s_code_size = bytes;
 	return true;
 }
 
 void kzvu::FreeCodeCache()
 {
-	if (s_code)
-		VirtualFree(s_code, 0, MEM_RELEASE);
-	s_code = nullptr;
-	s_code_size = 0;
+	s_code.reset();
 }
 
 u8* kzvu::CodeCacheBase()
 {
-	return s_code;
+	return static_cast<u8*>(s_code.data());
 }
 
 u8* SysMemory::GetCodePtr(size_t offset)
@@ -123,7 +106,7 @@ u8* SysMemory::GetCodePtr(size_t offset)
 	pxAssertRel(offset >= HostMemoryMap::mVU0recOffset &&
 					offset <= HostMemoryMap::mVU1recOffset + HostMemoryMap::mVU1recSize,
 		"kzvu only provides microVU0/microVU1 code memory");
-	return s_code + (offset - HostMemoryMap::mVU0recOffset);
+	return static_cast<u8*>(s_code.data()) + (offset - HostMemoryMap::mVU0recOffset);
 }
 
 // ---- GIF PATH1 (XGKICK) -------------------------------------------------------------------------------------------------

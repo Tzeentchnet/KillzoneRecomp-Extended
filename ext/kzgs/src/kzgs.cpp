@@ -218,10 +218,7 @@ namespace
 	// ---------------------------------------------------------------------------------------------------------------
 	static std::string ExeDir()
 	{
-		wchar_t buf[MAX_PATH * 2];
-		const DWORD len = GetModuleFileNameW(nullptr, buf, static_cast<DWORD>(std::size(buf)));
-		std::string path = StringUtil::WideStringToUTF8String(std::wstring_view(buf, len));
-		return std::string(Path::GetDirectory(path));
+		return kz::host::pathToUtf8(kz::host::executableDirectory());
 	}
 
 	static GSRendererType ToRendererType(KzgsRenderer r)
@@ -740,7 +737,7 @@ namespace
 // Public API
 // ---------------------------------------------------------------------------------------------------------------------
 
-bool kzgsOpen(void* hwnd, const KzgsConfig& cfg, uint8_t* privRegs, std::string* err)
+bool kzgsOpen(const kz::host::NativeWindow& window, const KzgsConfig& cfg, uint8_t* privRegs, std::string* err)
 {
 	if (s_open.load())
 	{
@@ -766,7 +763,7 @@ bool kzgsOpen(void* hwnd, const KzgsConfig& cfg, uint8_t* privRegs, std::string*
 
 	s_caller_regs = privRegs;
 	std::memcpy(s_gs_regs, privRegs, sizeof(s_gs_regs));
-	kzgs::SetRenderWindow(hwnd);
+	kzgs::SetRenderWindow(window);
 
 	OpenResult result;
 	s_gs_thread = std::thread(GSThreadMain, cfg, &result);

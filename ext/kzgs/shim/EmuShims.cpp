@@ -22,6 +22,7 @@
 #include "common/CrashHandler.h"
 #include "common/RedtapeWindows.h"
 #include "BuildVersion.h"
+#include "kz_host/core.h"
 
 // ---- EE globals that PCSX2 headers bind static references to (Dmac.h, R5900.h) ---------------------------------------
 alignas(__pagealignsize) u8 eeHw[Ps2MemSize::Hardware];
@@ -32,8 +33,10 @@ alignas(16) cpuRegistersPack _cpuRegistersPack;
 // calls/jumps from generated code into the binary stay in range.
 u8* SysMemory::GetCodePtr(size_t offset)
 {
-	static u8* s_swrec = []() -> u8* {
-		const uintptr_t image = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+	static kz::host::MemoryMapping s_swrec = [] {
+		const uintptr_t anchorAddress = reinterpret_cast<uintptr_t>(&SysMemory::GetCodePtr);
+		const uintptr_t granularity = kz::host::memoryAllocationGranularity();
+		const uintptr_t image = anchorAddress - (anchorAddress % granularity);
 		constexpr uintptr_t step = 0x10000000; // 256 MB
 		for (uintptr_t d = step; d < 0x70000000; d += step)
 		{
@@ -41,16 +44,28 @@ u8* SysMemory::GetCodePtr(size_t offset)
 			{
 				if (!hint)
 					continue;
-				if (void* p = VirtualAlloc(reinterpret_cast<void*>(hint), HostMemoryMap::SWrecSize,
-						MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE))
-					return static_cast<u8*>(p);
+				try
+				{
+					return kz::host::MemoryMapping::allocate(
+						HostMemoryMap::SWrecSize,
+						kz::host::MemoryProtection::ReadWriteExecute,
+						reinterpret_cast<void*>(hint),
+						kz::host::MemoryPlacement::ExactAddress);
+				}
+				catch (const kz::host::Error& error)
+				{
+					if (error.code() != kz::host::ErrorCode::SystemFailure)
+						throw;
+				}
 			}
 		}
-		return static_cast<u8*>(VirtualAlloc(nullptr, HostMemoryMap::SWrecSize, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+		return kz::host::MemoryMapping::allocate(
+			HostMemoryMap::SWrecSize,
+			kz::host::MemoryProtection::ReadWriteExecute);
 	}();
 	if (offset < HostMemoryMap::SWrecOffset || offset > HostMemoryMap::SWrecOffset + HostMemoryMap::SWrecSize || !s_swrec)
 		return nullptr;
-	return s_swrec + (offset - HostMemoryMap::SWrecOffset);
+	return static_cast<u8*>(s_swrec.data()) + (offset - HostMemoryMap::SWrecOffset);
 }
 
 void CrashHandler::WriteDumpForCaller() {}

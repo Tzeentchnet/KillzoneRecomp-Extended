@@ -2,10 +2,10 @@
 //
 // Usage: killzone.exe [--elf <path to SCUS_974.02>] [--iso <path to Killzone ISO>] [--sample <seconds>]
 // Defaults: --elf game/SCUS_974.02 (relative to the working directory); --iso unset.
-// The ELF's directory is mounted as cdrom0:. The ISO, when given, backs raw sceCdRead sector reads.
+// With an ISO, its extracted boot files are mounted as cdrom0: and the image backs raw sceCdRead sector reads.
 
 #include "ps2_runtime.h"
-#include "kz_sampler.h"
+#include "kz_host/core.h"
 
 #ifdef KZ_PGO_GEN
 extern "C" int __llvm_profile_write_file(void);
@@ -23,13 +23,9 @@ extern "C" int __llvm_profile_write_file(void);
 #include "kz_timefix.h"
 #include "runtime/ps2_host_arena.h"
 #include "kz_audio.h"
+#include "kz_sdl_host.h"
 
 #include <SDL3/SDL.h>
-#include <xmmintrin.h>
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
 #include <cstdio>
 
 #include <algorithm>
@@ -179,26 +175,10 @@ namespace
     // previous run's log is kept as killzone.prev.log. Returns true when the log file is in use.
     bool openLogFile()
     {
-        // Redirected to a file or pipe (development, automation): leave it. A console counts as "nowhere": started
-        // from Explorer the game gets its own console window, which is closed below once the log file is open.
-        const HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
-        const DWORD type = (out != nullptr && out != INVALID_HANDLE_VALUE) ? GetFileType(out) : FILE_TYPE_UNKNOWN;
-        if (type == FILE_TYPE_DISK || type == FILE_TYPE_PIPE)
-            return false;
-        const std::filesystem::path log = kzConfigPath().parent_path() / "killzone.log";
-        std::error_code ec;
-        std::filesystem::rename(log, kzConfigPath().parent_path() / "killzone.prev.log", ec);
-        if (!std::freopen(log.string().c_str(), "w", stdout))
-            return false;
-        std::freopen(log.string().c_str(), "a", stderr);
-        std::setvbuf(stdout, nullptr, _IOLBF, 4096);
-        std::setvbuf(stderr, nullptr, _IONBF, 0);
-        std::ios::sync_with_stdio(true);
-        // A console that exists only for this process (double-click start) is not needed any more.
-        DWORD pids[2];
-        if (GetConsoleProcessList(pids, 2) == 1)
-            FreeConsole();
-        return true;
+        const std::filesystem::path directory = kzConfigPath().parent_path();
+        return kz::host::redirectStandardStreams(
+                   directory / "killzone.log",
+                   directory / "killzone.prev.log") == kz::host::StandardStreamRedirection::Redirected;
     }
 }
 
@@ -206,12 +186,16 @@ int main(int argc, char *argv[])
 {
     try
     {
+        kz::host::setCurrentThreadName("Killzone Main");
+        kz::host::installCrashReporterIfRequested();
         const Options opts = parseArgs(argc, argv);
         if (opts.selfTest)
             return runSelfTest();
         if (openLogFile())
         {
-            _putenv_s("KZ_AUDIO_STATS", std::getenv("KZ_AUDIO_STATS") ? std::getenv("KZ_AUDIO_STATS") : "30");
+            kz::host::setEnvironment(
+                "KZ_AUDIO_STATS",
+                std::getenv("KZ_AUDIO_STATS") ? std::getenv("KZ_AUDIO_STATS") : "30");
             std::cout << "[kz] log file opened (killzone.log)" << std::endl;
         }
         kzConfig() = kzLoadConfig(kzConfigPath());
@@ -224,16 +208,14 @@ int main(int argc, char *argv[])
             if (!kzRunLauncher(cfg))
                 return 0;
         }
-        // Boot files: an explicit --elf (development), otherwise the small files extracted from the user's disc image
-        // into <exe dir>/disc. Game data is read from the image itself.
-        std::filesystem::path elf;
-        if (opts.elfGiven)
-            elf = std::filesystem::absolute(opts.elf).lexically_normal();
-        else
+        // Small boot files are extracted next to the settings file whenever an image is available. An explicit ELF can
+        // still select the development executable, while cdrom0: uses the extracted IRX modules from that image.
+        std::filesystem::path preparedElf;
+        if (!cfg.isoPath.empty())
         {
             std::string prepError;
-            elf = kzPrepareDiscFiles(cfg.isoPath, kzConfigPath().parent_path() / "disc", &prepError);
-            if (elf.empty())
+            preparedElf = kzPrepareDiscFiles(cfg.isoPath, kzConfigPath().parent_path() / "disc", &prepError);
+            if (preparedElf.empty())
             {
                 const std::string msg = "Can't use the game disc image: " + prepError;
                 std::cerr << "[kz] " << msg << std::endl;
@@ -241,6 +223,9 @@ int main(int argc, char *argv[])
                 return 1;
             }
         }
+        const std::filesystem::path elf = opts.elfGiven
+                                              ? std::filesystem::absolute(opts.elf).lexically_normal()
+                                              : preparedElf;
         if (!std::filesystem::exists(elf))
         {
             std::cerr << "[kz] ELF not found: " << elf.string() << std::endl;
@@ -248,20 +233,21 @@ int main(int argc, char *argv[])
         }
 
         if (opts.sampleSeconds > 0)
-            kzStartStackSampler(opts.sampleSeconds, 24, "work/stacks.txt");
+            kz::host::startStackSampler(opts.sampleSeconds, 24, "work/stacks.txt");
         if (const char *prof = std::getenv("KZ_PROFILE"))
         {
             double start = 0, duration = 20;
             std::sscanf(prof, "%lf,%lf", &start, &duration);
             // KZ_PROFILE_OUT=<file> keeps concurrent runs from overwriting each other's profile.
             const char *profOut = std::getenv("KZ_PROFILE_OUT");
-            kzStartProfiler(start, duration, profOut && *profOut ? profOut : "work/profile.txt");
+            kz::host::startProfiler(start, duration, profOut && *profOut ? profOut : "work/profile.txt");
         }
 
         PS2Runtime::IoPaths paths = PS2Runtime::getIoPaths();
         if (!cfg.isoPath.empty())
         {
             paths.cdImage = std::filesystem::path(cfg.isoPath).lexically_normal();
+            paths.cdRoot = preparedElf.parent_path();
             std::cout << "[kz] CD image: " << paths.cdImage.string() << std::endl;
         }
         PS2Runtime::setIoPaths(paths);
@@ -273,10 +259,10 @@ int main(int argc, char *argv[])
         // window-less. Automation (PS2X_HEADLESS=1 already set by the caller) also skips our window: kzgs renders
         // offscreen and KZ_SHOT_DIR/KZ_SHOT_INTERVAL save frames.
         const bool automation = headless;
-        _putenv_s("PS2X_HEADLESS", "1");
+        kz::host::setEnvironment("PS2X_HEADLESS", "1");
 
         SDL_Window *window = nullptr;
-        void *hwnd = nullptr;
+        kz::host::NativeWindow nativeWindow;
         int winW = 1280, winH = 896;
         if (automation)
         {
@@ -288,7 +274,7 @@ int main(int argc, char *argv[])
             {
                 window = SDL_CreateWindow("Killzone (automation)", winW, winH, SDL_WINDOW_HIDDEN);
                 if (window)
-                    hwnd = SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+                    nativeWindow = kzNativeWindow(window);
             }
         }
         else
@@ -304,7 +290,7 @@ int main(int argc, char *argv[])
                 SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Killzone", SDL_GetError(), nullptr);
                 return 1;
             }
-            hwnd = SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+            nativeWindow = kzNativeWindow(window);
             SDL_GetWindowSizeInPixels(window, &winW, &winH);
             SDL_SetWindowRelativeMouseMode(window, true);
             kzInputSetCaptured(true);
@@ -335,7 +321,7 @@ int main(int argc, char *argv[])
         const bool cpuGs = std::getenv("KZ_GS") && std::strcmp(std::getenv("KZ_GS"), "cpu") == 0; // debug: software GS
         if (cpuGs)
             std::cout << "[kz] KZ_GS=cpu: using the runtime's software GS (PS2X_HEADLESS_SHOTS for frames)" << std::endl;
-        else if (!kzGsAttach(runtime, hwnd, winH, cfg, &gsError))
+        else if (!kzGsAttach(runtime, nativeWindow, winH, cfg, &gsError))
         {
             const std::string msg = "Could not start the renderer: " + gsError;
             std::cerr << "[kz] " << msg << std::endl;
@@ -352,6 +338,12 @@ int main(int argc, char *argv[])
         {
             std::cerr << "[kz] failed to load ELF: " << elf.string() << std::endl;
             return 1;
+        }
+        if (!preparedElf.empty())
+        {
+            paths = PS2Runtime::getIoPaths();
+            paths.cdRoot = preparedElf.parent_path();
+            PS2Runtime::setIoPaths(paths);
         }
         kzAimInstall(runtime);
         kzTimeFixInstall(runtime);
@@ -376,10 +368,18 @@ int main(int argc, char *argv[])
         kzTimingInit(fps, displayHz);
 
         std::atomic<bool> runtimeDone{false};
+        std::exception_ptr runtimeFailure;
         std::thread runtimeThread([&]() {
-            // The PS2 FPU/VUs flush denormals to zero; recompiled float code runs on SSE, so match it (FTZ | DAZ).
-            _mm_setcsr(_mm_getcsr() | 0x8040u);
-            runtime.run();
+            try
+            {
+                kz::host::setCurrentThreadName("Killzone EE");
+                kz::host::configureGuestFloatingPoint();
+                runtime.run();
+            }
+            catch (...)
+            {
+                runtimeFailure = std::current_exception();
+            }
             runtimeDone.store(true);
         });
 
@@ -398,7 +398,7 @@ int main(int argc, char *argv[])
                     pe.type = SDL_EVENT_USER;
                     pe.user.timestamp = SDL_GetTicksNS();
                     SDL_PushEvent(&pe);
-                    std::this_thread::sleep_for(std::chrono::microseconds(2000));
+                    kz::host::sleepFor(std::chrono::microseconds(2000));
                 }
             });
         auto probeReport = [&]() {
@@ -477,6 +477,8 @@ int main(int argc, char *argv[])
         kzInputShutdown();
         if (window)
             SDL_DestroyWindow(window);
+        if (runtimeFailure)
+            std::rethrow_exception(runtimeFailure);
 
         std::cout.flush();
         std::cerr.flush();

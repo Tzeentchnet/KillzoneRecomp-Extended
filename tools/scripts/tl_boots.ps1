@@ -1,15 +1,17 @@
 # N boots of S seconds (hang check, patch 0025): every boot must exit with code 0 and its `dma=` counter must keep advancing in every 10 s heartbeat.
 #   tl_boots.ps1 -Tag b -N 12 -Seconds 50 [-Parallel 3] [-Config tl] [-EnvSet 'KZ_FPS=120']
 # Boots run Parallel at a time (more than one instance also stresses the start-up race the IOP module loader has under load).
-param([string]$Tag = 'boot', [int]$N = 12, [int]$Seconds = 50, [int]$Parallel = 3, [string]$Config = 'tl', [string]$EnvSet = 'KZ_FPS=120')
-$wd = 'D:\KillzoneRecomp'
-$iso = 'C:\Users\drakolord\Downloads\Killzone (USA)\Killzone (USA).iso'
+param([string]$Tag = 'boot', [int]$N = 12, [int]$Seconds = 50, [int]$Parallel = 3, [string]$Config = 'tl', [string]$EnvSet = 'KZ_FPS=120', [string]$Root = $env:KZ_ROOT, [string]$Iso = $env:KZ_ISO, [string]$Elf = $env:KZ_GAME_ELF)
+. "$PSScriptRoot\kz_paths.ps1"
+$wd = Resolve-KzRoot $Root
+$iso = Resolve-KzRequiredFile $Iso KZ_ISO Iso
+$elf = Resolve-KzRequiredFile $Elf KZ_GAME_ELF Elf
 $sb = {
-    param($wd, $iso, $name, $seconds, $config, $envset)
+    param($wd, $iso, $elf, $name, $seconds, $config, $envset)
     $out = "$wd\work\$name"; Remove-Item -Recurse -Force $out -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force $out | Out-Null
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = "$wd\build\$config\killzone.exe"
-    $psi.Arguments = "--elf game\SCUS_974.02 --iso `"$iso`" --no-launcher"
+    $psi.Arguments = "--elf `"$elf`" --iso `"$iso`" --no-launcher"
     $psi.WorkingDirectory = $wd; $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
     $psi.EnvironmentVariables['PS2X_HEADLESS'] = '1'; $psi.EnvironmentVariables['PS2X_HEADLESS_INTERVAL'] = '10'
@@ -25,7 +27,7 @@ $sb = {
 }
 $jobs = @(); $res = @()
 for ($i = 1; $i -le $N; $i++) {
-    $jobs += Start-Job -ScriptBlock $sb -ArgumentList $wd, $iso, "${Tag}_$i", $Seconds, $Config, $EnvSet
+    $jobs += Start-Job -ScriptBlock $sb -ArgumentList $wd, $iso, $elf, "${Tag}_$i", $Seconds, $Config, $EnvSet
     if ($jobs.Count -ge $Parallel) { $done = Wait-Job -Job $jobs -Any; $res += Receive-Job $done; $jobs = @($jobs | Where-Object { $_.Id -ne $done.Id }); Remove-Job $done }
 }
 foreach ($j in $jobs) { Wait-Job $j | Out-Null; $res += Receive-Job $j; Remove-Job $j }

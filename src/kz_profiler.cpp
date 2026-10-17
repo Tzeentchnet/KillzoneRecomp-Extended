@@ -3,7 +3,7 @@
 // the sampling loop) and symbolized once at the end. Writes the self-time and inclusive-time share of the top
 // functions of each busy thread.
 
-#include "kz_sampler.h"
+#include "kz_host/core.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -101,12 +101,18 @@ namespace
     }
 }
 
-void kzStartProfiler(double startSeconds, double durationSeconds, const char *path)
+void kz::host::startProfiler(double startSeconds, double durationSeconds, const std::filesystem::path &path)
 {
-    const std::string outPath = path;
+    if (startSeconds < 0.0 || durationSeconds <= 0.0 || path.empty())
+        throw Error(ErrorCode::InvalidArgument, 0, "Profiling requires a non-negative delay, positive duration, and output path");
     std::thread([=]() {
-        timeBeginPeriod(1);
-        std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int64_t>(startSeconds * 1000)));
+        const MMRESULT timerResult = timeBeginPeriod(1);
+        if (timerResult != TIMERR_NOERROR)
+        {
+            std::fprintf(stderr, "[kz-host] timeBeginPeriod failed with multimedia error %u\n", timerResult);
+            return;
+        }
+        sleepFor(std::chrono::milliseconds(static_cast<int64_t>(startSeconds * 1000)));
         const DWORD self = GetCurrentThreadId();
         const DWORD pid = GetCurrentProcessId();
         std::vector<ProfSample> samples;
@@ -141,9 +147,11 @@ void kzStartProfiler(double startSeconds, double durationSeconds, const char *pa
                 if (s.depth)
                     samples.push_back(s);
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            sleepFor(std::chrono::milliseconds(1));
         }
         timeEndPeriod(1);
+        for (const auto &[tid, handle] : handles)
+            CloseHandle(handle);
 
         HANDLE process = GetCurrentProcess();
         SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
@@ -198,9 +206,12 @@ void kzStartProfiler(double startSeconds, double durationSeconds, const char *pa
                     ++st.incl[n];
             }
         }
-        FILE *out = std::fopen(outPath.c_str(), "w");
+        FILE *out = _wfopen(path.c_str(), L"w");
         if (!out)
+        {
+            std::fprintf(stderr, "[kz-host] cannot write profile to %ls\n", path.c_str());
             return;
+        }
         std::fprintf(out, "profile: %.1f s, %zu samples\n", durationSeconds, samples.size());
         for (auto &[tid, st] : stats)
         {
@@ -249,6 +260,6 @@ void kzStartProfiler(double startSeconds, double durationSeconds, const char *pa
             }
         }
         std::fclose(out);
-        std::fprintf(stderr, "[kz] profile written: %s\n", outPath.c_str());
+        std::fprintf(stderr, "[kz] profile written: %ls\n", path.c_str());
     }).detach();
 }

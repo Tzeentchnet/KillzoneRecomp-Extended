@@ -1,5 +1,6 @@
 #include "kz_ipu.h"
 
+#include "kz_hook_addresses.h"
 #include "kzipu.h"
 
 #include "ps2_runtime.h"
@@ -124,14 +125,14 @@ namespace
         const uint32_t a0 = getRegU32(ctx, 4), a1 = getRegU32(ctx, 5), a2 = getRegU32(ctx, 6), a3 = getRegU32(ctx, 7);
         const uint32_t ra = getRegU32(ctx, 31);
         char extra[160] = "";
-        if (t.addr == 0x0014D790u || t.addr == 0x0014DAD0u)
+        if (t.addr == kz_hook::FileReadAsync || t.addr == kz_hook::FilePoll)
         {
             const uint32_t dev = guest32(rdram, a0 + 8), vt = guest32(rdram, dev + 4);
             std::snprintf(extra, sizeof(extra), " dev=0x%x vt=0x%x +28=0x%x +38=0x%x h=0x%x", dev, vt,
                           guest32(rdram, vt + 0x28), guest32(rdram, vt + 0x38), guest32(rdram, a0 + 0xC));
         }
         t.orig(rdram, ctx, rt);
-        if (t.addr == 0x004963B8u) // stream read: log the total delivered when it first returns 0 (EOF or stall)
+        if (t.addr == kz_hook::StreamRead) // stream read: log the total delivered when it first returns 0 (EOF or stall)
         {
             static uint32_t s_stream = 0, s_total = 0, s_lastLogged = ~0u;
             if (a0 != s_stream) { s_stream = a0; s_total = 0; s_lastLogged = ~0u; }
@@ -164,9 +165,10 @@ namespace
         if (!spec || !*spec)
             return;
         static const std::pair<uint32_t, const char *> kDefault[] = {
-            {0x002DED00u, "movieOpen"}, {0x00496168u, "stOpen"}, {0x004963B8u, "stRead"},
-            {0x0014D790u, "fileReadAsync"}, {0x0014DAD0u, "filePoll"}, {0x002E0AC0u, "feed"},
-            {0x002DF800u, "inputEnd"}, {0x002E1A40u, "audioFull"}, {0x002E19C0u, "audioFeed"},
+            {kz_hook::MovieOpen, "movieOpen"}, {kz_hook::StreamOpen, "stOpen"}, {kz_hook::StreamRead, "stRead"},
+            {kz_hook::FileReadAsync, "fileReadAsync"}, {kz_hook::FilePoll, "filePoll"}, {kz_hook::MovieFeed, "feed"},
+            {kz_hook::MovieInputEnd, "inputEnd"}, {kz_hook::MovieAudioFull, "audioFull"},
+            {kz_hook::MovieAudioFeed, "audioFeed"},
         };
         std::vector<std::pair<uint32_t, const char *>> fns(std::begin(kDefault), std::end(kDefault));
         // extra addresses: KZ_IPU_TRACE=0x1234,0x5678
@@ -298,8 +300,8 @@ namespace
 void kzIpuBindRuntime(PS2Runtime &runtime)
 {
     g_runtime = &runtime;
-    constexpr uint32_t kMovieRead = 0x002DEB98u;
-    constexpr uint32_t kInputEnd = 0x002DF800u;
+    constexpr uint32_t kMovieRead = kz_hook::MovieRead;
+    constexpr uint32_t kInputEnd = kz_hook::MovieInputEnd;
     if (g_active && runtime.hasFunction(kMovieRead) && runtime.hasFunction(kInputEnd))
     {
         g_movieReadOrig = runtime.lookupFunction(kMovieRead);

@@ -7,7 +7,6 @@
 #include "Host.h"
 
 #include "common/Console.h"
-#include "common/RedtapeWindows.h"
 #include "common/SmallString.h"
 #include "common/StringUtil.h"
 #include "common/WindowInfo.h"
@@ -15,13 +14,13 @@
 #include <cstdarg>
 #include <mutex>
 
-static void* s_hwnd = nullptr;
+static kz::host::NativeWindow s_window;
 static std::mutex s_error_lock;
 static std::string s_last_error;
 
-void kzgs::SetRenderWindow(void* hwnd)
+void kzgs::SetRenderWindow(const kz::host::NativeWindow& window)
 {
-	s_hwnd = hwnd;
+	s_window = window;
 }
 
 void kzgs::ClearLastError()
@@ -50,21 +49,33 @@ static void RecordError(std::string_view title, std::string_view message)
 std::optional<WindowInfo> Host::AcquireRenderWindow(bool recreate_window)
 {
 	WindowInfo wi;
-	if (!s_hwnd)
+	if (!s_window)
 	{
 		wi.type = WindowInfo::Type::Surfaceless;
 		return wi;
 	}
 
-	const HWND hwnd = static_cast<HWND>(s_hwnd);
-	RECT rc = {};
-	GetClientRect(hwnd, &rc);
+	if (s_window.type != kz::host::NativeWindowType::Win32)
+	{
+		RecordError("Unsupported native window", "The current kzgs backends require a Win32 window");
+		return std::nullopt;
+	}
+
+	kz::host::WindowMetrics metrics;
+	try
+	{
+		metrics = kz::host::queryWindowMetrics(s_window);
+	}
+	catch (const kz::host::Error& error)
+	{
+		RecordError("Native window query failed", error.what());
+		return std::nullopt;
+	}
 	wi.type = WindowInfo::Type::Win32;
-	wi.window_handle = s_hwnd;
-	wi.surface_width = static_cast<u32>(std::max<LONG>(rc.right - rc.left, 1));
-	wi.surface_height = static_cast<u32>(std::max<LONG>(rc.bottom - rc.top, 1));
-	const UINT dpi = GetDpiForWindow(hwnd);
-	wi.surface_scale = dpi ? static_cast<float>(dpi) / 96.0f : 1.0f;
+	wi.window_handle = s_window.window;
+	wi.surface_width = metrics.width;
+	wi.surface_height = metrics.height;
+	wi.surface_scale = metrics.scale;
 	if (const std::optional<float> rr = WindowInfo::QueryRefreshRateForWindow(wi); rr.has_value())
 		wi.surface_refresh_rate = rr.value();
 	return wi;

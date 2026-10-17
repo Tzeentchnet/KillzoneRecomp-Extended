@@ -11,14 +11,14 @@ port's KZ_PARITY_LOG (src/kz_parity.cpp): wall_s,vsync,now,elapsed,sec_per_tick,
 sampling starts). tools/pcsx2_par is a copy of tools/pcsx2 (own PINE slot, the pnach in its patches folder).
 """
 import argparse, os, re, struct, sys, time
+from pathlib import Path
 
-sys.path.insert(0, r'D:\KillzoneRecomp\tools\scripts')
+SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get("KZ_ROOT", SCRIPT_DIR.parents[1])).resolve()
+sys.path.insert(0, str(SCRIPT_DIR))
 from pine import Pine
 from pcsx2_hidden import HiddenProcess
 
-ROOT = r'D:\KillzoneRecomp'
-PCSX2 = os.path.join(ROOT, 'tools', 'pcsx2_par')
-ISO = r'C:\Users\drakolord\Downloads\Killzone (USA)\Killzone (USA).iso'
 PORT = 28111
 SPU2_MUTED = ('\n\n[SPU2/Output]\nBackend = Null\nOutputMuted = true\nStandardVolume = 0\n'
               'FastForwardVolume = 0\nOutputVolume = 0\n')
@@ -85,8 +85,10 @@ Pine.read_block_list = _read_block_list
 
 
 class Ref:
-    def __init__(self, renderer=None):
-        self.ini = os.path.join(PCSX2, 'inis', 'PCSX2.ini')
+    def __init__(self, pcsx2, iso, renderer=None):
+        self.pcsx2 = pcsx2
+        self.iso = iso
+        self.ini = os.path.join(pcsx2, 'inis', 'PCSX2.ini')
         self.proc = None
         self.pine = None
         self.renderer = renderer
@@ -104,7 +106,11 @@ class Ref:
 
     def start(self):
         self.ensure_ini()
-        self.proc = HiddenProcess(os.path.join(PCSX2, 'pcsx2-qt.exe'), ['-batch', '-fastboot', '--', ISO], PCSX2)
+        self.proc = HiddenProcess(
+            os.path.join(self.pcsx2, 'pcsx2-qt.exe'),
+            ['-batch', '-fastboot', '--', self.iso],
+            self.pcsx2,
+        )
         t0 = time.time()
         while time.time() - t0 < 90:
             try:
@@ -204,6 +210,11 @@ def run(ref, args):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument('--iso', default=os.environ.get('KZ_ISO'))
+    ap.add_argument(
+        '--pcsx2-dir',
+        default=os.environ.get('KZ_PCSX2_DIR', str(ROOT / 'tools' / 'pcsx2_par')),
+    )
     ap.add_argument('--state', type=int, default=10)
     ap.add_argument('--script', default='')
     ap.add_argument('--seconds', type=float, default=10)
@@ -217,7 +228,15 @@ def main():
     ap.add_argument('--keep', action='store_true', help='keep PCSX2 running afterwards')
     ap.add_argument('--repeat', type=int, default=1, help='load the state and run the script this many times (out.N.csv)')
     args = ap.parse_args()
-    ref = Ref(args.renderer)
+    if not args.iso:
+        ap.error('specify --iso or set KZ_ISO')
+    iso = Path(args.iso).expanduser().resolve()
+    pcsx2 = Path(args.pcsx2_dir).expanduser().resolve()
+    if not iso.is_file():
+        ap.error(f'ISO does not exist: {iso}')
+    if not (pcsx2 / 'pcsx2-qt.exe').is_file():
+        ap.error(f'PCSX2 executable does not exist under {pcsx2}')
+    ref = Ref(str(pcsx2), str(iso), args.renderer)
     ref.start()
     try:
         time.sleep(8)  # boot to the logo; the savestate load replaces everything

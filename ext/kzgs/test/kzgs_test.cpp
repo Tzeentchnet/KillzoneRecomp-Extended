@@ -3,7 +3,8 @@
 // Then switches to 2x upscaling and checks the readback doubles in size with the same picture, stresses the ring
 // buffer with >32 MB of chunked PATH2 IMAGE uploads, and switches renderer on the same window (scene over PATH1).
 //
-// Usage: kzgs_test [--renderer d3d11|d3d12|vulkan] [--warp] [--show] [--vsync] [--raw-gif] [--frames N] [--stress-uploads N]
+// Usage: kzgs_test [--renderer d3d11|d3d12|vulkan] [--warp] [--golden] [--out <dir>] [--show] [--vsync]
+//                  [--raw-gif] [--frames N] [--stress-uploads N]
 // Exit code 0 = pass. Writes test/out.png (1x), out_2x.png, out_stress.png and out_switch.png.
 // If the hardware D3D device cannot be created (e.g. no GPU access), it retries on WARP and says so.
 // SPDX-License-Identifier: GPL-3.0+
@@ -14,9 +15,12 @@
 #define NOMINMAX
 #include <windows.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -244,6 +248,8 @@ static void Log(int level, const char* msg)
 }
 
 static int g_failures = 0;
+static bool g_check_golden = false;
+static std::string g_output_dir = KZGS_TEST_OUT_DIR;
 
 static void CheckPixel(const std::vector<uint8_t>& rgba, int w, int h, int scale, int px, int py, uint8_t r,
 	uint8_t g, uint8_t b, const char* what)
@@ -260,6 +266,66 @@ static void CheckPixel(const std::vector<uint8_t>& rgba, int w, int h, int scale
 	std::printf("  %s %-12s at (%4d,%4d): got (%3u,%3u,%3u) want (%3u,%3u,%3u)\n", ok ? "ok  " : "FAIL", what, x, y,
 		p[0], p[1], p[2], r, g, b);
 	if (!ok)
+		g_failures++;
+}
+
+static double EdgeDistance(double ax, double ay, double bx, double by, double px, double py)
+{
+	const double edge = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+	return edge / std::hypot(bx - ax, by - ay);
+}
+
+static void CheckGoldenFrame(const std::vector<uint8_t>& rgba, int w, int h, int scale)
+{
+	size_t checked = 0;
+	size_t mismatches = 0;
+	for (int y = 0; y < h; y++)
+	{
+		for (int x = 0; x < w; x++)
+		{
+			const double native_offset = scale - 1.0;
+			const double px = (x + 0.5 - native_offset) / scale;
+			const double py = (y + 0.5 - native_offset) / scale;
+			uint8_t er = kBackground.r, eg = kBackground.g, eb = kBackground.b;
+			for (const Box* box : {&kRed, &kGreen, &kWhite})
+			{
+				if (px >= box->x0 && px < box->x1 && py >= box->y0 && py < box->y1)
+				{
+					er = box->r;
+					eg = box->g;
+					eb = box->b;
+				}
+			}
+
+			const double e0 = EdgeDistance(400, 40, 600, 40, px, py);
+			const double e1 = EdgeDistance(600, 40, 500, 200, px, py);
+			const double e2 = EdgeDistance(500, 200, 400, 40, px, py);
+			if (std::min({std::abs(e0), std::abs(e1), std::abs(e2)}) < 1.5)
+				continue;
+			if (e0 > 0 && e1 > 0 && e2 > 0)
+			{
+				er = 255;
+				eg = 255;
+				eb = 0;
+			}
+
+			const uint8_t* actual = rgba.data() + (size_t(y) * w + x) * 4;
+			checked++;
+			if (std::abs(int(actual[0]) - er) <= 8 &&
+				std::abs(int(actual[1]) - eg) <= 8 &&
+				std::abs(int(actual[2]) - eb) <= 8)
+				continue;
+			if (mismatches < 8)
+			{
+				std::printf("  golden mismatch at (%d,%d): got (%u,%u,%u), want (%u,%u,%u)\n",
+					x, y, actual[0], actual[1], actual[2], er, eg, eb);
+			}
+			mismatches++;
+		}
+	}
+
+	std::printf("  golden oracle: %zu pixels checked, %zu mismatches\n", checked, mismatches);
+	if (mismatches != 0)
 		g_failures++;
 }
 
@@ -333,8 +399,11 @@ static bool RenderAndCheck(const std::vector<uint8_t>& packet, int frames, int s
 		g_failures++;
 	}
 
-	const std::string path = std::string(KZGS_TEST_OUT_DIR) + "/" + png_name;
-	std::printf("  wrote %s: %s\n", path.c_str(), WritePNG(path.c_str(), rgba, w, h) ? "yes" : "NO");
+	const std::string path = (std::filesystem::path(g_output_dir) / png_name).string();
+	const bool wrote = WritePNG(path.c_str(), rgba, w, h);
+	std::printf("  wrote %s: %s\n", path.c_str(), wrote ? "yes" : "NO");
+	if (!wrote)
+		g_failures++;
 
 	CheckPixel(rgba, w, h, scale, 16, 16, kBackground.r, kBackground.g, kBackground.b, "background");
 	CheckPixel(rgba, w, h, scale, 160, 128, kRed.r, kRed.g, kRed.b, "red");
@@ -345,6 +414,8 @@ static bool RenderAndCheck(const std::vector<uint8_t>& packet, int frames, int s
 	// Sprite edges: last covered pixel is x1-1 (GS sprites exclude the right/bottom edge).
 	CheckPixel(rgba, w, h, scale, 255, 191, kRed.r, kRed.g, kRed.b, "red edge");
 	CheckPixel(rgba, w, h, scale, 256, 192, kBackground.r, kBackground.g, kBackground.b, "past edge");
+	if (g_check_golden)
+		CheckGoldenFrame(rgba, w, h, scale);
 	return true;
 }
 
@@ -353,6 +424,7 @@ int main(int argc, char** argv)
 	KzgsConfig cfg;
 	bool show = false;
 	bool vsync = false;
+	bool golden_only = false;
 	int frames = 4;
 	int stress_uploads = 2600; // x 16 KB = ~41 MB of GIF data, more than the 32 MB ring
 	for (int i = 1; i < argc; i++)
@@ -365,6 +437,10 @@ int main(int argc, char** argv)
 		}
 		else if (a == "--warp")
 			cfg.useWarp = true;
+		else if (a == "--golden")
+			golden_only = g_check_golden = true;
+		else if (a == "--out" && i + 1 < argc)
+			g_output_dir = argv[++i];
 		else if (a == "--raw-gif") // negative check: self-contained packet phase must then fail
 			cfg.selfContainedGifPackets = false;
 		else if (a == "--vsync")
@@ -378,6 +454,13 @@ int main(int argc, char** argv)
 	}
 	static const char* names[] = {"D3D11", "D3D12", "Vulkan"};
 	std::setvbuf(stdout, nullptr, _IONBF, 0);
+	std::error_code output_error;
+	std::filesystem::create_directories(g_output_dir, output_error);
+	if (output_error)
+	{
+		std::printf("FAIL: cannot create output directory %s: %s\n", g_output_dir.c_str(), output_error.message().c_str());
+		return 2;
+	}
 
 	HWND hwnd = CreateTestWindow(show);
 	if (!hwnd)
@@ -394,12 +477,13 @@ int main(int argc, char** argv)
 
 	std::string err;
 	std::printf("== open %s%s\n", names[int(cfg.renderer)], cfg.useWarp ? " (WARP)" : "");
-	bool opened = kzgsOpen(hwnd, cfg, g_regs, &err);
+	const kz::host::NativeWindow native_window = kz::host::NativeWindow::win32(hwnd);
+	bool opened = kzgsOpen(native_window, cfg, g_regs, &err);
 	if (!opened && !cfg.useWarp && cfg.renderer != KzgsRenderer::Vulkan)
 	{
 		std::printf("hardware %s device failed (%s); retrying on WARP\n", names[int(cfg.renderer)], err.c_str());
 		cfg.useWarp = true;
-		opened = kzgsOpen(hwnd, cfg, g_regs, &err);
+		opened = kzgsOpen(native_window, cfg, g_regs, &err);
 	}
 	if (!opened)
 	{
@@ -416,6 +500,13 @@ int main(int argc, char** argv)
 	cfg.upscale = 2;
 	kzgsUpdateConfig(cfg);
 	RenderAndCheck(scene, frames, 2, "out_2x.png");
+	if (golden_only)
+	{
+		kzgsClose();
+		DestroyWindow(hwnd);
+		std::printf("%s (%d failure%s)\n", g_failures ? "FAIL" : "PASS", g_failures, g_failures == 1 ? "" : "s");
+		return g_failures ? 1 : 0;
+	}
 
 	// Ring stress over PATH2: >32 MB of IMAGE uploads to off-screen VRAM (wraps the ring several times over), split
 	// into 7-qword chunks so GIF packets straddle transfer boundaries like a DMA-chain-driven arbiter would produce,

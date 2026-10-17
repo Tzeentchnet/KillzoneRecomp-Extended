@@ -7,9 +7,15 @@
 # - no SCE symbol database is used by this Ghidra script
 
 [general]
-input = "D:/KillzoneRecomp/game/SCUS_974.02"
-output = "D:/KillzoneRecomp/generated"
-ghidra_output = "D:/KillzoneRecomp/work/functions.csv"
+input = "game/SCUS_974.02"
+output = "generated"
+ghidra_output = "work/functions.csv"
+entry_points = [
+  "0x00146FB4", # ELF entry falls through past Ghidra's authoritative function range.
+  "0x002B637C", # Interrupt-disable helper continuation omitted after Ghidra's range.
+  "0x002B63BC", # Interrupt-enable helper continuation omitted after Ghidra's range.
+  "0x002B3158", # Callable function entry shared with the preceding return's delay slot.
+]
 single_file_output = false
 patch_syscalls = false
 patch_cop0 = true
@@ -66,13 +72,13 @@ untracked_stubs = [
 skip = []
 
 [ghidra_export]
-function_count = 16931
-code_label_count = 65472
-csv_record_count = 82403
-stub_count = 43
+function_count = 16045
+code_label_count = 19307
+csv_record_count = 35352
+stub_count = 44
 untracked_stub_count = 0
 skip_count = 0
-uncategorized_count = 16888
+uncategorized_count = 16001
 runtime_call_name_count = 656
 runtime_call_source = "embedded_ps2_call_list_snapshot"
 

@@ -24,6 +24,7 @@ curl -L -o ext/kzgs/deps/pcsx2-windows-dependencies.7z \
 cmd //c "tools\scripts\vsenv.bat cmake -S ext\kzgs -B ext\kzgs\build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo"
 cmd //c "tools\scripts\vsenv.bat cmake --build ext\kzgs\build -j 4"
 ext/kzgs/build/kzgs_test.exe            # exit code 0 = pass; add --renderer d3d12|vulkan, --warp, --vsync, --show
+ext/kzgs/build/kzgs_test.exe --renderer d3d11 --warp --golden --out ext/kzgs/build/test-output/d3d11
 ```
 
 A clean build is 165 Ninja steps (about 160 translation units). The result is `kzgs.lib` (about 87 MB with debug info).
@@ -46,6 +47,10 @@ CMake options:
 | `KZGS_BUILD_TEST` | on when top-level | Builds `kzgs_test` |
 | `KZGS_BUILD_TOOLS` | on when top-level | Builds `kzgs_replay`, the trace debugger (see Debugging) |
 
+`--golden` runs the deterministic synthetic scene at 1x and 2x, compares every pixel outside a narrow
+rasterization-edge exclusion zone against the algorithmic reference, and exits before stress and renderer-switch
+coverage. Root CTest registers isolated D3D11, D3D12, and Vulkan golden runs.
+
 All of kzgs' compile flags are private: `/permissive-`, `/Zc:preprocessor`, `/arch:AVX2`, C++20, PCSX2's defines and
 the ImGui rename header. The only thing a consumer inherits is the include directory, plus these link libraries:
 system D3D/DXGI, `delayimp`, and import libraries for `zstd`, `libpng16`, `libwebp`, `jpeg62` and `dxcompiler`. All
@@ -64,7 +69,8 @@ A D3D11-only run touches none of them, except when screenshots, dumps or texture
 ## API (`include/kzgs.h`)
 
 ```cpp
-bool kzgsOpen(void* hwnd, const KzgsConfig& cfg, uint8_t* privRegs, std::string* err = nullptr);
+bool kzgsOpen(const kz::host::NativeWindow& window, const KzgsConfig& cfg,
+              uint8_t* privRegs, std::string* err = nullptr);
 void kzgsClose();
 bool kzgsIsOpen();
 void kzgsGifTransfer(int path /*1..3*/, const uint8_t* data, uint32_t qwords);
