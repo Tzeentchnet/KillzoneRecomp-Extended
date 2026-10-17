@@ -1434,7 +1434,7 @@ bursts (3.5, 3.5, 0, 0, 0, 3.4 ...) were first read as video. A fixed text regio
   to a fixed point. Generated resume PCs are not restricted to the ELF section named `.text`.
 - The first pass found 2,277 emitted tails and 7,419 resume targets. The second pass found 15 additional resume
   targets. Closure converged with 9,681 unique generated entries after overlap.
-- The merged configuration has 4 explicit entries, 24,953 discovered entries, 36 locked hooks, and 9,681 generated
+- The merged configuration has 4 explicit entries, 24,953 discovered entries, 42 locked hooks, and 9,681 generated
   closure entries, for 34,666 configured entries.
 - The generated tree has 31,998 files, 31,996 translation units, 31,995 generated functions, 142 generated stubs,
   132,656 dispatch entries, 100,661 dispatchable resume cases, and 20,528 resume owners. PS2Recomp reports 101,715
@@ -1459,7 +1459,7 @@ bursts (3.5, 3.5, 0, 0, 0, 3.4 ...) were first read as video. A fixed text regio
 - `0x002B3158` has legitimate dual ownership: it is both the `sceSifInitRpc` entry and the delay-slot instruction of
   the preceding return. It is an explicit configured entry and is rebound authoritatively after generated-table
   initialization so first-registration-wins cannot leave a generated owner in the runtime hook slot.
-- The fixed hook manifest now contains 37 unique signatures. `sceSifInitRpc` uses a 20-byte signature because its
+- The fixed hook manifest now contains 42 unique signatures. `sceSifInitRpc` uses a 20-byte signature because its
   first 16 bytes also occur at `0x002B66F8`.
 
 ### FilePS2 completion and ISO mounting
@@ -1491,12 +1491,55 @@ bursts (3.5, 3.5, 0, 0, 0, 3.4 ...) were first read as video. A fixed text regio
   that the D3D11 defect has been repaired.
 - `dev9: unknown dev9 hardware` and unhandled `cdvdman:78` remain nonfatal; neither prevents D3D12 rendering.
 
+### Late black screen: shadowed runtime stubs
+
+- Early D3D12 acceptance did not cover the complete boot path. A 60-second capture later showed valid SCEA, legal,
+  and Guerrilla frames through about 20 seconds, followed by exactly black frames from 25 seconds onward while
+  DMA/VIF/GS counters continued to advance. This was a second failure, independent of the D3D11 presentation issue.
+- The first concrete stall was a physical `MCSERV.IRX` RPC (`SID 0x80000400`, function `0x1`) entering MCMAN and
+  timing out twice in `WaitSema(6)`. The BIOS-less IOP does not emulate the SIO2 memory-card transfers that physical
+  MCMAN expects, but this was not the final root cause.
+- Routing only `MCSERV.IRX` to the runtime HLE removed that semaphore timeout. Its original initialization reply
+  advertised MCSERV/MCMAN versions `0x0205`/`0x0206`, below Killzone's minimum `0x020A`/`0x020E`; matching the retail
+  modules' `0x0210`/`0x0226` let the guest issue `GetInfo`. The screen still remained black in both cases.
+- The merged configuration classifies `sceMcInit@0x002BE788`, `sceMcGetInfo@0x002BF180`, and
+  `sceMcFormat@0x002BF458` as runtime stubs, but overlapping generated functions had already claimed those table
+  slots. `sceMcSync@0x002BF060` was a real generated host stub. Boot therefore mixed guest MCSERV RPC state with the
+  host stub's independent memory-card state and could never complete the intended synchronization sequence.
+- Authoritative post-registration bindings for all three shadowed memory-card entries restore one coherent host
+  implementation. The successful path performs three `GetInfo`/`Sync` sequences and one `GetDir`/`Sync` sequence.
+  With those bindings in place, physical MCSERV remains loaded but receives no boot-critical memory-card calls, so
+  the selective HLE loader and version changes were removed.
+
+### Movie black screen: asynchronous stub return contract
+
+- The same ownership audit found generated owners at `sceMpegGetPicture@0x003CD750` and
+  `sceMpegClearRefBuff@0x003CD9F8`, despite both addresses being configured runtime stubs. The other observed
+  libmpeg entries were generated as host-stub wrappers correctly.
+- Rebinding the two addresses directly to raw runtime handlers was not sufficient. A generated stub first assigns
+  `ctx->pc = $ra` and then calls its host handler. The direct binding helper can infer the fallthrough only for a
+  synchronous return; `sceMpegGetPicture` can suspend in an external MPEG wait and resume later, so the saved context
+  must already contain `$ra`.
+- Diagnostic runs proved FFmpeg was decoding and serving `512x448` frames while the guest remained black: without
+  the wrapper contract, resumed calls retained `pc=0x003CD750` and re-entered the handler instead of continuing at
+  the caller. Killzone-specific wrappers now set `pc` to `$ra` before invoking both MPEG handlers.
+- After that correction, captured D3D12 frames show the decoded opening movie continuously from 35 through at least
+  70 seconds. Scripted input reaches the rendered main menu by 75-80 seconds with IPU enabled. The minimized final
+  probe keeps physical `MCSERV.IRX`, reports successful host memory-card operations, shows no MCSERV semaphore
+  timeout, renders the movie, and reaches the menu.
+- This explains why upstream could be known-working while this build failed: runtime classification was correct,
+  but first-registration-wins let overlapping local generated owners shadow authoritative host boundaries. The fix
+  is local address ownership, not a change to the upstream memory-card service or decoder.
+
 ### Final Windows evidence
 
 - A second regeneration converged to 31,998 files with **0 changed/new and 0 removed**.
 - Resume-table verification: 132,656 dispatch entries, 100,661 resume cases, 31,995 generated targets; pass.
-- Generated inventory and schema-3 provenance lock: pass, including all 37 unique fixed hook signatures.
+- Generated inventory and schema-3 provenance lock: pass, including all 42 unique fixed hook signatures.
 - Strict offline dependency and PS2Recomp patch reconstruction: 31 passed, 0 warnings, 0 failures.
 - Final MSVC ISO-free suite: 12/12 passed.
 - Final clang-cl ISO-free suite: 12/12 passed.
 - Persisted D3D12 12-second visual probe: exit code 0 and three nonblack, advancing captures.
+- Complete D3D12 movie probe: nonblack decoded FMV frames at 35, 40, 45, and 50 seconds.
+- Complete minimized boot probe: physical MCSERV loaded, host memory-card operations completed without a semaphore
+  timeout, opening movies rendered, and the main menu was visible at 80 seconds.

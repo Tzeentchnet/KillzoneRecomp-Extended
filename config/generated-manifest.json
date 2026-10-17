@@ -293,6 +293,27 @@
       "signature_sha256": "1d4d4796760b38216bb45f5f2170fa9fdb3cb5e3c55b585e010ac802b44edc7d"
     },
     {
+      "symbol": "McInit",
+      "kind": "hook",
+      "address": "0x002BE788",
+      "signature_size": 16,
+      "signature_sha256": "9969e74f162079591b45ebc3c12bd3c08cb368fe6da4eacbb54b08413c64bab6"
+    },
+    {
+      "symbol": "McGetInfo",
+      "kind": "hook",
+      "address": "0x002BF180",
+      "signature_size": 16,
+      "signature_sha256": "795238b251358cfea3f89c040c330bb9518636dd99048d3b21d253735579d2d7"
+    },
+    {
+      "symbol": "McFormat",
+      "kind": "hook",
+      "address": "0x002BF458",
+      "signature_size": 16,
+      "signature_sha256": "287713552a75648387eef788121c60edf4042ac77a045ac18943b40d98de74f9"
+    },
+    {
       "symbol": "MovieRead",
       "kind": "hook",
       "address": "0x002DEB98",
@@ -340,6 +361,20 @@
       "address": "0x00339C38",
       "signature_size": 16,
       "signature_sha256": "9a50fb46db3a589d0bf58a88fab69b0742985b120fc5d20ddafa7fe0e4012c7b"
+    },
+    {
+      "symbol": "MpegGetPicture",
+      "kind": "hook",
+      "address": "0x003CD750",
+      "signature_size": 36,
+      "signature_sha256": "2cd2bbf65953302ee4952e8fcee44022d389c1f01efc829351037c2e06e52869"
+    },
+    {
+      "symbol": "MpegClearRefBuff",
+      "kind": "hook",
+      "address": "0x003CD9F8",
+      "signature_size": 16,
+      "signature_sha256": "a320b43c948b08946102031a8ac0a55f09850df02060660c670474677dcd73b8"
     },
     {
       "symbol": "KeyboardModuleInit",
