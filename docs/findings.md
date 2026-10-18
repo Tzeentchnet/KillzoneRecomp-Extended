@@ -1574,7 +1574,9 @@ bursts (3.5, 3.5, 0, 0, 0, 3.4 ...) were first read as video. A fixed text regio
 ### Low-water prefetch
 
 - For self-fed movies, `sceMpegGetPicture` now invokes the registered nodata callback before returning the current
-  picture when four or fewer decoded pictures remain. Callback retries can fill the existing eight-picture queue.
+  picture when four or fewer decoded pictures remain. At most two proactive callbacks run before one picture is
+  presented, which preserves refill throughput without holding the guest away from movie-audio maintenance for an
+  unbounded callback chain.
 - Proactive refill is disabled for `sceCdSt`-produced streams and after CD EOF, MPEG sequence end, stream end, or
   decoder failure. The existing no-progress state is consumed on callback re-entry, so an asynchronous read that has
   not completed presents the available picture rather than recursively invoking the callback.
@@ -1589,9 +1591,96 @@ bursts (3.5, 3.5, 0, 0, 0, 3.4 ...) were first read as video. A fixed text regio
 - A 380-second timeline entered the attract reel by 160 seconds, showed advancing reel frames through 240 seconds,
   returned to the menu by 260 seconds, and exited normally.
 - The standalone PS2Recomp test target compiles the change, and the new scheduler regression,
-  `sceMpegGetPicture prefetches before the decoded picture queue runs dry`, passes. The broader upstream test
+  `sceMpegGetPicture caps proactive refills before presenting a picture`, passes. The broader upstream test
   executable still reports unrelated existing failures and terminates with an access violation after the MPEG tests;
   it is not represented as a full-suite pass.
 - Final integration checks pass: strict dependency reconstruction reports 31 passed, 0 warnings, and 0 failures;
   both MSVC and clang-cl ISO-free suites pass 12/12; the generated inventory retains 42 locked hook signatures; and
   the resume table retains 132,656 dispatch entries, 100,661 resume cases, and 31,995 generated targets.
+
+## FMV audio continuity under scheduler stalls (2026-10-17)
+
+### Two separate failure layers
+
+- A muted real SDL/WASAPI capture of the original four-picture-prefetch build inserted 5,536 zero frames during the
+  27-80 second opening-movie window: 115.3 ms of host-device underrun. `kz_audio.cpp` had a nominal 40 ms target, but
+  used it only as the destination of a high-water skip; playback began immediately with no actual reserve.
+- The raw pre-device SPU2 stream also stuttered. Comparing stereo PCM against itself at a 3,584-frame lag found 67
+  exact-equality intervals, 1.433062 seconds total, with a 116.812 ms maximum. Equality at exactly one complete guest
+  movie ring proves that SPU2 replayed stale ADPCM rather than the host device merely repeating or dropping samples.
+
+The state-2 movie uploader transfers `0x400` ADPCM bytes per channel at a time. One bank decodes to 1,792 frames
+(37.33 ms at 48 kHz); the original two-bank `0x800` ring therefore wraps every 3,584 frames (74.67 ms). A normal
+29.97 fps picture update is 33.37 ms apart, leaving little tolerance for a delayed movie update.
+
+Low-overhead refill instrumentation recorded 1,434 nodata callbacks across 1,405 presented-picture attempts:
+715 callbacks appended PSS data, 719 made no progress, 632 audio packets were accepted, and zero audio packets were
+refused as full. Long repeats aligned with movie-picture call gaps of 16-21 fields (267-350 ms). The remaining problem
+was therefore missed guest uploads during scheduling/refill stalls, not MPEG audio-ring backpressure.
+
+### Rejected experiments
+
+All repeat counts below use the same 27-80 second window, exact stereo equality at the active full-ring lag, and a
+minimum run of 256 frames.
+
+| Experiment | Intervals | Total stale audio | Maximum | Result |
+|---|---:|---:|---:|---|
+| no MPEG low-water prefetch | 211 | 11.116 s | 330.67 ms | much worse |
+| four-picture prefetch baseline | 67 | 1.433062 s | 116.812 ms | reference |
+| seven-picture prefetch | 76 | 13.188667 s | 843.958 ms | severe regression |
+| one proactive callback per picture | 106 | 2.311021 s | 110.896 ms | insufficient demux throughput |
+| `PS2X_WALLCLOCK=0` | 81 | 1.846125 s | 105.750 ms | wall-clock floor is not the root cause |
+| no periodic screenshots | 92 | 1.820500 s | 240.542 ms | readback is not the root cause |
+| nonblocking compatible picture return | 58 | 1.576271 s | 174.250 ms | no continuity improvement |
+| `KZ_AUDIO_PACE=0` | 89 | 3.080 s | 844.35 ms | pacing is protective |
+
+Calling `FUN_002df080` or `FUN_002df790` from a host-scheduled context corrupted or stalled the stream and was removed.
+Larger rings alone also trade fewer misses for much longer repeats. With unlimited refill recursion, four, eight, and
+sixteen banks still produced full-ring repeats. Even after bounding refill recursion, an eight-bank ring produced
+five and four 298.7 ms-ring intervals in paired runs (0.743500/0.744833 seconds total, 254.146/252.854 ms maximum).
+
+### Accepted guest fix
+
+- Twelve locked instruction patches in `config/killzone.toml` expand the stereo SPU2 allocation from `0x1000` to
+  `0x2000` bytes and each channel ring from `0x800` to `0x1000`. Allocation size, second-channel base, channel stride,
+  modulo shifts, wrap bias, available-space calculation, and ADPCM loop-end placement all change together. The
+  original instruction words and hashes are locked in `config/generated-manifest.json`; private generated files are
+  not published.
+- Proactive MPEG refill is capped at two callbacks per presented picture. The counter belongs to each MPEG playback
+  object and resets after a picture is consumed. This keeps the four-picture low-water benefit while bounding one
+  recursive guest refill burst. The focused PS2Recomp regression forces continuous PSS progress and verifies that
+  exactly two callbacks run before presentation.
+- Three low-overhead four-bank/capped captures contained **zero** old 3,584-frame repeats. Representative new
+  7,168-frame results were 11 intervals / 0.783479 s / 101.375 ms, 7 / 0.503042 s / 102.188 ms, and
+  12 / 0.878833 s / 106.083 ms. The larger ring cannot manufacture missing source audio during an exceptional
+  scheduler stall, but it removes the frequent 74.67 ms wrap/replay that caused the original pronounced stutter.
+- Video cadence remains correct: a 90-presented-field D3D12 intro burst changed image 44 times; 42 of 43 change gaps
+  were the ideal two fields and one was four fields.
+
+### Accepted host fix
+
+The SDL callback now waits until the SPU2 output ring contains the current device request plus a real 40 ms reserve
+before consuming its first frame. High-water recovery retains the same reserve after the current request. It does not
+re-arm after a later deficit, because that experiment converted three 10 ms underruns into 130 ms of deliberate
+rebuffer silence.
+
+On the same 480-frame WASAPI device, paired muted 90-second runs reduced movie-window underruns from 5,536 frames
+(115.3 ms) to 1,288 and 3,283 frames (26.8 and 68.4 ms), reductions of 77% and 41% despite host-timing variance.
+An 80 ms reserve was rejected after two runs developed multi-second emulator stalls and catch-up bursts; the
+conservative 40 ms policy is the validated default.
+
+Subjective D3D12 listening remains the final acceptance step. The objective captures prove that the original
+short-period guest replay is gone and host-device starvation is materially reduced, but rare 149.3 ms-ring misses
+remain possible when the whole movie update is delayed for several hundred milliseconds.
+
+### Integration status
+
+PS2Recomp revision `6e4bc1827a65d45be92d10f9eca97c04f062f4b8` contains the two-callback budget and
+focused regression; `patches/ps2recomp/0029-mpeg-refill-budget.patch` and the 61-path canonical diff reconstruct
+that tree. Parent implementation commit `4ed9b95b877ad62fa58bd1d87dc88e4251b929ab` contains the coordinated guest,
+runtime, host-output, and dependency-lock changes.
+
+Final integration validation passed strict dependency reconstruction (31 checks), generated inventory, resume-table
+verification, the complete MSVC ISO-free suite (12/12), and the complete clang-cl ISO-free suite (12/12). The broad
+standalone PS2Recomp test executable still reaches its pre-existing `sceMpegDemuxPssRing` failure and later access
+violation; only the focused MPEG regression is represented as passing.
