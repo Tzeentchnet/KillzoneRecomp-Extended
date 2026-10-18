@@ -1669,9 +1669,10 @@ On the same 480-frame WASAPI device, paired muted 90-second runs reduced movie-w
 An 80 ms reserve was rejected after two runs developed multi-second emulator stalls and catch-up bursts; the
 conservative 40 ms policy is the validated default.
 
-Subjective D3D12 listening remains the final acceptance step. The objective captures prove that the original
-short-period guest replay is gone and host-device starvation is materially reduced, but rare 149.3 ms-ring misses
-remain possible when the whole movie update is delayed for several hundred milliseconds.
+The user accepted the final D3D12 build subjectively: "Audio seems fine for now." Together with the objective
+captures, this closes the current FMV-audio issue. Rare 149.3 ms-ring misses remain possible when the whole movie
+update is delayed for several hundred milliseconds, so a future regression report should include the exact scene
+and timestamp before this policy is changed.
 
 ### Integration status
 
