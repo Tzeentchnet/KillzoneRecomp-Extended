@@ -91,4 +91,17 @@ instructions = [
   { address = "0x001BFEB4", value = "0x00052802" }, # FUN_001bfe88: srl $a1,$a1,1 -> srl $a1,$a1,0
   { address = "0x001BFEB8", value = "0x00031802" }, # FUN_001bfe88: srl $v1,$v1,1 -> srl $v1,$v1,0
   { address = "0x001BFF3C", value = "0x00021002" }, # FUN_001bff10: srl $v0,$v0,1 -> srl $v0,$v0,0
+  # Double the stereo movie stream's per-channel SPU2 ring from two to four 0x400-byte banks.
+  { address = "0x002E1900", value = "0x24042000" }, # SPU2 allocation: 0x1000 -> 0x2000 bytes
+  { address = "0x002E1CB4", value = "0x24E71000" }, # second-channel base: +0x800 -> +0x1000
+  { address = "0x002E259C", value = "0x24431000" }, # ring wrap: 0x800 -> 0x1000
+  { address = "0x002E25A0", value = "0x24421FFF" }, # stereo allocation mask: 0x0FFF -> 0x1FFF
+  { address = "0x002E25AC", value = "0x00028303" }, # ring modulo shift: 11 -> 12
+  { address = "0x002E25B0", value = "0x00101300" }, # ring modulo shift: 11 -> 12
+  { address = "0x002E25D0", value = "0x24021000" }, # available ring bytes: 0x800 -> 0x1000
+  { address = "0x002E2660", value = "0x24031000" }, # ADPCM loop-end position: 0x800 -> 0x1000
+  { address = "0x002E26B0", value = "0x00111300" }, # channel stride shift: 11 -> 12
+  { address = "0x002E270C", value = "0x244213FF" }, # ring wrap bias: 0x0BFF -> 0x13FF
+  { address = "0x002E2720", value = "0x00021303" }, # ring modulo shift: 11 -> 12
+  { address = "0x002E2724", value = "0x00021300" }, # ring modulo shift: 11 -> 12
 ]

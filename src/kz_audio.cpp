@@ -30,6 +30,7 @@ namespace
     std::atomic<uint64_t> g_underrunFrames{0};
     std::atomic<uint64_t> g_feedCalls{0}, g_feedFrames{0}; // SDL audio callback activity (device diagnostics)
     std::atomic<uint64_t> g_skippedFrames{0};
+    bool g_devicePrimed = false;
     bool g_pace = true; // see "pacing" below
     double g_factor = 1.0;
     double g_paceAhead = 0; // last measured SPU2 lead over real time (s)
@@ -94,7 +95,8 @@ namespace
         const KzSpu2Status st = kzspu2GetStatus();
         std::fprintf(stderr,
                      "[kz_audio] t=%.0fs frames=%llu (%.3fx real time) rms L/R %.0f/%.0f (%.1f/%.1f dBFS) peak %d/%d "
-                     "voices %u/%u irq %u dma %u/%u dropped %llu underrun %llu skipped %llu pace %.3f device calls %llu frames %llu\n",
+                     "voices %u/%u irq %u dma %u/%u dropped %llu underrun %llu skipped %llu pace %.3f "
+                     "device calls %llu frames %llu\n",
                      now, static_cast<unsigned long long>(g_statsFrames), secs > 0 ? g_statsFrames / (kRate * secs) : 0.0,
                      rmsL, rmsR, db(rmsL), db(rmsR), g_peak[0], g_peak[1], st.keyedOnVoices[0], st.keyedOnVoices[1],
                      st.irqCount, st.dmaCount[0], st.dmaCount[1], static_cast<unsigned long long>(st.framesDropped),
@@ -143,16 +145,31 @@ namespace
     void SDLCALL feed(void *, SDL_AudioStream *stream, int additional, int)
     {
         ++g_feedCalls;
-        g_feedFrames += static_cast<uint64_t>(std::max(additional, 0)) / 4u;
-        const uint32_t avail = kzspu2AvailableFrames();
-        if (avail > kHighFrames)
-            g_skippedFrames += kzspu2SkipFrames(avail - kTargetFrames);
+        const uint32_t need = static_cast<uint32_t>(std::max(additional, 0)) / 4u;
+        g_feedFrames += need;
+        if (need == 0u)
+            return;
 
-        int16_t buf[1024 * 2];
-        uint32_t need = static_cast<uint32_t>(std::max(additional, 0)) / 4u;
-        while (need)
+        const uint32_t avail = kzspu2AvailableFrames();
+        if (avail > kHighFrames && avail > kTargetFrames + need)
+            g_skippedFrames += kzspu2SkipFrames(avail - kTargetFrames - need);
+
+        int16_t buf[1024 * 2] = {};
+        if (!g_devicePrimed && kzspu2AvailableFrames() < kTargetFrames + need)
         {
-            const uint32_t chunk = std::min<uint32_t>(need, 1024);
+            for (uint32_t remaining = need; remaining != 0u;)
+            {
+                const uint32_t chunk = std::min<uint32_t>(remaining, 1024u);
+                SDL_PutAudioStreamData(stream, buf, static_cast<int>(chunk * 4u));
+                remaining -= chunk;
+            }
+            return;
+        }
+        g_devicePrimed = true;
+
+        for (uint32_t remaining = need; remaining != 0u;)
+        {
+            const uint32_t chunk = std::min<uint32_t>(remaining, 1024u);
             const uint32_t got = kzspu2ReadSamples(buf, chunk);
             if (got < chunk)
             {
@@ -160,7 +177,7 @@ namespace
                 g_underrunFrames += chunk - got;
             }
             SDL_PutAudioStreamData(stream, buf, static_cast<int>(chunk * 4));
-            need -= chunk;
+            remaining -= chunk;
         }
     }
 

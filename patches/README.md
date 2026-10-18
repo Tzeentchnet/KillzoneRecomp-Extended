@@ -676,3 +676,8 @@ resulting tree to equal the pinned submodule tree.
   an already decoded picture be presented instead of spinning while a read is pending. A scheduler regression test
   covers low-water callback invocation. Measured intro cadence improved from 31 image changes per 90 captures
   (about 21/s) to source cadence; the cleaned build measured 30.3/s in the intro and 29.3/s behind the main menu.
+- **0029-mpeg-refill-budget.patch** - bounds proactive low-water refill to two callbacks before each
+  presented picture. The budget belongs to each MPEG playback object and resets after presentation, while the
+  existing no-progress guard still prevents retry spinning. This preserves the four-picture video reserve without
+  letting a long callback chain delay guest audio maintenance. The focused scheduler regression forces continued
+  callback progress and verifies that exactly two proactive callbacks run before the queued picture is returned.

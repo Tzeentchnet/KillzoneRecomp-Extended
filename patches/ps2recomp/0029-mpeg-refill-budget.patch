@@ -1,0 +1,114 @@
+From 6e4bc1827a65d45be92d10f9eca97c04f062f4b8 Mon Sep 17 00:00:00 2001
+From: Tzeentchnet <58480142+Tzeentchnet@users.noreply.github.com>
+Date: Sat, 17 Oct 2026 19:41:23 -0700
+Subject: [PATCH] Bound MPEG refill recursion
+
+Limit proactive nodata callbacks per presented picture so movie audio maintenance cannot be delayed by an unbounded refill chain. Track the budget per MPEG playback and cover it with a scheduler regression.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
+---
+ ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp    | 13 ++++++++++++-
+ ps2xRuntime/src/lib/Kernel/Stubs/MPEG.h      |  1 +
+ ps2xTest/src/ps2_runtime_expansion_tests.cpp |  7 ++++---
+ 3 files changed, 17 insertions(+), 4 deletions(-)
+
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+index a1c807e..028a15b 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+@@ -573,6 +573,7 @@ namespace ps2_stubs
+             uint64_t presentationEndTickQ32 = std::numeric_limits<uint64_t>::max();
+             int64_t firstPresentedPts90k = -1;
+             uint64_t ptsPresentationBaseTickQ32 = 0u;
++            uint32_t prefetchCallbacksSincePicture = 0u;
+         };
+ 
+         struct MpegStreamCallbackEvent
+@@ -1980,6 +1981,12 @@ namespace ps2_stubs
+         playback.decodedFrames.push_back(std::move(frame));
+     }
+ 
++    void notifyMpegPssProgressForTesting()
++    {
++        std::lock_guard<std::mutex> lock(g_mpeg_stub_mutex);
++        ++g_mpeg_stub_state.pssBytesAppended;
++    }
++
+     void notifyMpegCdStreamStart(PS2Runtime *runtime)
+     {
+         (void)runtime;
+@@ -2625,6 +2632,7 @@ namespace ps2_stubs
+ 
+         constexpr uint32_t kMpegCbNodata = 1u; // sceMpegCbNodata
+         bool s_nodataMadeNoProgress = false;    // set for the retry after a callback that demuxed nothing
++        constexpr uint32_t kMaxPrefetchCallbacksPerPicture = 2u; // bound time away from guest audio maintenance
+ 
+         bool findMpegNodataCallback(uint32_t mpegAddr, uint32_t &func, uint32_t &data)
+         {
+@@ -2736,8 +2744,10 @@ namespace ps2_stubs
+                 !playback.streamEnded &&
+                 !playback.decoderFailed &&
+                 hasNodataCallback &&
+-                !nodataMadeNoProgress)
++                !nodataMadeNoProgress &&
++                playback.prefetchCallbacksSincePicture < kMaxPrefetchCallbacksPerPicture)
+             {
++                ++playback.prefetchCallbacksSincePicture;
+                 lock.unlock();
+                 invokeNodataCallback(rdram, ctx, runtime, mpegAddr, nodataFunc, nodataData);
+             }
+@@ -2826,6 +2836,7 @@ namespace ps2_stubs
+                 playback.decodedFrames.pop_front();
+                 playback.width = static_cast<uint32_t>(frame.width);
+                 playback.height = static_cast<uint32_t>(frame.height);
++                playback.prefetchCallbacksSincePicture = 0u;
+                 width = playback.width;
+                 height = playback.height;
+                 frameCount = playback.picturesServed;
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.h b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.h
+index bbf7edf..80757ce 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.h
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.h
+@@ -6,6 +6,7 @@ namespace ps2_stubs
+ {
+     void resetMpegStubState();
+     void enqueueMpegDecodedFrameForTesting(uint32_t mpegAddr);
++    void notifyMpegPssProgressForTesting();
+     void notifyMpegCdStreamStart(PS2Runtime *runtime = nullptr);
+     void notifyMpegCdStreamDataProduced(uint32_t byteCount, bool endOfStream);
+     void notifyMpegCdStreamEof(PS2Runtime *runtime = nullptr);
+diff --git a/ps2xTest/src/ps2_runtime_expansion_tests.cpp b/ps2xTest/src/ps2_runtime_expansion_tests.cpp
+index d98a5b3..d8165c4 100644
+--- a/ps2xTest/src/ps2_runtime_expansion_tests.cpp
++++ b/ps2xTest/src/ps2_runtime_expansion_tests.cpp
+@@ -311,6 +311,7 @@ namespace
+     {
+         gMpegPrefetchCallbackCount.fetch_add(1u, std::memory_order_acq_rel);
+         gMpegPrefetchStage.store(2u, std::memory_order_release);
++        ps2_stubs::notifyMpegPssProgressForTesting();
+         ctx->pc = 0u;
+     }
+ 
+@@ -841,7 +842,7 @@ void register_ps2_runtime_expansion_tests()
+                      "only the injected decoder frame should be counted as served");
+         });
+ 
+-        tc.Run("sceMpegGetPicture prefetches before the decoded picture queue runs dry", [](TestCase &t)
++        tc.Run("sceMpegGetPicture caps proactive refills before presenting a picture", [](TestCase &t)
+         {
+             PS2Runtime runtime;
+             std::vector<uint8_t> rdram(PS2_RAM_SIZE, 0u);
+@@ -869,8 +870,8 @@ void register_ps2_runtime_expansion_tests()
+             runtime.eeScheduler().reset(rdram.data(), mainContext);
+             runtime.eeScheduler().run();
+ 
+-            t.Equals(gMpegPrefetchCallbackCount.load(std::memory_order_acquire), 1u,
+-                     "low-water decoded queue should request more bitstream before presenting");
++            t.Equals(gMpegPrefetchCallbackCount.load(std::memory_order_acquire), 2u,
++                     "low-water decoded queue should cap consecutive proactive refill callbacks");
+             t.Equals(gMpegPrefetchStage.load(std::memory_order_acquire), 3u,
+                      "picture delivery should resume after the prefetch callback");
+         });
+-- 
+2.55.0.windows.5
+
