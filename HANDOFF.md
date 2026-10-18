@@ -1,12 +1,13 @@
 # KillzoneRecomp execution handoff
 
-**Last updated:** 2026-10-17 16:03 PDT
+**Last updated:** 2026-10-17 17:37 PDT
 **Workspace:** `E:\Git\Killzone`
 **Implementation repository:** `E:\Git\Killzone\KillzoneRecomp-Extended`
-**Branch / implementation commit:** `master` / `cc7fc9cb51b84afc1fbf2208f26497bf6681b460`
-**PS2Recomp revision:** `cc1fc7d87930b48d20abd52974d1be77368eb60a`
+**Branch / implementation commit:** `master` / `24e9cfa341a70e92a8aa1c2d0be3685e5f4fd236`
+**PS2Recomp revision:** `917b379aa76949dc4ce42cdc1eaa0d3313fc76eb`
 **GitHub origin:** `Tzeentchnet/KillzoneRecomp-Extended` is private during
-cleanup; the public upstream remains unchanged.
+cleanup. The PS2Recomp dependency now uses `Tzeentchnet/PS2Recomp`; the
+original public upstream remains unchanged.
 
 This is the living execution handoff for future sessions and agents. Update it
 at the end of every implementation session that changes status, dependencies,
@@ -38,7 +39,7 @@ git submodule status --recursive
 The integrated work from BASE-01 through PORT-01, the Windows-validated
 implementations of VU-01 and MAC-01, the boot/dispatch restoration, and the
 memory-card and MPEG ownership corrections are committed through
-`cc7fc9cb51b84afc1fbf2208f26497bf6681b460`. Preserve any unrelated
+`24e9cfa341a70e92a8aa1c2d0be3685e5f4fd236`. Preserve any unrelated
 working-tree changes rather than resetting or cleaning them.
 
 ## 2. Parallelization labels
@@ -83,6 +84,11 @@ Resume table: PASS with 132,656 dispatch entries, 100,661 resume cases, and 31,9
 Deterministic regeneration: 31,998 files, 0 changed/new, 0 removed
 Complete D3D12 movie probe: visible decoded frames at 35, 40, 45, and 50 s
 Minimized D3D12 boot probe: physical MCSERV, successful host memory-card operations, and main menu at 80 s
+Cleaned D3D12 intro cadence: 49 image changes in 1.6169 s (30.3/s)
+Cleaned D3D12 menu cadence: 43 image changes in 1.4664 s (29.32/s)
+Cleaned D3D12 attract cadence: 44 image changes in 1.4724 s (29.88/s; 42 ideal two-vblank gaps, one four-vblank gap)
+Long D3D12 idle timeline: attract reel active by 160 s, advancing through 240 s, menu restored by 260 s, exit 0
+PS2Recomp low-water prefetch regression: PASS
 Visible corrected MSVC D3D12 session: responsive Killzone window with nonblack logo frame; left running
 git diff --check: PASS
 ```
@@ -97,6 +103,10 @@ opening movies, and reaches the main menu. Authoritative bindings prevent
 overlapping generated owners from shadowing three memory-card and two MPEG
 runtime stubs. The MPEG wrappers establish `$ra` as the return PC before a
 handler can suspend, so asynchronous decoder waits resume in the guest caller.
+Self-fed movies now invoke `sceMpegCbNodata` when four or fewer decoded
+pictures remain instead of waiting for the queue to become empty. This keeps
+the opening, menu, and attract movies near their 29.97 fps source cadence
+without changing `sceCdSt`-produced streams or spinning on asynchronous reads.
 On the current NVIDIA GeForce RTX 5070 driver (`32.0.16.1742`), D3D11 still
 presents an all-black image even though the guest and GS counters advance.
 D3D12 renders correctly. The local MSVC `killzone.ini` therefore persists
@@ -340,6 +350,15 @@ Within each lane, numbered tasks remain serial unless the plan explicitly
 states otherwise. Vendor upscalers, MetalFX, HDR output, dynamic motion
 vectors, and frame generation are not early parallel tasks.
 
+### Deferred launcher backlog
+
+- **Unlock All Campaign Levels** - requested as a future opt-in launcher
+  setting. It is intentionally not part of the MPEG playback fix. Before
+  implementation, identify the game's canonical campaign-unlock state and
+  define whether the option overrides progression in memory, updates the
+  active profile, or both. Keep the default off and cover disabled,
+  enabled, and existing-save behavior.
+
 ## 8. Windows regression commands
 
 Run from the implementation repository:
@@ -444,4 +463,17 @@ New facts or decisions: upstream PS2Recomp was not the failed assumption. The pr
 Blocker and minimal reproducer: D3D11 remains exactly black through a 90-second capture while D3D12 renders with the same executable, ELF, ISO, settings, and guest state. This does not block D3D12 play-testing. Native Apple Silicon acceptance remains unavailable on this Windows host.
 Next command: continue the manual visual test in the running D3D12 window; after Windows play-testing, continue the native macOS acceptance commands in the VU-01 and MAC-01 records
 Safe parallel work: bounded D3D11 backend investigation may proceed independently of native ARM-01, VU-01, and MAC-01 acceptance
+```
+
+```text
+Task: MPEG playback cadence restoration
+Owner/session: Copilot SDK implementation session, 2026-10-17
+Machine: Windows x64, NVIDIA GeForce RTX 5070 driver 32.0.16.1742, MSVC 19.44.35229.0, and clang-cl 23.1.3
+Status: complete for D3D12 intro, menu, and attract playback
+Files changed: .gitmodules; config/dependencies.lock.json; ext/PS2Recomp/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp; ext/PS2Recomp/ps2xTest/src/ps2_runtime_expansion_tests.cpp; patches/README.md; patches/ps2recomp/0028-mpeg-nodata-prefetch.patch; patches/ps2recomp/combined.lock.diff; docs/findings.md; HANDOFF.md
+Acceptance commands and exact results: cleaned MSVC and clang-cl runtime builds PASS; MSVC ISO-free 12/12 PASS; clang-cl ISO-free 12/12 PASS; strict dependency and 60-path canonical patch reconstruction 31 passed, 0 warnings, 0 failures; generated inventory PASS with 42 hook signatures; resume table PASS with 132,656 entries, 100,661 resume cases, and 31,995 targets; focused PS2Recomp low-water callback regression PASS; opening cinematic 30.3 image changes/s, animated menu 29.32/s, and idle attract reel 29.88/s; 380-second attract timeline exited 0; git diff --check PASS
+New facts or decisions: the 29.97 fps source was repeatedly starved because nodata callbacks began only after the decoded queue emptied and Killzone normally supplied one or two pictures per callback. Self-fed movies now prefetch at a four-picture low-water mark into the existing eight-picture queue. Prefetch excludes sceCdSt streams and stops at EOF, sequence end, stream end, or decoder failure; the no-progress retry state prevents callback spinning. PS2Recomp commit 917b379aa76949dc4ce42cdc1eaa0d3313fc76eb is published on Tzeentchnet/PS2Recomp killzone, and parent implementation commit 24e9cfa341a70e92a8aa1c2d0be3685e5f4fd236 is published on origin/master.
+Blocker and minimal reproducer: no D3D12 playback blocker remains. The broader standalone PS2Recomp test executable has unrelated existing failures and exits with an access violation after the MPEG tests; the new focused regression passes before that failure. D3D11 remains the separate known black-output issue on this driver.
+Next command: visually inspect intro, menu, attract playback, and audio in the responsive D3D12 build left running; implement the deferred Unlock All Campaign Levels launcher option only as a separate scoped task
+Safe parallel work: bounded D3D11 backend investigation and design research for the deferred campaign-unlock option may proceed independently of native ARM-01, VU-01, and MAC-01 acceptance
 ```
