@@ -1,10 +1,10 @@
 # KillzoneRecomp execution handoff
 
-**Last updated:** 2026-10-17 17:37 PDT
+**Last updated:** 2026-10-17 19:49 PDT
 **Workspace:** `E:\Git\Killzone`
 **Implementation repository:** `E:\Git\Killzone\KillzoneRecomp-Extended`
-**Branch / implementation commit:** `master` / `24e9cfa341a70e92a8aa1c2d0be3685e5f4fd236`
-**PS2Recomp revision:** `917b379aa76949dc4ce42cdc1eaa0d3313fc76eb`
+**Branch / implementation commit:** `master` / `4ed9b95b877ad62fa58bd1d87dc88e4251b929ab`
+**PS2Recomp revision:** `6e4bc1827a65d45be92d10f9eca97c04f062f4b8`
 **GitHub origin:** `Tzeentchnet/KillzoneRecomp-Extended` is private during
 cleanup. The PS2Recomp dependency now uses `Tzeentchnet/PS2Recomp`; the
 original public upstream remains unchanged.
@@ -39,7 +39,7 @@ git submodule status --recursive
 The integrated work from BASE-01 through PORT-01, the Windows-validated
 implementations of VU-01 and MAC-01, the boot/dispatch restoration, and the
 memory-card and MPEG ownership corrections are committed through
-`24e9cfa341a70e92a8aa1c2d0be3685e5f4fd236`. Preserve any unrelated
+`4ed9b95b877ad62fa58bd1d87dc88e4251b929ab`. Preserve any unrelated
 working-tree changes rather than resetting or cleaning them.
 
 ## 2. Parallelization labels
@@ -78,7 +78,7 @@ MSVC ISO-free:    12/12 passed
 clang-cl ISO-free: 12/12 passed
 Portable VU:      28/28 checks passed with MSVC and clang-cl
 Host smoke:       3/3 passed with MSVC and clang-cl
-Strict dependencies: 31 passed, 0 warnings, 0 failures
+Strict dependencies: 31 passed, 0 warnings, 0 failures; 61-path canonical PS2Recomp patch reconstructed
 Generated inventory: PASS with 42 locked hook signatures
 Resume table: PASS with 132,656 dispatch entries, 100,661 resume cases, and 31,995 targets
 Deterministic regeneration: 31,998 files, 0 changed/new, 0 removed
@@ -88,8 +88,11 @@ Cleaned D3D12 intro cadence: 49 image changes in 1.6169 s (30.3/s)
 Cleaned D3D12 menu cadence: 43 image changes in 1.4664 s (29.32/s)
 Cleaned D3D12 attract cadence: 44 image changes in 1.4724 s (29.88/s; 42 ideal two-vblank gaps, one four-vblank gap)
 Long D3D12 idle timeline: attract reel active by 160 s, advancing through 240 s, menu restored by 260 s, exit 0
-PS2Recomp low-water prefetch regression: PASS
-Visible corrected MSVC D3D12 session: responsive Killzone window with nonblack logo frame; left running
+PS2Recomp low-water prefetch and two-callback budget regression: PASS
+Final four-bank raw audio: zero old 3,584-frame repeats; representative 7,168-frame result 12 intervals / 0.878833 s / 106.083 ms maximum
+Final 40 ms host reserve: 1,288 and 3,283 movie-window underrun frames (26.8 and 68.4 ms), versus 5,536 / 115.3 ms baseline
+Final audio-fix video burst: 44 changes in 90 fields; 42 two-field gaps and one four-field gap
+Visible final MSVC D3D12 session: responsive Killzone window from the four-bank build; left running for subjective listening
 git diff --check: PASS
 ```
 
@@ -475,5 +478,18 @@ Acceptance commands and exact results: cleaned MSVC and clang-cl runtime builds 
 New facts or decisions: the 29.97 fps source was repeatedly starved because nodata callbacks began only after the decoded queue emptied and Killzone normally supplied one or two pictures per callback. Self-fed movies now prefetch at a four-picture low-water mark into the existing eight-picture queue. Prefetch excludes sceCdSt streams and stops at EOF, sequence end, stream end, or decoder failure; the no-progress retry state prevents callback spinning. PS2Recomp commit 917b379aa76949dc4ce42cdc1eaa0d3313fc76eb is published on Tzeentchnet/PS2Recomp killzone, and parent implementation commit 24e9cfa341a70e92a8aa1c2d0be3685e5f4fd236 is published on origin/master.
 Blocker and minimal reproducer: no D3D12 playback blocker remains. The broader standalone PS2Recomp test executable has unrelated existing failures and exits with an access violation after the MPEG tests; the new focused regression passes before that failure. D3D11 remains the separate known black-output issue on this driver.
 Next command: visually inspect intro, menu, attract playback, and audio in the responsive D3D12 build left running; implement the deferred Unlock All Campaign Levels launcher option only as a separate scoped task
+Safe parallel work: bounded D3D11 backend investigation and design research for the deferred campaign-unlock option may proceed independently of native ARM-01, VU-01, and MAC-01 acceptance
+```
+
+```text
+Task: FMV audio continuity under scheduler stalls
+Owner/session: Copilot SDK implementation session, 2026-10-17
+Machine: Windows x64, NVIDIA GeForce RTX 5070 driver 32.0.16.1742, MSVC 19.44.35229.0, and clang-cl 23.1.3
+Status: objective implementation and automated acceptance complete; subjective D3D12 listening pending in the running final build
+Files changed: config/killzone.toml; config/generated-manifest.json; config/dependencies.lock.json; src/kz_audio.cpp; ext/PS2Recomp/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp; ext/PS2Recomp/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.h; ext/PS2Recomp/ps2xTest/src/ps2_runtime_expansion_tests.cpp; patches/README.md; patches/ps2recomp/0029-mpeg-refill-budget.patch; patches/ps2recomp/combined.lock.diff; docs/findings.md; HANDOFF.md
+Acceptance commands and exact results: deterministic four-bank regeneration produced 31,998 files; focused PS2Recomp two-callback regression PASS; strict dependency and 61-path canonical patch reconstruction 31 passed, 0 warnings, 0 failures; generated inventory PASS with 42 hook signatures; resume table PASS with 132,656 entries, 100,661 resume cases, and 31,995 targets; MSVC build and ISO-free 12/12 PASS; clang-cl build and ISO-free 12/12 PASS; three representative four-bank/capped raw captures contained zero old 3,584-frame repeats, with the final capture measuring 12 new 7,168-frame intervals / 0.878833 s total / 106.083 ms maximum; two real SDL/WASAPI captures measured 1,288 and 3,283 movie-window underrun frames (26.8 and 68.4 ms) versus the 5,536-frame / 115.3 ms baseline; the final video burst retained 44 image changes in 90 fields with 42 two-field gaps and one four-field gap; the final four-bank D3D12 executable opened a responsive Killzone window; git diff --check PASS
+New facts or decisions: exact raw-PCM equality at a 3,584-frame lag identified stale replay of the original two-bank movie ADPCM ring rather than only host output starvation. Twelve coordinated guest instruction patches expand each channel to four banks; eight and sixteen banks were rejected because rarer misses replayed much longer spans. MPEG low-water refill is bounded to two successful proactive callbacks per presented picture so recursive demux work cannot monopolize guest audio maintenance. The SDL callback now primes playback with the current device request plus a real 40 ms reserve and retains that reserve during high-water recovery, but does not re-arm it after later starvation. PS2Recomp commit 6e4bc1827a65d45be92d10f9eca97c04f062f4b8 and parent implementation commit 4ed9b95b877ad62fa58bd1d87dc88e4251b929ab contain the publishable implementation.
+Blocker and minimal reproducer: subjective listening is still required. Rare full four-bank (7,168-frame / 149.3 ms) misses remain possible when the movie update is delayed for several hundred milliseconds; the accepted configuration minimizes audible frequency without turning exceptional misses into the 250 ms-plus repeats seen with eight banks. The broad standalone PS2Recomp test executable still reaches the pre-existing sceMpegDemuxPssRing failure and later access violation, so it is not a full-suite pass. D3D11 remains the separate known black-output issue on this driver.
+Next command: listen through the opening movie, menu, and attract reel in the responsive D3D12 build left running; if objectionable stutter remains, preserve the exact timestamp and scene before changing the four-bank/two-callback/40 ms policy. Keep Unlock All Campaign Levels as a separate launcher task.
 Safe parallel work: bounded D3D11 backend investigation and design research for the deferred campaign-unlock option may proceed independently of native ARM-01, VU-01, and MAC-01 acceptance
 ```
