@@ -1,6 +1,6 @@
 diff --git a/ps2xIOP/include/ps2x/iop/iop_host_spu2.h b/ps2xIOP/include/ps2x/iop/iop_host_spu2.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..598cab65c99607df1a45c9961ca18590e748787c
+index 0000000..598cab6
 --- /dev/null
 +++ b/ps2xIOP/include/ps2x/iop/iop_host_spu2.h
 @@ -0,0 +1,40 @@
@@ -45,7 +45,7 @@ index 0000000000000000000000000000000000000000..598cab65c99607df1a45c9961ca18590
 +    void iopSpu2DmaComplete(int core);
 +}
 diff --git a/ps2xIOP/include/ps2x/iop/iop_subsystem.h b/ps2xIOP/include/ps2x/iop/iop_subsystem.h
-index 68fec81cfb00d935d71e3c18c3d871e5450533b0..939901fac694f7d143ddd81ea67c695912858146 100644
+index 68fec81..939901f 100644
 --- a/ps2xIOP/include/ps2x/iop/iop_subsystem.h
 +++ b/ps2xIOP/include/ps2x/iop/iop_subsystem.h
 @@ -3,6 +3,8 @@
@@ -128,7 +128,7 @@ index 68fec81cfb00d935d71e3c18c3d871e5450533b0..939901fac694f7d143ddd81ea67c6959
          class Impl;
          std::unique_ptr<Impl> m_impl;
 diff --git a/ps2xIOP/src/emulator/core/iop_kernel.cpp b/ps2xIOP/src/emulator/core/iop_kernel.cpp
-index 4832d8f5ba4e4ce4915a3921f5acd931dd51d457..57e79fbfd107b14a3e7e999d15314e358e998bf0 100644
+index 4832d8f..57e79fb 100644
 --- a/ps2xIOP/src/emulator/core/iop_kernel.cpp
 +++ b/ps2xIOP/src/emulator/core/iop_kernel.cpp
 @@ -4,6 +4,7 @@
@@ -306,7 +306,7 @@ index 4832d8f5ba4e4ce4915a3921f5acd931dd51d457..57e79fbfd107b14a3e7e999d15314e35
  
      void IopKernel::terminateThreadsInRange(uint32_t base, uint32_t size)
 diff --git a/ps2xIOP/src/emulator/core/iop_kernel.h b/ps2xIOP/src/emulator/core/iop_kernel.h
-index 49771024477e7655269f39e2b79c455c0cb693f4..17e93e72fe4c323e63703c1fc3175cba90042a65 100644
+index 4977102..17e93e7 100644
 --- a/ps2xIOP/src/emulator/core/iop_kernel.h
 +++ b/ps2xIOP/src/emulator/core/iop_kernel.h
 @@ -5,6 +5,8 @@
@@ -354,7 +354,7 @@ index 49771024477e7655269f39e2b79c455c0cb693f4..17e93e72fe4c323e63703c1fc3175cba
      };
  }
 diff --git a/ps2xIOP/src/emulator/core/iop_memory.cpp b/ps2xIOP/src/emulator/core/iop_memory.cpp
-index 25e9b36d1938fe721616bcfaa68fbe540faa1c20..8034216a641e2fd98cf1c1f2c53775cb89e97985 100644
+index 25e9b36..8034216 100644
 --- a/ps2xIOP/src/emulator/core/iop_memory.cpp
 +++ b/ps2xIOP/src/emulator/core/iop_memory.cpp
 @@ -1,14 +1,21 @@
@@ -565,7 +565,7 @@ index 25e9b36d1938fe721616bcfaa68fbe540faa1c20..8034216a641e2fd98cf1c1f2c53775cb
 +    }
 +}
 diff --git a/ps2xIOP/src/emulator/core/iop_memory.h b/ps2xIOP/src/emulator/core/iop_memory.h
-index a932a5d87be94287e9df007838db5a0a8932692e..3190abfe68f906f2703122de9208dac376cbeba9 100644
+index a932a5d..3190abf 100644
 --- a/ps2xIOP/src/emulator/core/iop_memory.h
 +++ b/ps2xIOP/src/emulator/core/iop_memory.h
 @@ -68,6 +68,20 @@ namespace ps2x::iop::detail
@@ -612,7 +612,7 @@ index a932a5d87be94287e9df007838db5a0a8932692e..3190abfe68f906f2703122de9208dac3
 +    [[nodiscard]] uint32_t takeSpu2Pending() noexcept;
  }
 diff --git a/ps2xIOP/src/emulator/imports/iop_cdvd.cpp b/ps2xIOP/src/emulator/imports/iop_cdvd.cpp
-index ad58fb4e436d8a411053512855a6276382e8f6a2..e5e2ffcdedc3b03d9e51e921f369d1aee4ff89f2 100644
+index ad58fb4..e5e2ffc 100644
 --- a/ps2xIOP/src/emulator/imports/iop_cdvd.cpp
 +++ b/ps2xIOP/src/emulator/imports/iop_cdvd.cpp
 @@ -280,6 +280,15 @@ namespace ps2x::iop::detail
@@ -735,7 +735,7 @@ index ad58fb4e436d8a411053512855a6276382e8f6a2..e5e2ffcdedc3b03d9e51e921f369d1ae
              IsoNode *node = findVirtualIsoNode(guestPath);
              if (!node)
 diff --git a/ps2xIOP/src/emulator/imports/iop_imports.cpp b/ps2xIOP/src/emulator/imports/iop_imports.cpp
-index f13267fe10b9724e899a58d313d51ab2fe7cb25e..2590c4fda37882d1f4a4702277f5fdb6dc8a31f3 100644
+index f13267f..2590c4f 100644
 --- a/ps2xIOP/src/emulator/imports/iop_imports.cpp
 +++ b/ps2xIOP/src/emulator/imports/iop_imports.cpp
 @@ -42,6 +42,7 @@ namespace ps2x::iop::detail
@@ -791,7 +791,7 @@ index f13267fe10b9724e899a58d313d51ab2fe7cb25e..2590c4fda37882d1f4a4702277f5fdb6
          {
              if (library->first >= base && library->first < base + size)
 diff --git a/ps2xIOP/src/emulator/imports/iop_imports.h b/ps2xIOP/src/emulator/imports/iop_imports.h
-index cae8d91a0e74eca37fc696f16aa886dfd10e229f..e8fd877c884274476305889dd25b3a00cd16d084 100644
+index cae8d91..e8fd877 100644
 --- a/ps2xIOP/src/emulator/imports/iop_imports.h
 +++ b/ps2xIOP/src/emulator/imports/iop_imports.h
 @@ -6,6 +6,7 @@
@@ -817,7 +817,7 @@ index cae8d91a0e74eca37fc696f16aa886dfd10e229f..e8fd877c884274476305889dd25b3a00
      };
  }
 diff --git a/ps2xIOP/src/emulator/iop_emulator.cpp b/ps2xIOP/src/emulator/iop_emulator.cpp
-index e5f63a9fe2419333caac0597ac94ef751af05c17..af75b871b3134d34f21f9b96333021b906ae6b08 100644
+index e5f63a9..af75b87 100644
 --- a/ps2xIOP/src/emulator/iop_emulator.cpp
 +++ b/ps2xIOP/src/emulator/iop_emulator.cpp
 @@ -1,3 +1,4 @@
@@ -1233,7 +1233,7 @@ index e5f63a9fe2419333caac0597ac94ef751af05c17..af75b871b3134d34f21f9b96333021b9
                 m_impl->memory.zeroRam(address, size);
      }
 diff --git a/ps2xIOP/src/emulator/iop_emulator.h b/ps2xIOP/src/emulator/iop_emulator.h
-index 01b48df57482646c829ebf19e76e3c351da56105..3f13267492a0a5564147383d9e33723b40ae5d12 100644
+index 01b48df..3f13267 100644
 --- a/ps2xIOP/src/emulator/iop_emulator.h
 +++ b/ps2xIOP/src/emulator/iop_emulator.h
 @@ -25,7 +25,7 @@ namespace ps2x::iop::detail
@@ -1247,7 +1247,7 @@ index 01b48df57482646c829ebf19e76e3c351da56105..3f13267492a0a5564147383d9e33723b
  
 diff --git a/ps2xIOP/src/emulator/iop_trace.h b/ps2xIOP/src/emulator/iop_trace.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..a4735aa0c49261920581c50d4f5a5a8dcfae61e6
+index 0000000..a4735aa
 --- /dev/null
 +++ b/ps2xIOP/src/emulator/iop_trace.h
 @@ -0,0 +1,21 @@
@@ -1273,7 +1273,7 @@ index 0000000000000000000000000000000000000000..a4735aa0c49261920581c50d4f5a5a8d
 +    inline bool iopSyncTrace() noexcept { return iopSyncTraceLevel() > 0; }
 +}
 diff --git a/ps2xIOP/src/emulator/services/iop_rpc.cpp b/ps2xIOP/src/emulator/services/iop_rpc.cpp
-index cf4fdc6ec2553c227dfb6cad1c10ddf3a4c82da3..effa2829389f8ddbc7c7caadecdbb7b940589c30 100644
+index cf4fdc6..effa282 100644
 --- a/ps2xIOP/src/emulator/services/iop_rpc.cpp
 +++ b/ps2xIOP/src/emulator/services/iop_rpc.cpp
 @@ -4,6 +4,9 @@
@@ -1372,7 +1372,7 @@ index cf4fdc6ec2553c227dfb6cad1c10ddf3a4c82da3..effa2829389f8ddbc7c7caadecdbb7b9
                  std::vector<uint8_t> payload(copySize);
                  if (m_host.readGuest(request.send.address, payload.data(), payload.size()))
 diff --git a/ps2xIOP/src/emulator/services/iop_rpc.h b/ps2xIOP/src/emulator/services/iop_rpc.h
-index a4286ba3c21ef56174780d4821a7469681e1091a..dbb7e300c7998fefa5d5f3732b507493ed070567 100644
+index a4286ba..dbb7e30 100644
 --- a/ps2xIOP/src/emulator/services/iop_rpc.h
 +++ b/ps2xIOP/src/emulator/services/iop_rpc.h
 @@ -5,6 +5,7 @@
@@ -1396,7 +1396,7 @@ index a4286ba3c21ef56174780d4821a7469681e1091a..dbb7e300c7998fefa5d5f3732b507493
          void removeServersInRange(uint32_t base, uint32_t size);
  
 diff --git a/ps2xIOP/src/iop_subsystem.cpp b/ps2xIOP/src/iop_subsystem.cpp
-index b49815540952427b724770b5a9555994b5de99d7..6a1952ed3130eaeb0d4400a4d50c524bb2627f47 100644
+index b498155..6a1952e 100644
 --- a/ps2xIOP/src/iop_subsystem.cpp
 +++ b/ps2xIOP/src/iop_subsystem.cpp
 @@ -6,13 +6,69 @@
@@ -2084,7 +2084,7 @@ index b49815540952427b724770b5a9555994b5de99d7..6a1952ed3130eaeb0d4400a4d50c524b
 +    }
  }
 diff --git a/ps2xRecomp/include/ps2recomp/code_generator.h b/ps2xRecomp/include/ps2recomp/code_generator.h
-index 1bdf0f612b7129cbbc08b0d356dfc83040e584ef..b901eb502d91b40ad6dcc49811487e2117dc30d5 100644
+index 1bdf0f6..b901eb5 100644
 --- a/ps2xRecomp/include/ps2recomp/code_generator.h
 +++ b/ps2xRecomp/include/ps2recomp/code_generator.h
 @@ -5,6 +5,7 @@
@@ -2122,7 +2122,7 @@ index 1bdf0f612b7129cbbc08b0d356dfc83040e584ef..b901eb502d91b40ad6dcc49811487e21
          std::string translateInstruction(const Instruction &inst, const MemoryAccessHint &memoryHint);
          std::string emitUnhandledInstruction(const Instruction &inst, const std::string &message);
 diff --git a/ps2xRecomp/include/ps2recomp/ps2_recompiler.h b/ps2xRecomp/include/ps2recomp/ps2_recompiler.h
-index dd622753fed37284263325b33132fd9d706b47b0..753edf468708db92c8717b2ea82ccfe69357ad9b 100644
+index dd62275..753edf4 100644
 --- a/ps2xRecomp/include/ps2recomp/ps2_recompiler.h
 +++ b/ps2xRecomp/include/ps2recomp/ps2_recompiler.h
 @@ -79,6 +79,7 @@ namespace ps2recomp
@@ -2134,7 +2134,7 @@ index dd622753fed37284263325b33132fd9d706b47b0..753edf468708db92c8717b2ea82ccfe6
          bool isStubFunction(const Function &function) const;
          bool isCorrectnessCriticalFunction(const Function &function) const;
 diff --git a/ps2xRecomp/src/lib/code_generator.cpp b/ps2xRecomp/src/lib/code_generator.cpp
-index 68b09847551dca0b444b377560842a310da7645b..58b85eef0aa803aed4430e93c8a3a03d90e99644 100644
+index 68b0984..58b85ee 100644
 --- a/ps2xRecomp/src/lib/code_generator.cpp
 +++ b/ps2xRecomp/src/lib/code_generator.cpp
 @@ -19,6 +19,8 @@
@@ -2204,7 +2204,7 @@ index 68b09847551dca0b444b377560842a310da7645b..58b85eef0aa803aed4430e93c8a3a03d
  
      void CodeGenerator::setRenamedFunctions(const std::unordered_map<uint32_t, std::string> &renames)
 diff --git a/ps2xRecomp/src/lib/control_flow_analyzer.cpp b/ps2xRecomp/src/lib/control_flow_analyzer.cpp
-index ed7578dd19d169ba1890b746e6df070ff2984739..250978dab0f17482769f9f4de81fa406327096bd 100644
+index ed7578d..250978d 100644
 --- a/ps2xRecomp/src/lib/control_flow_analyzer.cpp
 +++ b/ps2xRecomp/src/lib/control_flow_analyzer.cpp
 @@ -194,7 +194,12 @@ namespace ps2recomp
@@ -2221,7 +2221,7 @@ index ed7578dd19d169ba1890b746e6df070ff2984739..250978dab0f17482769f9f4de81fa406
  
                  bool foundTable = false;
 diff --git a/ps2xRecomp/src/lib/control_flow_emitter.cpp b/ps2xRecomp/src/lib/control_flow_emitter.cpp
-index 4bf8dc550c05ba3e576b1288f1b5c0f2aaac3d98..82c0a6712e645ddfcd930ae0f22e2cb77e4b319b 100644
+index 4bf8dc5..82c0a67 100644
 --- a/ps2xRecomp/src/lib/control_flow_emitter.cpp
 +++ b/ps2xRecomp/src/lib/control_flow_emitter.cpp
 @@ -131,11 +131,18 @@ namespace ps2recomp
@@ -2511,7 +2511,7 @@ index 4bf8dc550c05ba3e576b1288f1b5c0f2aaac3d98..82c0a6712e645ddfcd930ae0f22e2cb7
          if (m_branchInst.opcode == OPCODE_J || m_branchInst.opcode == OPCODE_JAL)
          {
 diff --git a/ps2xRecomp/src/lib/cop0_translator.cpp b/ps2xRecomp/src/lib/cop0_translator.cpp
-index 1823a3946249cd7c734e166378a6ff3a750d0a99..2ef9db293e32ea9c1bffc3b2896c856714fb07b9 100644
+index 1823a39..2ef9db2 100644
 --- a/ps2xRecomp/src/lib/cop0_translator.cpp
 +++ b/ps2xRecomp/src/lib/cop0_translator.cpp
 @@ -140,7 +140,7 @@ namespace ps2recomp
@@ -2524,7 +2524,7 @@ index 1823a3946249cd7c734e166378a6ff3a750d0a99..2ef9db293e32ea9c1bffc3b2896c8567
                      "    ctx->pc = ctx->cop0_errorepc; \n"
                      "    ctx->cop0_status &= ~0x4; \n" // Clear ERL bit
 diff --git a/ps2xRecomp/src/lib/fpu_translator.cpp b/ps2xRecomp/src/lib/fpu_translator.cpp
-index 944cee7966f095d8358602c9c5cbfc6cb1a0f326..90e565e8662fad476ee69af633b8b90a42f49081 100644
+index 944cee7..90e565e 100644
 --- a/ps2xRecomp/src/lib/fpu_translator.cpp
 +++ b/ps2xRecomp/src/lib/fpu_translator.cpp
 @@ -53,12 +53,13 @@ namespace ps2recomp
@@ -2557,7 +2557,7 @@ index 944cee7966f095d8358602c9c5cbfc6cb1a0f326..90e565e8662fad476ee69af633b8b90a
                  return fmt::format("FPU_SET_ACC(ctx, FPU_ADD_S(ctx->f[{}], ctx->f[{}]));", fs, ft);
              case COP1_S_SUBA:
 diff --git a/ps2xRecomp/src/lib/function_emitter.cpp b/ps2xRecomp/src/lib/function_emitter.cpp
-index 3192e90ac6a8b49029abbddaf45d8f07b93333c4..3606f9516bd0821c48327f27b75d4bfd7f786ad8 100644
+index 3192e90..3606f95 100644
 --- a/ps2xRecomp/src/lib/function_emitter.cpp
 +++ b/ps2xRecomp/src/lib/function_emitter.cpp
 @@ -5,8 +5,12 @@
@@ -2996,7 +2996,7 @@ index 3192e90ac6a8b49029abbddaf45d8f07b93333c4..3606f9516bd0821c48327f27b75d4bfd
          return ss.str();
      }
 diff --git a/ps2xRecomp/src/lib/instruction_translator.cpp b/ps2xRecomp/src/lib/instruction_translator.cpp
-index 76840975935ba75517dd228cb9d1d10fd903b1db..6ce7f8fe9344642be0bf7ef2f925430fe7d2601c 100644
+index 7684097..6ce7f8f 100644
 --- a/ps2xRecomp/src/lib/instruction_translator.cpp
 +++ b/ps2xRecomp/src/lib/instruction_translator.cpp
 @@ -73,14 +73,23 @@ namespace ps2recomp
@@ -3042,7 +3042,7 @@ index 76840975935ba75517dd228cb9d1d10fd903b1db..6ce7f8fe9344642be0bf7ef2f925430f
              if (inst.isMmio || Ps2IsSpecialAddress(resolvedAddress))
              {
 diff --git a/ps2xRecomp/src/lib/mmi_translation_helpers.cpp b/ps2xRecomp/src/lib/mmi_translation_helpers.cpp
-index a2bcb777f61068df569c0a20ef84e7dd57235239..de0269e5c97464129855bae73566e9d39c63f975 100644
+index a2bcb77..de0269e 100644
 --- a/ps2xRecomp/src/lib/mmi_translation_helpers.cpp
 +++ b/ps2xRecomp/src/lib/mmi_translation_helpers.cpp
 @@ -236,7 +236,12 @@ namespace ps2recomp
@@ -3139,7 +3139,7 @@ index a2bcb777f61068df569c0a20ef84e7dd57235239..de0269e5c97464129855bae73566e9d3
      }
  
 diff --git a/ps2xRecomp/src/lib/ps2_recompiler.cpp b/ps2xRecomp/src/lib/ps2_recompiler.cpp
-index bb35a7a3c4032cfcc9298649d259156732f00f85..967f41b2a22d35a1003cad44c41a32cf922390d9 100644
+index bb35a7a..967f41b 100644
 --- a/ps2xRecomp/src/lib/ps2_recompiler.cpp
 +++ b/ps2xRecomp/src/lib/ps2_recompiler.cpp
 @@ -2002,6 +2002,38 @@ namespace ps2recomp
@@ -3390,7 +3390,7 @@ index bb35a7a3c4032cfcc9298649d259156732f00f85..967f41b2a22d35a1003cad44c41a32cf
      {
          std::vector<Instruction> instructions;
 diff --git a/ps2xRecomp/src/lib/special_translator.cpp b/ps2xRecomp/src/lib/special_translator.cpp
-index b01a9377151776e3ae19e64124f3cbc4e794a722..cc93b33096a42c3ab7b539e94a7e507efa7e913e 100644
+index b01a937..cc93b33 100644
 --- a/ps2xRecomp/src/lib/special_translator.cpp
 +++ b/ps2xRecomp/src/lib/special_translator.cpp
 @@ -121,8 +121,12 @@ namespace ps2recomp
@@ -3407,7 +3407,7 @@ index b01a9377151776e3ae19e64124f3cbc4e794a722..cc93b33096a42c3ab7b539e94a7e507e
          case SPECIAL_MFSA:
              return fmt::format("SET_GPR_U32(ctx, {}, ctx->sa);", inst.rd);
 diff --git a/ps2xRecomp/src/lib/vu_translation_helpers.cpp b/ps2xRecomp/src/lib/vu_translation_helpers.cpp
-index 509fd07b0a2f07788e9f62e961001f79fd649c23..025a3556869a1a095477a06f433dd8c072010146 100644
+index 509fd07..025a355 100644
 --- a/ps2xRecomp/src/lib/vu_translation_helpers.cpp
 +++ b/ps2xRecomp/src/lib/vu_translation_helpers.cpp
 @@ -75,21 +75,24 @@ namespace ps2recomp
@@ -3439,7 +3439,7 @@ index 509fd07b0a2f07788e9f62e961001f79fd649c23..025a3556869a1a095477a06f433dd8c0
  
      std::string CodeGenerator::translateVU_VMTIR(const Instruction &inst)
 diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
-index 589d76850a7e3c9b99eea17d66ba0a8cad7d3f24..7e3c0c745d765b96265b558fde145f0afd421be7 100644
+index 589d768..7e3c0c7 100644
 --- a/ps2xRuntime/CMakeLists.txt
 +++ b/ps2xRuntime/CMakeLists.txt
 @@ -390,6 +390,8 @@ add_library(ps2_runtime STATIC
@@ -3453,7 +3453,7 @@ index 589d76850a7e3c9b99eea17d66ba0a8cad7d3f24..7e3c0c745d765b96265b558fde145f0a
      src/lib/vu/ps2_vu1_lower.cpp
 diff --git a/ps2xRuntime/include/ps2_cg.h b/ps2xRuntime/include/ps2_cg.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..19f30f12c38b47cfb38df71a6c052dfdd9cbdc90
+index 0000000..19f30f1
 --- /dev/null
 +++ b/ps2xRuntime/include/ps2_cg.h
 @@ -0,0 +1,256 @@
@@ -3715,7 +3715,7 @@ index 0000000000000000000000000000000000000000..19f30f12c38b47cfb38df71a6c052dfd
 +#endif // PS2_CG_H
 diff --git a/ps2xRuntime/include/ps2_cg_dsp.h b/ps2xRuntime/include/ps2_cg_dsp.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..dfc897ccaceadc322042f05b95037864087846cc
+index 0000000..dfc897c
 --- /dev/null
 +++ b/ps2xRuntime/include/ps2_cg_dsp.h
 @@ -0,0 +1,158 @@
@@ -3878,7 +3878,7 @@ index 0000000000000000000000000000000000000000..dfc897ccaceadc322042f05b95037864
 +
 +#endif // PS2_CG_DSP_H
 diff --git a/ps2xRuntime/include/ps2_runtime_macros.h b/ps2xRuntime/include/ps2_runtime_macros.h
-index 0f19c9f24edd6d233d7f5be8d191f3a76cad9810..80f65d734e0cca0ccd30ba472abb7be706567f21 100644
+index 0f19c9f..80f65d7 100644
 --- a/ps2xRuntime/include/ps2_runtime_macros.h
 +++ b/ps2xRuntime/include/ps2_runtime_macros.h
 @@ -141,10 +141,53 @@ static inline uint32_t ps2_plzcw32(uint32_t x)
@@ -3976,7 +3976,7 @@ index 0f19c9f24edd6d233d7f5be8d191f3a76cad9810..80f65d734e0cca0ccd30ba472abb7be7
  #define FPU_C_F_S(a, b) (0)
  #define FPU_C_UN_S(a, b) (isnan((float)(a)) || isnan((float)(b)))
 diff --git a/ps2xRuntime/include/runtime/ee_scheduler.h b/ps2xRuntime/include/runtime/ee_scheduler.h
-index f247ff998daaa9fec3c1569cafa75a09619e17cc..ede4cb5cce5d29a6f8647c0599d494fad0e45e87 100644
+index f247ff9..ede4cb5 100644
 --- a/ps2xRuntime/include/runtime/ee_scheduler.h
 +++ b/ps2xRuntime/include/runtime/ee_scheduler.h
 @@ -266,6 +266,8 @@ public:
@@ -3990,7 +3990,7 @@ index f247ff998daaa9fec3c1569cafa75a09619e17cc..ede4cb5cce5d29a6f8647c0599d494fa
      explicit EeScheduler(PS2Runtime &runtime);
 diff --git a/ps2xRuntime/include/runtime/ps2_dma_stats.h b/ps2xRuntime/include/runtime/ps2_dma_stats.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..7259e3f265fd159275b7d349405c7fb1de377fdb
+index 0000000..7259e3f
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/ps2_dma_stats.h
 @@ -0,0 +1,39 @@
@@ -4035,7 +4035,7 @@ index 0000000000000000000000000000000000000000..7259e3f265fd159275b7d349405c7fb1
 +bool ps2DmaStatsEnabled();
 diff --git a/ps2xRuntime/include/runtime/ps2_host_arena.h b/ps2xRuntime/include/runtime/ps2_host_arena.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..9c0614f9fca74da435af41fbabee4e6dbad8706d
+index 0000000..9c0614f
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/ps2_host_arena.h
 @@ -0,0 +1,10 @@
@@ -4051,7 +4051,7 @@ index 0000000000000000000000000000000000000000..9c0614f9fca74da435af41fbabee4e6d
 +void ps2SetRuntimeArena(uint32_t heapBase, uint32_t heapLimit, uint32_t stackFloor, uint32_t stackTop);
 diff --git a/ps2xRuntime/include/runtime/ps2_host_gs.h b/ps2xRuntime/include/runtime/ps2_host_gs.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..be969a7e6ba170b847457f8ae91b599526594c4d
+index 0000000..be969a7
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/ps2_host_gs.h
 @@ -0,0 +1,38 @@
@@ -4095,7 +4095,7 @@ index 0000000000000000000000000000000000000000..be969a7e6ba170b847457f8ae91b5995
 +uint32_t ps2VblankPeriodMicros();
 diff --git a/ps2xRuntime/include/runtime/ps2_host_ipu.h b/ps2xRuntime/include/runtime/ps2_host_ipu.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..8aa9091b1f0a6f9d04a1e8519b234124bf75c402
+index 0000000..8aa9091
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/ps2_host_ipu.h
 @@ -0,0 +1,28 @@
@@ -4129,7 +4129,7 @@ index 0000000000000000000000000000000000000000..8aa9091b1f0a6f9d04a1e8519b234124
 +void ps2HostCompleteDmac(uint32_t channel);
 diff --git a/ps2xRuntime/include/runtime/ps2_host_vu.h b/ps2xRuntime/include/runtime/ps2_host_vu.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..c2e001f45cf47eb594c996de866c6e152d126f25
+index 0000000..c2e001f
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/ps2_host_vu.h
 @@ -0,0 +1,22 @@
@@ -4157,7 +4157,7 @@ index 0000000000000000000000000000000000000000..c2e001f45cf47eb594c996de866c6e15
 +const PS2HostVu1 &ps2HostVu1();
 diff --git a/ps2xRuntime/include/runtime/ps2_host_vu0.h b/ps2xRuntime/include/runtime/ps2_host_vu0.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..955febf055dedbfa50f98808c45aac6422fd7ffa
+index 0000000..955febf
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/ps2_host_vu0.h
 @@ -0,0 +1,24 @@
@@ -4186,7 +4186,7 @@ index 0000000000000000000000000000000000000000..955febf055dedbfa50f98808c45aac64
 +void ps2SetHostVu0(const PS2HostVu0 &hooks);
 +const PS2HostVu0 &ps2HostVu0();
 diff --git a/ps2xRuntime/include/runtime/ps2_memory.h b/ps2xRuntime/include/runtime/ps2_memory.h
-index ea86a9cb257df16f18067068ddab5ee8ba408350..4afdcbe85499a6daff448353e65c48db2e42ed03 100644
+index ea86a9c..4afdcbe 100644
 --- a/ps2xRuntime/include/runtime/ps2_memory.h
 +++ b/ps2xRuntime/include/runtime/ps2_memory.h
 @@ -335,6 +335,7 @@ public:
@@ -4210,7 +4210,7 @@ index ea86a9cb257df16f18067068ddab5ee8ba408350..4afdcbe85499a6daff448353e65c48db
      struct PendingTransfer
 diff --git a/ps2xRuntime/include/runtime/ps2_pad_provider.h b/ps2xRuntime/include/runtime/ps2_pad_provider.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..2833818b68fa0b299604ab60877248bde2380c5a
+index 0000000..2833818
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/ps2_pad_provider.h
 @@ -0,0 +1,10 @@
@@ -4226,7 +4226,7 @@ index 0000000000000000000000000000000000000000..2833818b68fa0b299604ab60877248bd
 +void ps2SetPadProvider(PS2PadProvider provider);
 diff --git a/ps2xRuntime/include/runtime/ps2_timeline.h b/ps2xRuntime/include/runtime/ps2_timeline.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..7251c41612c25f44f1b7baa5753c9f6ea344fe61
+index 0000000..7251c41
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/ps2_timeline.h
 @@ -0,0 +1,181 @@
@@ -4412,7 +4412,7 @@ index 0000000000000000000000000000000000000000..7251c41612c25f44f1b7baa5753c9f6e
 +    };
 +} // namespace ps2tl
 diff --git a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
-index c5e31c48d887460d816564641f48e20e0af2f32d..72017a40eaabeaaa8094f391af482947cec2fcd2 100644
+index c5e31c4..72017a4 100644
 --- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
 +++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
 @@ -1,13 +1,240 @@
@@ -5289,7 +5289,7 @@ index c5e31c48d887460d816564641f48e20e0af2f32d..72017a40eaabeaaa8094f391af482947
 +    return g_vblankPeriodMicros.load(std::memory_order_relaxed);
 +}
 diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/Audio.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/Audio.cpp
-index e1be7d21fb24c1b4eb7af2611c0c299e320be19a..1b87f4a6ea524599fea016bdc3aa260774ac13a0 100644
+index e1be7d2..1b87f4a 100644
 --- a/ps2xRuntime/src/lib/Kernel/Stubs/Audio.cpp
 +++ b/ps2xRuntime/src/lib/Kernel/Stubs/Audio.cpp
 @@ -1,5 +1,9 @@
@@ -5476,7 +5476,7 @@ index e1be7d21fb24c1b4eb7af2611c0c299e320be19a..1b87f4a6ea524599fea016bdc3aa2607
          std::lock_guard<std::mutex> lock(g_audio_stub_mutex);
          resetAudioStubStateUnlocked();
 diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
-index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638995f447c 100644
+index 44eaef4..a1c807e 100644
 --- a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
 +++ b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
 @@ -1,6 +1,7 @@
@@ -5590,7 +5590,15 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
          constexpr uint8_t kMpegPackHeader = 0xBAu;
          constexpr uint8_t kMpegSystemHeader = 0xBBu;
          constexpr uint8_t kMpegProgramEnd = 0xB9u;
-@@ -700,6 +761,33 @@ namespace ps2_stubs
+@@ -561,6 +622,7 @@ namespace ps2_stubs
+         constexpr uint8_t kMpegPrivateStream1 = 0xBDu;
+         constexpr size_t kStartCodeNotFound = std::numeric_limits<size_t>::max();
+         constexpr uint32_t kMpegCallbackDataSize = 0x20u;
++        constexpr size_t kMpegNodataPrefetchPictures = 4u;
+ 
+         uint64_t mpegPictureIntervalQ32(uint8_t frameRateCode, uint8_t frameRateExtensionN = 0u, uint8_t frameRateExtensionD = 0u)
+         {
+@@ -700,6 +762,33 @@ namespace ps2_stubs
              }
          }
  
@@ -5624,7 +5632,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
          uint64_t decodedFrameIntervalQ32(const MpegPlaybackState &playback,
                                           const MpegDecodedFrame &frame)
          {
-@@ -707,7 +795,7 @@ namespace ps2_stubs
+@@ -707,7 +796,7 @@ namespace ps2_stubs
                                        ? playback.pictureIntervalQ32
                                        : kDefaultPictureIntervalQ32;
              const uint64_t fields = static_cast<uint64_t>(2 + std::max(0, frame.repeatPict));
@@ -5633,7 +5641,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
          }
  
          constexpr uint64_t kMpegPtsWrap = 1ull << 33u;
-@@ -739,7 +827,7 @@ namespace ps2_stubs
+@@ -739,7 +828,7 @@ namespace ps2_stubs
              const uint64_t remainder = delta90k % kPtsDivisor;
              const uint64_t wholeQ32 = whole * 2u * kPictureClockOne;
              const uint64_t remainderQ32 = ((remainder * 2u * kPictureClockOne) + kPtsDivisor / 2u) / kPtsDivisor;
@@ -5642,7 +5650,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
          }
  
          uint64_t presentationTickForFrame(MpegPlaybackState &playback, const MpegDecodedFrame &frame, uint64_t currentTickQ32)
-@@ -1091,6 +1179,11 @@ namespace ps2_stubs
+@@ -1091,6 +1180,11 @@ namespace ps2_stubs
                  playback.sawSequenceEnd = true;
                  playback.cdStreamGeneration = g_mpeg_stub_state.cdStreamGeneration;
              }
@@ -5654,7 +5662,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
  
              if (!playback.decoder)
              {
-@@ -1110,6 +1203,56 @@ namespace ps2_stubs
+@@ -1110,6 +1204,56 @@ namespace ps2_stubs
              flushDecoderIfEnded(playback);
          }
  
@@ -5711,7 +5719,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
          void erasePssPrefix(MpegPlaybackState &playback, size_t count)
          {
              std::vector<uint8_t> &buffer = playback.pssBuffer;
-@@ -1131,7 +1274,7 @@ namespace ps2_stubs
+@@ -1131,7 +1275,7 @@ namespace ps2_stubs
              }
          }
  
@@ -5720,7 +5728,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
          {
              std::vector<MpegRegisteredCallback> out;
              auto it = g_mpeg_stub_state.callbacksByMpeg.find(mpegAddr);
-@@ -1140,18 +1283,32 @@ namespace ps2_stubs
+@@ -1140,18 +1284,32 @@ namespace ps2_stubs
                  return out;
              }
  
@@ -5754,7 +5762,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
                                        uint32_t dataAddr,
                                        uint32_t len,
                                        std::vector<MpegStreamCallbackEvent> &callbackEvents,
-@@ -1165,7 +1322,7 @@ namespace ps2_stubs
+@@ -1165,7 +1323,7 @@ namespace ps2_stubs
              event.len = len;
              event.pts = pts90k >= 0 ? static_cast<uint64_t>(pts90k) : 0xFFFFFFFFFFFFFFFFull;
              event.dts = dts90k >= 0 ? static_cast<uint64_t>(dts90k) : 0xFFFFFFFFFFFFFFFFull;
@@ -5763,7 +5771,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
              if (!event.callbacks.empty())
              {
                  callbackEvents.push_back(std::move(event));
-@@ -1325,12 +1482,19 @@ namespace ps2_stubs
+@@ -1325,12 +1483,19 @@ namespace ps2_stubs
                              queueStreamCallbackEvent(
                                  mpegAddr,
                                  kMpegStrM2V,
@@ -5783,7 +5791,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
                          feedElementaryStream(
                              playback,
                              buffer.data() + payloadStart,
-@@ -1343,25 +1507,42 @@ namespace ps2_stubs
+@@ -1343,25 +1508,42 @@ namespace ps2_stubs
                  {
                      const MpegPesHeader pes = parsePesHeader(buffer.data(), packetEnd);
                      const size_t payloadStart = pes.payloadOffset;
@@ -5843,7 +5851,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
                  }
  
                  erasePssPrefix(playback, packetEnd);
-@@ -1431,7 +1612,8 @@ namespace ps2_stubs
+@@ -1431,7 +1613,8 @@ namespace ps2_stubs
                              const uint8_t *data,
                              size_t size,
                              uint32_t guestAddr,
@@ -5853,7 +5861,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
          {
              if (!data || size == 0)
              {
-@@ -1445,13 +1627,17 @@ namespace ps2_stubs
+@@ -1445,13 +1628,17 @@ namespace ps2_stubs
  
              if (playback.streamEnded)
              {
@@ -5873,7 +5881,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
              }
  
              if (!playback.sawInput)
-@@ -1460,13 +1646,17 @@ namespace ps2_stubs
+@@ -1460,13 +1647,17 @@ namespace ps2_stubs
              }
              playback.sawInput = true;
  
@@ -5892,7 +5900,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
          }
  
          size_t appendGuestBytes(uint32_t mpegAddr,
-@@ -1474,7 +1664,8 @@ namespace ps2_stubs
+@@ -1474,7 +1665,8 @@ namespace ps2_stubs
                                  const uint8_t *rdram,
                                  uint32_t addr,
                                  size_t size,
@@ -5902,7 +5910,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
          {
              size_t copied = 0u;
              while (copied < size)
-@@ -1499,7 +1690,8 @@ namespace ps2_stubs
+@@ -1499,7 +1691,8 @@ namespace ps2_stubs
                      src,
                      chunk,
                      curAddr,
@@ -5912,7 +5920,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
                  copied += chunk;
              }
              return copied;
-@@ -1512,7 +1704,8 @@ namespace ps2_stubs
+@@ -1512,7 +1705,8 @@ namespace ps2_stubs
                                      uint32_t byteCount,
                                      uint32_t ringBaseAddr,
                                      uint32_t ringSize,
@@ -5922,7 +5930,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
          {
              if (byteCount == 0u)
              {
-@@ -1533,7 +1726,8 @@ namespace ps2_stubs
+@@ -1533,7 +1727,8 @@ namespace ps2_stubs
                          rdram,
                          dataAddr,
                          first,
@@ -5932,7 +5940,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
                      if (copied < first)
                      {
                          return copied;
-@@ -1548,13 +1742,14 @@ namespace ps2_stubs
+@@ -1548,13 +1743,14 @@ namespace ps2_stubs
                              rdram,
                              ringBaseAddr,
                              remaining,
@@ -5949,7 +5957,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
          }
  
          bool writeMpegCallbackData(uint8_t *rdram, uint32_t addr, const MpegStreamCallbackEvent &event)
-@@ -1942,9 +2137,26 @@ namespace ps2_stubs
+@@ -1942,9 +2138,26 @@ namespace ps2_stubs
          g_mpeg_stub_state.initialized = true;
          (void)getPlaybackState(mpegAddr);
          const uint32_t handle = g_mpeg_stub_state.nextCallbackHandle++;
@@ -5979,7 +5987,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
      }
  
      void sceMpegClearRefBuff(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
-@@ -2000,7 +2212,14 @@ namespace ps2_stubs
+@@ -2000,7 +2213,14 @@ namespace ps2_stubs
  
          {
              std::lock_guard<std::mutex> lock(g_mpeg_stub_mutex);
@@ -5995,7 +6003,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
          }
  
          const uint32_t puVar4 = uVar3 + 0x108u;
-@@ -2076,167 +2295,244 @@ namespace ps2_stubs
+@@ -2076,167 +2296,244 @@ namespace ps2_stubs
          setReturnU32(ctx, 0u);
      }
  
@@ -6333,12 +6341,12 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
 -        {
 -            if (completedMpegId != mpegAddr)
 +            if (syncAudio)
-+            {
+             {
+-                runtime->eeScheduler().completeExternalWait(kMpegPictureWaitType, completedMpegId, KE_OK);
 +                demuxProcess(rdram, ctx, runtime, job);
 +            }
 +            else
-             {
--                runtime->eeScheduler().completeExternalWait(kMpegPictureWaitType, completedMpegId, KE_OK);
++            {
 +                demuxFinish(rdram, ctx, runtime, job);
              }
          }
@@ -6370,7 +6378,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
      }
  
      void sceMpegDispCenterOffX(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
-@@ -2280,6 +2576,103 @@ namespace ps2_stubs
+@@ -2280,6 +2577,123 @@ namespace ps2_stubs
          setReturnU32(ctx, getPlaybackState(mpegAddr).decodeMode);
      }
  
@@ -6423,6 +6431,26 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
 +        constexpr uint32_t kMpegCbNodata = 1u; // sceMpegCbNodata
 +        bool s_nodataMadeNoProgress = false;    // set for the retry after a callback that demuxed nothing
 +
++        bool findMpegNodataCallback(uint32_t mpegAddr, uint32_t &func, uint32_t &data)
++        {
++            func = 0u;
++            data = 0u;
++            const auto callbacks = g_mpeg_stub_state.callbacksByMpeg.find(mpegAddr);
++            if (callbacks == g_mpeg_stub_state.callbacksByMpeg.end())
++            {
++                return false;
++            }
++            for (const MpegRegisteredCallback &callback : callbacks->second)
++            {
++                if (!callback.stream && callback.type == kMpegCbNodata)
++                {
++                    func = callback.func;
++                    data = callback.data;
++                }
++            }
++            return func != 0u;
++        }
++
 +        // Runs the game's sceMpegCbNodata callback on the current thread, then retries sceMpegGetPicture.
 +        // The callback typically demuxes more of the stream and sends the next part of the video bitstream to the
 +        // IPU (DMA ch4). This HLE decodes the demuxed stream itself, so whatever was sent to the IPU counts as consumed:
@@ -6474,7 +6502,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
      void sceMpegGetPicture(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
      {
          const uint32_t mpegAddr = getRegU32(ctx, 4);
-@@ -2292,6 +2685,19 @@ namespace ps2_stubs
+@@ -2292,6 +2706,41 @@ namespace ps2_stubs
          {
              std::unique_lock<std::mutex> lock(g_mpeg_stub_mutex);
              MpegPlaybackState &playback = getPlaybackState(mpegAddr);
@@ -6491,32 +6519,39 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
 +                    playback.cdStreamGeneration = g_mpeg_stub_state.cdStreamGeneration;
 +                }
 +            }
++            uint32_t nodataFunc = 0u;
++            uint32_t nodataData = 0u;
++            const bool hasNodataCallback =
++                findMpegNodataCallback(mpegAddr, nodataFunc, nodataData) &&
++                runtime->hasFunction(nodataFunc);
++            const bool nodataMadeNoProgress = s_nodataMadeNoProgress;
++            s_nodataMadeNoProgress = false;
++            // Self-fed movies demux only inside the nodata callback. Refill before asynchronous reads drain the
++            // decoded queue, while retaining the current picture when the callback cannot make progress yet.
++            if (!playback.decodedFrames.empty() &&
++                playback.decodedFrames.size() <= kMpegNodataPrefetchPictures &&
++                g_mpeg_stub_state.cdStreamGeneration == 0u &&
++                !g_mpeg_stub_state.currentCdStreamEofSeen &&
++                !playback.sawSequenceEnd &&
++                !playback.streamEnded &&
++                !playback.decoderFailed &&
++                hasNodataCallback &&
++                !nodataMadeNoProgress)
++            {
++                lock.unlock();
++                invokeNodataCallback(rdram, ctx, runtime, mpegAddr, nodataFunc, nodataData);
++            }
              if (playback.decodedFrames.empty() &&
                  !g_mpeg_stub_state.currentCdStreamEofSeen &&
                  !playback.streamEnded &&
-@@ -2307,7 +2713,37 @@ namespace ps2_stubs
+@@ -2307,7 +2756,22 @@ namespace ps2_stubs
                      });
                      ++g_mpeg_stub_state.getPictureWaitTraceCount;
                  }
 +                // libmpeg asks the game for more bitstream through its sceMpegCbNodata callback whenever the decoder
 +                // runs dry, and games without a separate demux thread (Killzone) only demux from inside it. Do the
 +                // same before parking the thread.
-+                uint32_t nodataFunc = 0u;
-+                uint32_t nodataData = 0u;
-+                if (const auto cbs = g_mpeg_stub_state.callbacksByMpeg.find(mpegAddr); cbs != g_mpeg_stub_state.callbacksByMpeg.end())
-+                {
-+                    for (const MpegRegisteredCallback &cb : cbs->second)
-+                    {
-+                        if (!cb.stream && cb.type == kMpegCbNodata)
-+                        {
-+                            nodataFunc = cb.func;
-+                            nodataData = cb.data;
-+                        }
-+                    }
-+                }
-+                const bool noProgress = s_nodataMadeNoProgress;
-+                s_nodataMadeNoProgress = false;
-+                if (nodataFunc != 0u && runtime->hasFunction(nodataFunc) && noProgress)
++                if (hasNodataCallback && nodataMadeNoProgress)
 +                {
 +                    // The callback had nothing to demux yet (the stream read is asynchronous). Return without a new
 +                    // picture instead of parking the only thread that can demux; the game calls again next frame.
@@ -6525,14 +6560,14 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
 +                    return;
 +                }
                  lock.unlock();
-+                if (nodataFunc != 0u && runtime->hasFunction(nodataFunc))
++                if (hasNodataCallback)
 +                {
 +                    invokeNodataCallback(rdram, ctx, runtime, mpegAddr, nodataFunc, nodataData);
 +                }
                  runtime->eeScheduler().waitExternal(
                      EeWaitReason::Mpeg,
                      kMpegPictureWaitType,
-@@ -2386,6 +2822,7 @@ namespace ps2_stubs
+@@ -2386,6 +2850,7 @@ namespace ps2_stubs
                  width = playback.width;
                  height = playback.height;
                  frameCount = playback.picturesServed;
@@ -6540,7 +6575,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
              }
          }
  
-@@ -2455,28 +2892,16 @@ namespace ps2_stubs
+@@ -2455,28 +2920,16 @@ namespace ps2_stubs
          std::lock_guard<std::mutex> lock(g_mpeg_stub_mutex);
          g_mpeg_stub_state.initialized = true;
          MpegPlaybackState &playback = getPlaybackState(mpegAddr);
@@ -6573,7 +6608,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
                            << " seqEnd=" << playback.sawSequenceEnd
                            << " streamEnded=" << playback.streamEnded
                            << " presentationComplete=" << presentationComplete
-@@ -2486,7 +2911,7 @@ namespace ps2_stubs
+@@ -2486,7 +2939,7 @@ namespace ps2_stubs
              ++g_mpeg_stub_state.isEndTraceCount;
          }
  
@@ -6582,7 +6617,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
      }
  
      void sceMpegIsRefBuffEmpty(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
-@@ -2507,7 +2932,15 @@ namespace ps2_stubs
+@@ -2507,7 +2960,15 @@ namespace ps2_stubs
              std::lock_guard<std::mutex> lock(g_mpeg_stub_mutex);
              MpegPlaybackState &playback = getPlaybackState(param_1);
              MpegPlaybackState resetState = makeFreshPlaybackStatePreservingConfig(playback);
@@ -6600,7 +6635,7 @@ index 44eaef4d9ccb39201587080b983be3fbb78992c0..9a281e797176dbedf04087ee91796638
                  resetState.sawInput = true;
                  resetState.streamEnded = true;
 diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/Pad.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/Pad.cpp
-index b50a4cf6aa24eb5cdf382a07243ecf4ebbbffa78..38666d3d4a6d15ad4652f95c13d233f8e31f38b1 100644
+index b50a4cf..38666d3 100644
 --- a/ps2xRuntime/src/lib/Kernel/Stubs/Pad.cpp
 +++ b/ps2xRuntime/src/lib/Kernel/Stubs/Pad.cpp
 @@ -260,9 +260,10 @@ namespace ps2_stubs
@@ -6617,7 +6652,7 @@ index b50a4cf6aa24eb5cdf382a07243ecf4ebbbffa78..38666d3d4a6d15ad4652f95c13d233f8
          }
  
 diff --git a/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp b/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp
-index 07fcd29443acbf4391565fe69c4eeedd9b46a781..3dc8e0d11dbb4c3efee5bbdafde3bb58b95b0773 100644
+index 07fcd29..3dc8e0d 100644
 --- a/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp
 +++ b/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp
 @@ -1,6 +1,10 @@
@@ -6861,7 +6896,7 @@ index 07fcd29443acbf4391565fe69c4eeedd9b46a781..3dc8e0d11dbb4c3efee5bbdafde3bb58
              if (iopResult.signalNowaitCompletion &&
                  (mode & kSifRpcModeNowait) != 0u)
 diff --git a/ps2xRuntime/src/lib/gs/ps2_gif_arbiter.cpp b/ps2xRuntime/src/lib/gs/ps2_gif_arbiter.cpp
-index c289ba0f2c0a286987ac0bafccf6a62e07f0594c..ce6b28eb62ed14166439c4122d8faf509b16b456 100644
+index c289ba0..ce6b28e 100644
 --- a/ps2xRuntime/src/lib/gs/ps2_gif_arbiter.cpp
 +++ b/ps2xRuntime/src/lib/gs/ps2_gif_arbiter.cpp
 @@ -1,6 +1,173 @@
@@ -7076,7 +7111,7 @@ index c289ba0f2c0a286987ac0bafccf6a62e07f0594c..ce6b28eb62ed14166439c4122d8faf50
  }
 diff --git a/ps2xRuntime/src/lib/ps2_iop_async.h b/ps2xRuntime/src/lib/ps2_iop_async.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..1ced4301f93cc0703b541fcf0979b1a46c7308c9
+index 0000000..1ced430
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/ps2_iop_async.h
 @@ -0,0 +1,19 @@
@@ -7100,7 +7135,7 @@ index 0000000000000000000000000000000000000000..1ced4301f93cc0703b541fcf0979b1a4
 +[[nodiscard]] bool ps2IopRpcSubmit(const ps2x::iop::RpcRequest &request,
 +                                   std::function<void(const ps2x::iop::RpcResult &)> eeDone);
 diff --git a/ps2xRuntime/src/lib/ps2_iop_host.cpp b/ps2xRuntime/src/lib/ps2_iop_host.cpp
-index 8d46e03292de9c846294a620ef793451cb8010a3..81320495a54280d68f8ec508aab0315a9b71b2e9 100644
+index 8d46e03..8132049 100644
 --- a/ps2xRuntime/src/lib/ps2_iop_host.cpp
 +++ b/ps2xRuntime/src/lib/ps2_iop_host.cpp
 @@ -1,6 +1,9 @@
@@ -7300,7 +7335,7 @@ index 8d46e03292de9c846294a620ef793451cb8010a3..81320495a54280d68f8ec508aab0315a
  {
      const char *prefix = "[ps2xIOP]";
 diff --git a/ps2xRuntime/src/lib/ps2_iop_host.h b/ps2xRuntime/src/lib/ps2_iop_host.h
-index 89d8576a826fb5a428973591cf99b31e772e0de8..7fb13dd03e0daee815eb60d33384777202e19d34 100644
+index 89d8576..7fb13dd 100644
 --- a/ps2xRuntime/src/lib/ps2_iop_host.h
 +++ b/ps2xRuntime/src/lib/ps2_iop_host.h
 @@ -2,10 +2,13 @@
@@ -7352,7 +7387,7 @@ index 89d8576a826fb5a428973591cf99b31e772e0de8..7fb13dd03e0daee815eb60d333847772
      uint8_t *m_activeRdram = nullptr;
 diff --git a/ps2xRuntime/src/lib/ps2_iop_post.h b/ps2xRuntime/src/lib/ps2_iop_post.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..2e4ef9eead71f83a48d2504d3856f87a0fe86cde
+index 0000000..2e4ef9e
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/ps2_iop_post.h
 @@ -0,0 +1,13 @@
@@ -7370,7 +7405,7 @@ index 0000000000000000000000000000000000000000..2e4ef9eead71f83a48d2504d3856f87a
 +
 +void ps2IopDrainPosted(PS2Runtime &runtime);
 diff --git a/ps2xRuntime/src/lib/ps2_memory.cpp b/ps2xRuntime/src/lib/ps2_memory.cpp
-index 37b6a4decc5865c7e51fbe9209ce46eafa6ccb27..facaf8c96bba9a1a4f8b1de3daa2c6b2004def1f 100644
+index 37b6a4d..facaf8c 100644
 --- a/ps2xRuntime/src/lib/ps2_memory.cpp
 +++ b/ps2xRuntime/src/lib/ps2_memory.cpp
 @@ -1,8 +1,17 @@
@@ -8674,7 +8709,7 @@ index 37b6a4decc5865c7e51fbe9209ce46eafa6ccb27..facaf8c96bba9a1a4f8b1de3daa2c6b2
                  m_ioRegisters[address] = channelStatus;
                  return channelStatus;
 diff --git a/ps2xRuntime/src/lib/ps2_pad.cpp b/ps2xRuntime/src/lib/ps2_pad.cpp
-index 8590f1424bd31e23feeb8cd04f6683766043ba8c..f150a3f8f7c91233de8d2be5a307aa5bd9e4e66a 100644
+index 8590f14..f150a3f 100644
 --- a/ps2xRuntime/src/lib/ps2_pad.cpp
 +++ b/ps2xRuntime/src/lib/ps2_pad.cpp
 @@ -1,4 +1,6 @@
@@ -8712,7 +8747,7 @@ index 8590f1424bd31e23feeb8cd04f6683766043ba8c..f150a3f8f7c91233de8d2be5a307aa5b
      std::memset(data, 0, 32);
      data[0] = 0x01;
 diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
-index 45cb9d267ec998c92f1951d3bc22e7d4c686851e..31917e69dcfb4968d23e575534add0405ee1c6c3 100644
+index 45cb9d2..31917e6 100644
 --- a/ps2xRuntime/src/lib/ps2_runtime.cpp
 +++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
 @@ -1,3 +1,4 @@
@@ -9569,7 +9604,7 @@ index 45cb9d267ec998c92f1951d3bc22e7d4c686851e..31917e69dcfb4968d23e575534add040
      RUNTIME_LOG("[run] exiting loop");
  }
 diff --git a/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp b/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
-index b02c7ca693a627d6a2d0a24ddd3d8fd5a4087298..22a2af69612a1f3a4bf2ef7bccb79c90f2723825 100644
+index b02c7ca..22a2af6 100644
 --- a/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
 +++ b/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
 @@ -1,6 +1,12 @@
@@ -10364,7 +10399,7 @@ index b02c7ca693a627d6a2d0a24ddd3d8fd5a4087298..22a2af69612a1f3a4bf2ef7bccb79c90
      }
 diff --git a/ps2xRuntime/src/lib/ps2_vif1_worker.cpp b/ps2xRuntime/src/lib/ps2_vif1_worker.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..29fb825014327ab11420450446cd477eaaccce8a
+index 0000000..29fb825
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/ps2_vif1_worker.cpp
 @@ -0,0 +1,832 @@
@@ -11202,7 +11237,7 @@ index 0000000000000000000000000000000000000000..29fb825014327ab11420450446cd477e
 +}
 diff --git a/ps2xRuntime/src/lib/ps2_vif1_worker.h b/ps2xRuntime/src/lib/ps2_vif1_worker.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..885df21c600e0d98dfa9e7677dc2ad9018e2d30f
+index 0000000..885df21
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/ps2_vif1_worker.h
 @@ -0,0 +1,107 @@
@@ -11315,7 +11350,7 @@ index 0000000000000000000000000000000000000000..885df21c600e0d98dfa9e7677dc2ad90
 +void ps2ChainVerifyCheck(const uint8_t *bufData);
 diff --git a/ps2xRuntime/src/lib/ps2_vif1_worker_win.cpp b/ps2xRuntime/src/lib/ps2_vif1_worker_win.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..44f468e6a5cb87aaf81644decc0a8ee4ce1e893f
+index 0000000..44f468e
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/ps2_vif1_worker_win.cpp
 @@ -0,0 +1,76 @@
@@ -11395,3 +11430,99 @@ index 0000000000000000000000000000000000000000..44f468e6a5cb87aaf81644decc0a8ee4
 +#else
 +void ps2Vif1TuneWorkerThread() {}
 +#endif
+diff --git a/ps2xTest/src/ps2_runtime_expansion_tests.cpp b/ps2xTest/src/ps2_runtime_expansion_tests.cpp
+index 4772f3f..d98a5b3 100644
+--- a/ps2xTest/src/ps2_runtime_expansion_tests.cpp
++++ b/ps2xTest/src/ps2_runtime_expansion_tests.cpp
+@@ -184,6 +184,8 @@ namespace
+     std::atomic<uint32_t> gMpegWaitStage{0u};
+     std::atomic<uint32_t> gMpegNoDuplicateStage{0u};
+     std::atomic<uint32_t> gMpegNoDuplicateProducerStage{0u};
++    std::atomic<uint32_t> gMpegPrefetchCallbackCount{0u};
++    std::atomic<uint32_t> gMpegPrefetchStage{0u};
+ 
+     constexpr uint32_t kMpegWaitMainPc = 0x00125000u;
+     constexpr uint32_t kMpegWaitResumePc = 0x00125010u;
+@@ -195,6 +197,11 @@ namespace
+     constexpr uint32_t kMpegNoDuplicateProducerPc = 0x00125050u;
+     constexpr uint32_t kMpegNoDuplicateHandle = 0x00124000u;
+     constexpr uint32_t kMpegNoDuplicateImage = 0x00131000u;
++    constexpr uint32_t kMpegPrefetchMainPc = 0x00125060u;
++    constexpr uint32_t kMpegPrefetchResumePc = 0x00125070u;
++    constexpr uint32_t kMpegPrefetchCallbackPc = 0x00125080u;
++    constexpr uint32_t kMpegPrefetchHandle = 0x00124500u;
++    constexpr uint32_t kMpegPrefetchImage = 0x00132000u;
+     constexpr uint32_t kIpuInitMainPc = 0x00125100u;
+     constexpr uint32_t kIpuInitResumePc = 0x00125104u;
+     constexpr uint32_t kIpuSetD4Pc = 0x00126428u;
+@@ -284,6 +291,29 @@ namespace
+         ctx->pc = 0u;
+     }
+ 
++    void testMpegPrefetchMain(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
++    {
++        gMpegPrefetchStage.store(1u, std::memory_order_release);
++        setRegU32(*ctx, 4, kMpegPrefetchHandle);
++        setRegU32(*ctx, 5, kMpegPrefetchImage);
++        ctx->pc = kMpegPrefetchResumePc;
++        ps2_stubs::sceMpegGetPicture(rdram, ctx, runtime);
++    }
++
++    void testMpegPrefetchResume(uint8_t *, R5900Context *ctx, PS2Runtime *runtime)
++    {
++        gMpegPrefetchStage.store(3u, std::memory_order_release);
++        ctx->pc = 0u;
++        runtime->requestStop();
++    }
++
++    void testMpegPrefetchCallback(uint8_t *, R5900Context *ctx, PS2Runtime *)
++    {
++        gMpegPrefetchCallbackCount.fetch_add(1u, std::memory_order_acq_rel);
++        gMpegPrefetchStage.store(2u, std::memory_order_release);
++        ctx->pc = 0u;
++    }
++
+     void testRecordMpegStreamCallback(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+     {
+         if (!rdram || !ctx)
+@@ -811,6 +841,40 @@ void register_ps2_runtime_expansion_tests()
+                      "only the injected decoder frame should be counted as served");
+         });
+ 
++        tc.Run("sceMpegGetPicture prefetches before the decoded picture queue runs dry", [](TestCase &t)
++        {
++            PS2Runtime runtime;
++            std::vector<uint8_t> rdram(PS2_RAM_SIZE, 0u);
++            ps2_stubs::resetMpegStubState();
++            for (int i = 0; i < 4; ++i)
++            {
++                ps2_stubs::enqueueMpegDecodedFrameForTesting(kMpegPrefetchHandle);
++            }
++
++            runtime.registerFunction(kMpegPrefetchMainPc, testMpegPrefetchMain);
++            runtime.registerFunction(kMpegPrefetchResumePc, testMpegPrefetchResume);
++            runtime.registerFunction(kMpegPrefetchCallbackPc, testMpegPrefetchCallback);
++
++            R5900Context callbackCtx{};
++            setRegU32(callbackCtx, 4, kMpegPrefetchHandle);
++            setRegU32(callbackCtx, 5, 1u);
++            setRegU32(callbackCtx, 6, kMpegPrefetchCallbackPc);
++            setRegU32(callbackCtx, 7, 0u);
++            ps2_stubs::sceMpegAddCallback(rdram.data(), &callbackCtx, &runtime);
++
++            gMpegPrefetchCallbackCount.store(0u, std::memory_order_release);
++            gMpegPrefetchStage.store(0u, std::memory_order_release);
++            R5900Context mainContext{};
++            mainContext.pc = kMpegPrefetchMainPc;
++            runtime.eeScheduler().reset(rdram.data(), mainContext);
++            runtime.eeScheduler().run();
++
++            t.Equals(gMpegPrefetchCallbackCount.load(std::memory_order_acquire), 1u,
++                     "low-water decoded queue should request more bitstream before presenting");
++            t.Equals(gMpegPrefetchStage.load(std::memory_order_acquire), 3u,
++                     "picture delivery should resume after the prefetch callback");
++        });
++
+         tc.Run("sceSdRemote isolates voice transfers from block streaming state", [](TestCase &t)
+         {
+             std::vector<uint8_t> rdram(PS2_RAM_SIZE, 0u);

@@ -1543,3 +1543,55 @@ bursts (3.5, 3.5, 0, 0, 0, 3.4 ...) were first read as video. A fixed text regio
 - Complete D3D12 movie probe: nonblack decoded FMV frames at 35, 40, 45, and 50 seconds.
 - Complete minimized boot probe: physical MCSERV loaded, host memory-card operations completed without a semaphore
   timeout, opening movies rendered, and the main menu was visible at 80 seconds.
+
+## MPEG playback cadence and queue starvation (2026-10-17)
+
+### Symptom and exclusions
+
+- The opening cinematic, animated menu background, and especially the idle attract reel visibly paused and advanced
+  in bursts. The active configuration used D3D12, VSync off, an unlimited launcher frame cap, and a 59 Hz display, so
+  this was separate from the previously fixed high-refresh movie-clock scaling.
+- A 90-frame D3D12 burst during the opening cinematic changed image only 31 times, about 20.9 changes/s. Most changes
+  were two vblanks apart, as a 29.97 fps movie requires, but repeated four-vblank stalls and occasional six-to-eight
+  vblank stalls produced the visible choppiness.
+- The MPEG sequence header reports frame-rate code 4 and the decoded timestamps advance by 3,003 ticks on a 90 kHz
+  clock: the source is 29.97 fps, not an intentionally low-rate asset.
+- Disabling synchronous movie-audio callbacks produced 30 changes in the same 90-frame window (20.22/s). Temporarily
+  removing HLE picture-presentation pacing produced 29 (19.55/s). Audio-ring backpressure and over-throttling were
+  therefore not the principal cause; decoded pictures were unavailable when the game asked for them.
+
+### Root cause
+
+- A detailed intro trace recorded 296 elementary-stream feed events producing 321 decoded pictures. The queue after
+  a feed was normally one or two pictures and never exceeded four.
+- Across 318 served pictures, the normal two-vblank gap occurred 209 times, but there were 71 four-vblank, 21
+  six-vblank, nine eight-vblank, and five ten-vblank gaps. The runtime entered its empty-queue wait 496 times across
+  316 unique vblank ticks even though almost every timestamped picture had the correct 3,003-tick PTS delta.
+- `sceMpegGetPicture` invoked `sceMpegCbNodata` only after the decoded queue reached zero. Killzone has no separate
+  `sceCdSt` producer and normally demuxes only one or two pictures in that callback. The decoder consequently ran dry
+  before each asynchronous file read and demux refill completed.
+
+### Low-water prefetch
+
+- For self-fed movies, `sceMpegGetPicture` now invokes the registered nodata callback before returning the current
+  picture when four or fewer decoded pictures remain. Callback retries can fill the existing eight-picture queue.
+- Proactive refill is disabled for `sceCdSt`-produced streams and after CD EOF, MPEG sequence end, stream end, or
+  decoder failure. The existing no-progress state is consumed on callback re-entry, so an asynchronous read that has
+  not completed presents the available picture rather than recursively invoking the callback.
+- The first experiment reached an eight-picture queue, held four to six pictures through normal playback, reduced
+  waits to 19 events on 13 unique ticks, and produced 499 ideal two-vblank gaps among the first 511 measured picture
+  gaps. Its 90-frame visual burst changed 42 times instead of 31.
+- The cleaned MSVC build, with all temporary timing and unthrottled-presentation diagnostics removed, measured:
+  - opening cinematic: 49 image changes over 1.6169 s, or 30.3 changes/s;
+  - animated main-menu background: 43 over 1.4664 s, or 29.32 changes/s;
+  - idle attract reel: 44 over 1.4724 s, or 29.88 changes/s. Of its measured change gaps, 42 were the ideal two
+    vblanks and one was four vblanks.
+- A 380-second timeline entered the attract reel by 160 seconds, showed advancing reel frames through 240 seconds,
+  returned to the menu by 260 seconds, and exited normally.
+- The standalone PS2Recomp test target compiles the change, and the new scheduler regression,
+  `sceMpegGetPicture prefetches before the decoded picture queue runs dry`, passes. The broader upstream test
+  executable still reports unrelated existing failures and terminates with an access violation after the MPEG tests;
+  it is not represented as a full-suite pass.
+- Final integration checks pass: strict dependency reconstruction reports 31 passed, 0 warnings, and 0 failures;
+  both MSVC and clang-cl ISO-free suites pass 12/12; the generated inventory retains 42 locked hook signatures; and
+  the resume table retains 132,656 dispatch entries, 100,661 resume cases, and 31,995 generated targets.

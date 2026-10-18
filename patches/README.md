@@ -668,3 +668,11 @@ resulting tree to equal the pinned submodule tree.
     `PS2X_MPEG_SYNC_AUDIO=0` restores the old dispatch; calls made outside guest execution (unit tests) keep it.
   - `Stubs/MPEG.cpp`: PTS -> vsync tick conversion and picture intervals assumed one tick per NTSC field; with the host's raised guest vblank rate
     (`ps2SetVblankPeriodMicros`, 120+ Hz) movies were paced that many times too fast. Both are scaled by 16667 us / vblank period (1.0 at the native rate).
+- **0028-mpeg-nodata-prefetch.patch** - self-fed movies used `sceMpegCbNodata` only after the decoded queue became
+  empty. Killzone's callback normally adds just one or two pictures, so asynchronous file-read latency repeatedly
+  starved a 29.97 fps stream for 4-10 vblanks. `sceMpegGetPicture` now asks the callback to refill when four or fewer
+  pictures remain, up to the existing eight-picture decode limit. The prefetch is limited to movies without an
+  `sceCdSt` producer and stops at EOF, decoder failure, or sequence end; the existing no-progress retry state lets
+  an already decoded picture be presented instead of spinning while a read is pending. A scheduler regression test
+  covers low-water callback invocation. Measured intro cadence improved from 31 image changes per 90 captures
+  (about 21/s) to source cadence; the cleaned build measured 30.3/s in the intro and 29.3/s behind the main menu.
