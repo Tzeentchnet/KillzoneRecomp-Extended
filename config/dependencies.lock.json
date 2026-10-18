@@ -10,12 +10,12 @@
     "repository_path": "ext/PS2Recomp",
     "patch_directory": "patches/ps2recomp",
     "base_commit": "75d729ce40d7eed9649fd4bb05628dee520f3d0c",
-    "target_commit": "cc1fc7d87930b48d20abd52974d1be77368eb60a",
-    "target_tree": "58dc47cf3750a3808b78b61bf6297b17e25f437f",
+    "target_commit": "917b379aa76949dc4ce42cdc1eaa0d3313fc76eb",
+    "target_tree": "3d0e44d3c4a93f51ab9aaecb157e9d08ce685376",
     "canonical_patch": {
       "path": "patches/ps2recomp/combined.lock.diff",
-      "changed_paths": 59,
-      "sha256": "906a38a3a4a8e8d99945e5bad5e428bab729193d5439236398a718b90a7d47cf"
+      "changed_paths": 60,
+      "sha256": "5b3251ed8c3b0437e3b88c0aff66469e462e056abbd20f8c5400c87ec8fb4184"
     },
     "patches": [
       {
@@ -121,6 +121,10 @@
       {
         "path": "0027-fmv-audio-sdremote-demux-callbacks.patch",
         "sha256": "c50d3f21fa791014f88ac64d0c20a4689b135d9c72292d8a37d12cbc08d32d4f"
+      },
+      {
+        "path": "0028-mpeg-nodata-prefetch.patch",
+        "sha256": "8bc0b51ce8acce69a52d59620ba8542f52b46b45e9bb654fcf043f986643be37"
       }
     ]
   },
@@ -128,8 +132,8 @@
     {
       "id": "ps2recomp",
       "kind": "git-submodule",
-      "source_url": "https://github.com/drakolordx7/PS2Recomp.git",
-      "revision": "cc1fc7d87930b48d20abd52974d1be77368eb60a",
+      "source_url": "https://github.com/Tzeentchnet/PS2Recomp.git",
+      "revision": "917b379aa76949dc4ce42cdc1eaa0d3313fc76eb",
       "license": "GPL-3.0-only",
       "redistribution": "Copyleft; distribute corresponding source and notices.",
       "acquisition": "git submodule update --init --recursive",
