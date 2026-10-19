@@ -126,6 +126,11 @@ KzConfig kzLoadConfig(const std::filesystem::path &path)
     if (auto v = get("Input.StickDeadzone")) c.stickDeadzone = std::clamp(static_cast<float>(std::atof(v->c_str())), 0.0f, 0.9f);
     if (auto v = get("Audio.MasterVolume")) c.masterVolume = std::clamp(std::atoi(v->c_str()), 0, 100);
     if (auto v = get("Paths.ISO")) c.isoPath = *v;
+    if (auto v = get("Testing.UnlockAllLevels")) c.unlockAllLevels = parseBool(*v, c.unlockAllLevels);
+    if (auto v = get("Testing.SkipIntro")) c.skipIntro = parseBool(*v, c.skipIntro);
+    if (auto v = get("Testing.StartLevel")) c.startLevel = std::clamp(std::atoi(v->c_str()), 0, 11);
+    if (auto v = get("Testing.StartDifficulty")) c.startDifficulty = std::clamp(std::atoi(v->c_str()), 0, 2);
+    if (auto v = get("Testing.TestMemoryCard")) c.testMemoryCard = parseBool(*v, c.testMemoryCard);
     if (auto v = get("Launcher.Show")) c.showLauncher = parseBool(*v, c.showLauncher);
     return c;
 }
@@ -147,6 +152,9 @@ bool kzSaveConfig(const std::filesystem::path &path, const KzConfig &c)
       << "\nStickDeadzone=" << c.stickDeadzone << "\n\n"
       << "[Audio]\nMasterVolume=" << c.masterVolume << "\n\n"
       << "[Paths]\nISO=" << c.isoPath << "\n\n"
+      << "[Testing]\nUnlockAllLevels=" << (c.unlockAllLevels ? 1 : 0) << "\nSkipIntro=" << (c.skipIntro ? 1 : 0)
+      << "\nStartLevel=" << c.startLevel << "\nStartDifficulty=" << c.startDifficulty
+      << "\nTestMemoryCard=" << (c.testMemoryCard ? 1 : 0) << "\n\n"
       << "[Launcher]\nShow=" << (c.showLauncher ? 1 : 0) << "\n\n";
     // Key/mouse bindings: keep the user's section (read before the file is rewritten), or write the defaults.
     o << "[Bindings]\n; Key=Target. Targets: pad buttons (Cross Circle Square Triangle L1 R1 L2 R2 L3 R3 Start Select\n"

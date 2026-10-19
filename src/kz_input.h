@@ -73,6 +73,10 @@ enum : uint16_t
 };
 void kzInputSetTextEntryActive();
 bool kzInputTakeTextKey(uint16_t &key);
+// True while the on-screen keyboard is open. Text queued before it opens is discarded when it opens.
+bool kzInputTextEntryOpen();
+// Queues keys for the open on-screen keyboard as if typed (printable ASCII or the KZ_TEXT_* codes).
+void kzInputQueueText(const std::string &text);
 // KZ_INPUT_SCRIPT "t:type=abc" queues text at t (automated tests of text entry; "\n" is not available, use t:enter).
 
 // Clock for KZ_INPUT_SCRIPT event times (seconds). Default: wall time.

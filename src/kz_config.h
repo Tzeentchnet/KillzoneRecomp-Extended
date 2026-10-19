@@ -70,6 +70,13 @@ struct KzConfig
     // Paths
     std::string isoPath; // user's Killzone (USA) disc image
 
+    // Testing (docs/findings.md "Testing options"). All off by default; off = the original game.
+    bool unlockAllLevels = false; // every campaign level, difficulty and animatic selectable; saves are not changed
+    bool skipIntro = false;       // boot past the logos and the intro cinematic, straight to the front end
+    int startLevel = 0;           // 0 = front end as usual; 1..11 = drive the menus into that campaign chapter
+    int startDifficulty = 0;      // with startLevel: 0 Easy, 1 Normal, 2 Hard
+    bool testMemoryCard = false;  // use the memory card folder "testcard" next to killzone.ini instead of the real one
+
     bool showLauncher = true; // show the options launcher before booting
 };
 

@@ -253,6 +253,13 @@
       "signature_sha256": "2c35d35bff95bf648755f80dbaedfc755f3e236045994fceac033e58d7bc057f"
     },
     {
+      "symbol": "SwitchToMenu",
+      "kind": "hook",
+      "address": "0x001A9738",
+      "signature_size": 16,
+      "signature_sha256": "b323c3cb2f7dd0667e789a56670881b5ae5a6cb85357e71549bfe5e24c7765a9"
+    },
+    {
       "symbol": "VirtualKeyboard",
       "kind": "hook",
       "address": "0x001B0DF0",
@@ -281,6 +288,13 @@
       "signature_sha256": "a17d3b5fa723c47b05d8dd56cc25fa65d86b4b87a6ef97da3660d908d5c052b6"
     },
     {
+      "symbol": "SetLevelFile",
+      "kind": "hook",
+      "address": "0x001B89A8",
+      "signature_size": 24,
+      "signature_sha256": "b656198460b551a832a149058f85237a7b74b3856f2cb4efc6e0e18d2753f9fd"
+    },
+    {
       "symbol": "TimelineFrameLimiter",
       "kind": "debug_hook",
       "address": "0x001BFF10",
@@ -293,6 +307,27 @@
       "address": "0x001C2168",
       "signature_size": 16,
       "signature_sha256": "6bed1dadb699b982ffc8cce4834cebd4b2b212cebc814b0d1418a51d72476943"
+    },
+    {
+      "symbol": "ProfileMaxDifficulty",
+      "kind": "hook",
+      "address": "0x001D7118",
+      "signature_size": 24,
+      "signature_sha256": "33644d2feff22bf3658a2c8369949840998cb51240543a7e303dab175d337f75"
+    },
+    {
+      "symbol": "ProfileLevelUnlocked",
+      "kind": "hook",
+      "address": "0x001D7190",
+      "signature_size": 16,
+      "signature_sha256": "ea185f5711aada6b5ac9af293cbb07586f9b21e5cfbff713ef9e776ac7d0e312"
+    },
+    {
+      "symbol": "ProfileAnimaticUnlocked",
+      "kind": "hook",
+      "address": "0x001D7258",
+      "signature_size": 16,
+      "signature_sha256": "9dc47b1964d92c54cf7be9b298eb13b2af60db218361f1a841d6add81eba0246"
     },
     {
       "symbol": "PostRender",

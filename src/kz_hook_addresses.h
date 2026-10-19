@@ -15,12 +15,17 @@ namespace kz_hook
     inline constexpr uint32_t TimelineWaitD1Idle = 0x001759C0u;
     inline constexpr uint32_t TimelineWaitVblankKick = 0x001759F8u;
     inline constexpr uint32_t LensBlur = 0x001A9308u;
+    inline constexpr uint32_t SwitchToMenu = 0x001A9738u;
     inline constexpr uint32_t VirtualKeyboard = 0x001B0DF0u;
     inline constexpr uint32_t VirtualKeyboardAddChar = 0x001B17A0u;
     inline constexpr uint32_t VirtualKeyboardBackspace = 0x001B18D8u;
     inline constexpr uint32_t PadButtonValue = 0x001B33B8u;
+    inline constexpr uint32_t SetLevelFile = 0x001B89A8u;
     inline constexpr uint32_t TimelineFrameLimiter = 0x001BFF10u;
     inline constexpr uint32_t LodScale = 0x001C2168u;
+    inline constexpr uint32_t ProfileMaxDifficulty = 0x001D7118u;
+    inline constexpr uint32_t ProfileLevelUnlocked = 0x001D7190u;
+    inline constexpr uint32_t ProfileAnimaticUnlocked = 0x001D7258u;
     inline constexpr uint32_t PostRender = 0x001EF640u;
     inline constexpr uint32_t ApplyLook = 0x0021C550u;
     inline constexpr uint32_t LookAcceleration = 0x0023E8C8u;

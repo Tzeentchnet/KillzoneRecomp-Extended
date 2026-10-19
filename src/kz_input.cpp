@@ -507,6 +507,21 @@ void kzInputSetTextEntryActive()
     s.textEntryUntil = now + 250;
 }
 
+bool kzInputTextEntryOpen()
+{
+    State &s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    return SDL_GetTicks() < s.textEntryUntil;
+}
+
+void kzInputQueueText(const std::string &text)
+{
+    State &s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    for (char c : text)
+        s.textQueue.push_back(static_cast<uint8_t>(c));
+}
+
 bool kzInputTakeTextKey(uint16_t &key)
 {
     State &s = state();

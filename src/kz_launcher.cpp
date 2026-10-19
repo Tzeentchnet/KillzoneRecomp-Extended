@@ -445,6 +445,60 @@ namespace
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem("Testing", nullptr, forcedTab("Testing")))
+            {
+                if (beginTabBody("testing"))
+                {
+                    section("Campaign");
+                    if (beginRows("campaign"))
+                    {
+                        toggleRow("Unlock all campaign levels",
+                                  "Every level, difficulty and animatic can be chosen with any profile. Your saves and progress are not changed.",
+                                  cfg.unlockAllLevels, "On (all unlocked)", "Off (normal progression)");
+                        ImGui::EndTable();
+                    }
+                    section("Start-up");
+                    if (beginRows("startup"))
+                    {
+                        toggleRow("Skip intro",
+                                  "Goes straight to the main menu: no logos, no intro movie. Known issue: loading a late "
+                                  "chapter afterwards sometimes crashes (being investigated).",
+                                  cfg.skipIntro,
+                                  "On (straight to menu)", "Off (logos and intro)");
+                        row("Start in", "Clicks through the menus into this chapter with the first profile on the memory card "
+                                        "(creates a profile named Tester if there is none). Skips the intro and unlocks all levels.");
+                        const std::string startLabel = cfg.startLevel == 0 ? "Main menu (normal start)" : "Chapter " + std::to_string(cfg.startLevel);
+                        if (ImGui::BeginCombo("##startlevel", startLabel.c_str()))
+                        {
+                            if (ImGui::Selectable("Main menu (normal start)", cfg.startLevel == 0))
+                                cfg.startLevel = 0;
+                            for (int level = 1; level <= 11; ++level)
+                                if (ImGui::Selectable(("Chapter " + std::to_string(level)).c_str(), cfg.startLevel == level))
+                                    cfg.startLevel = level;
+                            ImGui::EndCombo();
+                        }
+                        row("Difficulty", "Used with Start in.");
+                        ImGui::BeginDisabled(cfg.startLevel == 0);
+                        const char *difficulties[] = {"Easy", "Normal", "Hard"};
+                        ImGui::Combo("##startdifficulty", &cfg.startDifficulty, difficulties, 3);
+                        ImGui::EndDisabled();
+                        ImGui::EndTable();
+                    }
+                    section("Memory card");
+                    if (beginRows("card"))
+                    {
+                        toggleRow("Test memory card",
+                                  "Uses a separate memory card (the testcard folder next to killzone.ini), so testing never "
+                                  "touches your profiles. Recommended with Start in.",
+                                  cfg.testMemoryCard, "On (test card)", "Off (your memory card)");
+                        ImGui::EndTable();
+                    }
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("Testing options are for development. Turn them off for normal play.");
+                }
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
             ImGui::EndTabBar();
         }
         ImGui::PopStyleColor();
