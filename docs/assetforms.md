@@ -433,17 +433,23 @@ port, not a guessed permutation. Sony's
 documents PSM and CLUT behavior on printed pages 22, 25, and 29-31; `TEX0` on
 pages 125-126; and page/block/column layouts on pages 162 and 164-168.
 
-### 3.5 Embedded level Texture containers
+### 3.5 Embedded variant-5 Texture containers
 
 All 47 retail level Cores were parsed through their object directories and
-owned CoreStream ranges:
+owned CoreStream ranges. A second pass then inspected every one of the 653
+catalogued Core files and fully decoded every variant-5 Core that declares an
+exact `Texture` type:
 
-```text
-Texture sections:                 6,503
-Physical Texture objects:        12,613
-Logical Core-local tokens:       12,566
-Texture payload bytes:      273,141,504
-```
+| Scope | Texture Cores | Texture sections | Physical objects | Logical Core-local tokens | Payload bytes |
+|---|---:|---:|---:|---:|---:|
+| 47 level Cores | 47 | 6,503 | 12,613 | 12,566 | 273,141,504 |
+| All variant-5 Texture Cores | 111 | 6,907 | 13,891 | 13,718 | 305,231,104 |
+
+The complete variant-5 pass has 66 duplicate-token groups containing 173
+extra physical definitions. Every duplicate is byte-equivalent in both its
+serialized object and payload. The 19 self-contained variant-1 loading-screen
+textures use the separate layout in section 3.1 and are not included in this
+table.
 
 Every Texture section has the same reflected property schema. The stable
 serialized prefix is:
@@ -455,14 +461,15 @@ serialized prefix is:
 | `+0x20` | `u32` | width |
 | `+0x24` | `u32` | height |
 | `+0x28` | `u32` | engine pixel-format enum |
-| `+0x2C` | `u32` | zero in the retail corpus |
+| `+0x2C` | `u32` | zero in all 13,891 variant-5 objects |
 | `+0x30` | `u32` | mip count |
 | `+0x34` | `u32` | chunk count |
 | `+0x38` | `u32[chunk_count]` | chunk sizes |
 
-In particular, `+0x34` is a count, not a storage-format code. All 12,612
-non-inline objects have `no_streaming == 0`, and all 12,613 objects have
-`linear_storage == 0`. For each of the 12,608 valid streamed objects:
+In particular, `+0x34` is a count, not a storage-format code. All 13,869
+non-inline objects have `no_streaming == 0`, all 22 inline objects have
+`no_streaming == 1`, and all 13,891 objects have `linear_storage == 0`. For
+each of the 13,865 valid streamed objects:
 
 ```text
 sum(chunk_size) == object-directory CoreStream size
@@ -483,13 +490,13 @@ record[serialized_record_count]:
 ```
 
 The record list has two identical halves. The loader consumes the first half
-until the requested mip QWC is satisfied. Across all 12,609 valid textures:
+until the requested mip QWC is satisfied. Across all 13,887 valid textures:
 
 ```text
-serialized span records          33,084
-runtime-consumed records         16,542
-multi-span textures               1,934
-records with nonzero offsets      1,350
+serialized span records          36,752
+runtime-consumed records         18,376
+multi-span textures               2,209
+records with nonzero offsets      3,084
 span reconstruction anomalies         0
 ```
 
@@ -500,48 +507,79 @@ chunk[byte_offset : byte_offset + QWC * 16]
 ```
 
 reconstructs every raw mip prefix byte-for-byte. The spans exclude final
-pixel-storage padding and indexed palette chunks. The single inline texture
-places its payload between the chunk sizes and this same footer.
+pixel-storage padding and indexed palette chunks. The 22 inline objects place
+their payload between the chunk sizes and this same footer: ten are
+`INDEX_8`, six are `ALPHA_8`, and six are `RGBA_8888`. Street1 texture
+`0x01F67930` is the only level-inline example; the other 21 occur in shared,
+first-person entity, and menu Cores.
 
 The matching retail ELF has a 23-entry, `0x34`-byte pixel-format table at VA
 `0x00519CD8`, file offset `0x003DACD8`. File offset `0x003DAD00` is record
-0's `+0x28` name pointer, not the table base. Its ordered names are:
+0's `+0x28` name pointer, not the table base. The descriptor masks establish
+the declared channel packing below. Packing is written least-significant to
+most-significant; it is an engine declaration, not proof that an unobserved
+format was serialized.
 
-```text
- 0 INDEX_4               12 RGB_888_32_REV
- 1 INDEX_8               13 RGB_888
- 2 ALPHA_4               14 RGB_888_REV
- 3 ALPHA_8               15 RGB_565
- 4 GLOW_8                16 RGB_565_REV
- 5 RGBA_8888             17 RGB_555
- 6 RGBA_8888_REV         18 RGB_555_REV
- 7 RGBA_5551             19 RGBE
- 8 RGBA_5551_REV         20 INDEX_2X2
- 9 RGBA_4444             21 INDEX_2
-10 RGBA_4444_REV         22 INVALID_PIXELFORMAT
-11 RGB_888_32
-```
+| Code | Name | Bits/texel | Descriptor packing | Loader sampling mapping | Physical | Logical | Serialized evidence |
+|---:|---|---:|---|---|---:|---:|---|
+| 0 | `INDEX_4` | 4 | indexed 4-bit | PSMT4 | 3,175 | 3,120 | proven |
+| 1 | `INDEX_8` | 8 | indexed 8-bit | PSMT8 | 7,383 | 7,275 | proven |
+| 2 | `ALPHA_4` | 4 | A4 | PSMT4 | 496 | 496 | proven |
+| 3 | `ALPHA_8` | 8 | A8 | PSMT8 | 2,579 | 2,579 | proven |
+| 4 | `GLOW_8` | 8 | indexed 8-bit | PSMT8 | 32 | 32 | plane proven; palette source unresolved |
+| 5 | `RGBA_8888` | 32 | R8 G8 B8 A8 | PSMCT32 | 186 | 176 | proven |
+| 6 | `RGBA_8888_REV` | 32 | B8 G8 R8 A8 | remap 6 -> 5, PSMCT32 | 0 | 0 | declared only |
+| 7 | `RGBA_5551` | 16 | R5 G5 B5 A1 | PSMCT16 | 0 | 0 | declared only |
+| 8 | `RGBA_5551_REV` | 16 | B5 G5 R5 A1 | none (`0xFF`) | 0 | 0 | declared only |
+| 9 | `RGBA_4444` | 16 | R4 G4 B4 A4 | none (`0xFF`) | 0 | 0 | declared only |
+| 10 | `RGBA_4444_REV` | 16 | B4 G4 R4 A4 | none (`0xFF`) | 0 | 0 | declared only |
+| 11 | `RGB_888_32` | 32 | R8 G8 B8 X8 | none (`0xFF`) | 0 | 0 | declared only |
+| 12 | `RGB_888_32_REV` | 32 | B8 G8 R8 X8 | none (`0xFF`) | 0 | 0 | declared only |
+| 13 | `RGB_888` | 24 | R8 G8 B8 | PSMCT24 | 36 | 36 | proven |
+| 14 | `RGB_888_REV` | 24 | B8 G8 R8 | remap 14 -> 13, PSMCT24 | 0 | 0 | declared only |
+| 15 | `RGB_565` | 16 | R5 G6 B5 | none (`0xFF`) | 0 | 0 | declared only |
+| 16 | `RGB_565_REV` | 16 | B5 G6 R5 | none (`0xFF`) | 0 | 0 | declared only |
+| 17 | `RGB_555` | 16 | R5 G5 B5 X1 | PSMCT16 | 0 | 0 | declared only |
+| 18 | `RGB_555_REV` | 16 | B5 G5 R5 X1 | none (`0xFF`) | 0 | 0 | declared only |
+| 19 | `RGBE` | 32 | RGB masks; high byte unresolved | none (`0xFF`) | 0 | 0 | declared only |
+| 20 | `INDEX_2X2` | 4 | 2x2-bit interleaving unresolved | none (`0xFF`) | 0 | 0 | declared only |
+| 21 | `INDEX_2` | 2 | indexed 2-bit | PSMT4 table entry | 0 | 0 | declared only |
+| 22 | `INVALID_PIXELFORMAT` | 0 | none | invalid sentinel | 4 | 4 | empty placeholders only |
 
-Only eight codes occur in the 47 level Cores:
+Thus the complete NTSC-U catalog uses exactly the same eight enum codes as the
+47-level subset. The 15 zero-count descriptors must remain engine-declared
+formats, not supported serialized layouts. In particular, a valid sampling
+table byte for codes 7, 17, or 21 does not establish their file packing,
+palette framing, or upload dimensions. The four code-22 objects have
+`0xFFFFFFFF` dimensions and mip count, zero chunks, and no payload. The 19
+variant-1 textures carry no pixel-format enum and remain a separate proven
+PSMT8 schema.
 
-| Code | Name | Bits/texel | Sampling PSM | Objects | Selected direct | Selected instance |
-|---:|---|---:|---|---:|---:|---:|
-| 0 | `INDEX_4` | 4 | PSMT4 | 3,034 | 897 | 697 |
-| 1 | `INDEX_8` | 8 | PSMT8 | 6,320 | 2,898 | 1,040 |
-| 2 | `ALPHA_4` | 4 | PSMT4 | 494 | 281 | 338 |
-| 3 | `ALPHA_8` | 8 | PSMT8 | 2,564 | 902 | 1,579 |
-| 4 | `GLOW_8` | 8 | PSMT8 | 31 | 9 | 22 |
-| 5 | `RGBA_8888` | 32 | PSMCT32 | 134 | 56 | 31 |
-| 13 | `RGB_888` | 24 | PSMCT24 | 32 | 21 | 11 |
-| 22 | `INVALID_PIXELFORMAT` | 0 | invalid | 4 | 3 | 0 |
+The loaders at `0x15B1C0` and `0x15B730` canonicalize exactly code 6 to code 5
+and code 14 to code 13 before indexing the byte table at
+`0x00513658/0x003D4658`; all other codes index it directly. A `0xFF` table
+entry means there is no direct GS sampling mapping. Code 22 has an otherwise
+ordinary raw table byte, but its empty sentinel objects establish no observed
+upload and it must not be described as PSMT4 data.
 
-The selected counts are unique Core-local tokens reached from the default-LOD
-static scene. Direct and instance columns are independent.
+Within the 47 level Cores, the default-LOD static scene reaches:
+
+| Code | Name | Level objects | Selected direct | Selected instance |
+|---:|---|---:|---:|---:|
+| 0 | `INDEX_4` | 3,034 | 897 | 697 |
+| 1 | `INDEX_8` | 6,320 | 2,898 | 1,040 |
+| 2 | `ALPHA_4` | 494 | 281 | 338 |
+| 3 | `ALPHA_8` | 2,564 | 902 | 1,579 |
+| 4 | `GLOW_8` | 31 | 9 | 22 |
+| 5 | `RGBA_8888` | 134 | 56 | 31 |
+| 13 | `RGB_888` | 32 | 21 | 11 |
+| 22 | `INVALID_PIXELFORMAT` | 4 | 3 | 0 |
+
+The selected counts are unique Core-local tokens. Direct and instance columns
+are independent.
 
 `FUN_002DDC98` at VA/file `0x002DDC98/0x0019EC98` returns the descriptor's
-bits-per-texel field. The sampling-PSM table is at VA/file
-`0x00513658/0x003D4658`; the loaders at `0x15B1C0` and `0x15B730` index it
-directly.
+bits-per-texel field.
 
 The runtime upload path is also exact. `FUN_00159BB8` at VA/file
 `0x00159BB8/0x0001ABB8` selects:
@@ -550,7 +588,7 @@ The runtime upload path is also exact. `FUN_00159BB8` at VA/file
 runtime width >= 16:
   sample PSMT8  -> upload PSMCT32 at width/2, height/2
   sample PSMT4  -> upload PSMCT16 at width/2, height/2
-  sample PSMCT32/24 -> retain PSM and dimensions
+  all other sample PSMs -> retain PSM and dimensions
 
 runtime width < 16:
   retain native PSMT8/PSMT4 upload
@@ -643,10 +681,11 @@ pixel_storage_bytes = align_up(raw_bytes, 0x100)
 ```
 
 Bytes from `raw_bytes` to the aligned end are zero in every case. Mip counts
-are 12,060 one-level, 49 two-level, 19 three-level, and 481 four-level
-objects. The chunk array partitions the combined payload; it is not one entry
-per mip. Concatenate pixel chunks, walk mip lengths from dimensions and
-format, consume the final alignment, and only then read an indexed palette.
+are 13,272 one-level, 49 two-level, 24 three-level, and 542 four-level
+objects, plus the four invalid sentinels. The chunk array partitions the
+combined payload; it is not one entry per mip. Concatenate pixel chunks, walk
+mip lengths from dimensions and format, consume the final alignment, and only
+then read an indexed palette.
 
 The runtime loader independently confirms the mip walk. Instructions at
 `0x15B324..0x15B3B8` halve dimensions and accumulate exact
@@ -654,7 +693,7 @@ The runtime loader independently confirms the mip walk. Instructions at
 There is no per-mip alignment. Runtime span vectors and archive chunks are
 transport partitions rather than semantic mip records.
 
-All 3,034 `INDEX_4` palette chunks are exactly:
+All 3,175 `INDEX_4` palette chunks are exactly:
 
 ```text
 +0x00  0x10-byte bank header
@@ -668,7 +707,7 @@ For every entry pair, the RGB bytes match and the two alpha bytes sum to 255.
 This is a complementary-alpha two-bank container. The normal descriptor is
 at object `+0x00`; a true complement policy selects descriptor `+0x50`.
 
-All 6,320 `INDEX_8` palette chunks are exactly:
+All 7,383 `INDEX_8` palette chunks are exactly:
 
 ```text
 +0x000  0x10-byte header
@@ -696,6 +735,73 @@ All four are selected by instanced geometry. Their seven selected Material
 references all use operation 5 `ALPHAADD`, scalar 255, and fade mode 2.
 Operation 5 bypasses complement derivation, so all four select the normal
 descriptor at palette object `+0x00`.
+
+#### Street2 static graffiti material `0x01F7E8D4`
+
+Street2 Core-local token `0x01F7E8D4` identifies one Material definition
+reused by 11 `StaticMeshInstance` occurrences. Repeating its Blender display
+name does not identify a second definition, and the token must not be resolved
+outside the Street2 Core.
+
+The Material has one fixed-size layer and no optional transform payload:
+
+| Layer field | Value | Proven effect |
+|---|---:|---|
+| provider | Texture `0x01F70942` | one physical definition |
+| texture format | `INDEX_8`, PSMT8 | 256x256, one mip, CSM1 palette |
+| operation | 5, `ALPHAADD` | `(Cs-Cd)*As+Cd`, ordinary source-over |
+| lighting mode | 1 | preserved; final runtime lighting remains unresolved |
+| Z-write | 0 | disabled |
+| framebuffer selector | 1 | ordinary selected framebuffer state |
+| depth comparison | 3 | `GEQUAL` |
+| alpha test / reference | 7 / 0 | `ALWAYS`; no alpha-test discard |
+| wrap S / T | 0 / 0 | repeat / repeat |
+| filter policy | 4 | alternate mip policy `0x120`; only one mip exists |
+| texture enabled / TFX | 1 / 1 | textured `MODULATE` path |
+| alpha source / scalar | 0 / 255 | unscaled source-alpha path |
+| fade mode / values | 2 / `(15, 0.5, 0.5, 20)` | preserved serialized state |
+| coordinate selector | 0 | direct UV0 |
+| VU feature booleans | false / false | neither optional feature selected |
+
+Operation 5 selects the normal palette descriptor. The decoded atlas visibly
+contains graffiti and poster artwork, but that visual description is not a
+serialized semantic name. Its decoded alpha coverage is:
+
+| Alpha class | Texels |
+|---|---:|
+| zero | 24,157 |
+| partial | 22,268 |
+| 255 | 19,111 |
+| distinct byte values | 110 |
+
+The 11 selected regular-static leaves contain 404 triangle occurrences and
+808 target-face vertices. Every target packet carries Native V4-8 color.
+Across only the vertices used by this Material, RGB spans `0..128`, while
+alpha is either 121 or 128. Direct UV0 spans:
+
+```text
+U = -0.9111328125 .. 0.99755859375
+V = -1.0          .. 1.0
+```
+
+Repeat addressing is therefore material behavior, not a host-side clamp.
+The texture and V4-8 values combine with the PS2 `128 == 1.0` convention:
+
+```text
+source_rgb   = texture_rgb   * vertex_rgb   / 128
+source_alpha = texture_alpha * vertex_alpha / 128
+framebuffer  = source_rgb * source_alpha
+             + destination_rgb * (1 - source_alpha)
+```
+
+These are serialized static overlay/card triangles. They are not
+`DecalResource` marks, do not use the runtime receiver projection described
+in section 6, and must remain present when runtime decals are disabled.
+
+The bounded Blender preview can reproduce the decoded texture, UV0, V4-8
+modulation, and source-over alpha. It remains diagnostic because lighting
+mode 1 and the complete retail lighting environment are not reconstructed;
+the preview emission boost is a host visualization choice.
 
 `ALPHA_4` and `ALPHA_8` are generated white-RGB scalar masks:
 
@@ -728,7 +834,7 @@ Four `INVALID_PIXELFORMAT` placeholders have dimensions and mip count
 direct-world materials. Preserve an explicit missing-texture node rather than
 trying to decode them or silently deleting their slots.
 
-Street1 Texture `0x01F67930` is the sole inline object:
+Street1 Texture `0x01F67930` is the sole inline object in the 47-level subset:
 
 ```text
 128x128 INDEX_8, one mip, chunks [0x4000, 0x500]
@@ -744,10 +850,93 @@ same standard `INDEX_8` layout.
 
 Texture tokens are scoped to their owning Core. The same numeric value can
 name different formats in different levels: token `0x00570004` is `INDEX_4`
-in Street2 and `INDEX_8` in Park2. Thirteen Core-local tokens also have
-duplicate directory definitions, for 47 extra physical copies. Each group
-has identical metadata and payload hashes. Preserve the physical entries for
-round trip, but resolve a verified equivalent group once as a logical token.
+in Street2 and `INDEX_8` in Park2. Across the complete variant-5 corpus, 66
+Core-local tokens have duplicate directory definitions, for 173 extra
+physical copies; the level subset contributes 13 groups and 47 copies. Each
+group has identical metadata and payload hashes. Preserve the physical
+entries for round trip, but resolve a verified equivalent group once as a
+logical token.
+
+#### Mountain Pass diagnostic material families
+
+Mountain Pass Material `0x00FB0B4A` is the repeated foliage family. Both
+serialized layers reference the same 256x256, one-mip `INDEX_8` Texture
+`0x00561068` through direct UV0 and the normal CSM1 palette:
+
+| Layer | Operation | Z-write | Alpha test | TFX policy | Fade | VU features |
+|---:|---|---:|---|---:|---|---|
+| 0 | 11 `LIGHTMAPCOLOR` | 1 | `GREATER`, reference 204 | 0 | 2, `(59, 0.5, 0.5, 60)` | true, true |
+| 1 | 5 `ALPHAADD` | 0 | `ALWAYS`, reference 0 | 2 | 2, `(40, 0.5, 0.5, 60)` | false, true |
+
+The runtime alpha-test reference is `204 >> 1 == 102`. The decoded foliage
+atlas has 46,349 zero-alpha and 19,187 partial-alpha texels, no alpha-255
+texels, and 144 distinct alpha values spanning 0..252. Neither of its two
+regular-static definitions carries Native V4-8. Those definitions contribute
+20 stored triangles and are selected by 411 instanced occurrences, producing
+6,576 triangle occurrences.
+
+Mountain Pass Material `0x005436FE` is the direct-world sandbag/rockwork
+family. Its one direct-UV0 layer references opaque 256x256 `INDEX_8` Texture
+`0x005417C8`:
+
+```text
+operation             5 ALPHAADD
+lighting mode         1
+Z-write               1
+depth comparison      GEQUAL
+alpha test            ALWAYS
+TFX policy            2
+alpha scalar          255
+fade mode             0
+VU features           false, false
+```
+
+All 65,536 decoded texels have alpha 255. The stored catalog contains 27
+regular-static definitions using this Material; the default-LOD scene selects
+14 direct occurrences with 10,725 triangle occurrences. Their packets carry
+no Native V4-8, so this family is intentionally outside the bounded V4-8
+`ALPHAADD` preview used for the Street2 overlays.
+
+Direct-world object `Direct 0001`, regular-static token `0x00566D60`, has four
+records, 2,266 triangles, and no Native V4-8:
+
+| Record | Material | Triangles | Diagnostic color source |
+|---:|---|---:|---|
+| 0 | `0x00564AF0` | 1,199 | layer-0 `WRITE`, Texture `0x00558886`, UV0 |
+| 1 | `0x0054701E` | 695 | layer-0 `WRITE`, Texture `0x00558804`, UV0 |
+| 2 | `0x00547702` | 78 | layer-0 `ALPHAADD`, Texture `0x005588BA`, UV2 |
+| 3 | `0x00546F22` | 294 | layer-0 `ALPHAADD`, Texture `0x005587EA`, UV0 |
+
+Record 0's `WRITE` layer carries the optional six-float transform:
+
+```text
+(0.9878843, -0.1551932, 0.1551936,
+ 0.9878841, -0.0836546, -0.0715389)
+```
+
+Its exact runtime packing is known, but the multiplication convention remains
+unresolved. A Blender diagnostic may therefore connect untransformed UV0 only
+when it records that the transform was ignored. It must not label that graph
+as native material reconstruction.
+
+The purpose-built Blender material diagnostic now falls back to an eligible
+decoded color layer only after exact layer-0 `WRITE` and bounded V4-8
+`ALPHAADD` admission fail. Admission is structural rather than token-specific
+and is limited to four observed families:
+
+1. one direct-coordinate `ALPHAADD` color layer;
+2. a transformed direct-coordinate layer-0 `WRITE`;
+3. same-texture `LIGHTMAPCOLOR`, then `ALPHAADD`;
+4. same-texture `ALPHAADD`, then `LIGHTMAPCOLOR`.
+
+The selected layer must use a normal-bank `INDEX_4`, `INDEX_8`, `RGBA_8888`,
+or `RGB_888` image, scalar 255, an enabled texture, and direct selector 0..7.
+It connects source alpha for a single-layer `ALPHAADD`, or for the
+same-texture foliage pair. Complex multi-layer fallbacks remain opaque so one
+isolated pass does not make whole surfaces spuriously transparent. The graph
+is explicitly marked `diagnostic-color-layerN`; native lighting, VU color,
+multi-layer composition, and ignored six-float transforms remain unresolved.
+Normal imports do not enable this fallback.
 
 ### 3.6 Geometry-aware texture dependencies
 
@@ -2028,6 +2217,98 @@ translations lie inside their Zone, but every transformed AABB overlaps it.
 All 252 zone-linked simple-skinned instances are unparented; all 132
 proximity-parented instances are not Zone members.
 
+#### Authored occurrences and Blender instancing
+
+`Prop` is an importer/UI category, not a serialized Killzone class. The two
+proven authored render-placement classes are `StaticMeshInstance` and
+`SimpleAnimatingSkinnedMeshInstance`. Gameplay objects such as
+`PhysicsObjectInstance`, destructibles, pickups, and particle systems may also
+be prop-like in an editor, but they retain their own schemas and must not be
+coerced into either mesh-instance layout.
+
+Keep definitions, wrappers, and occurrences distinct:
+
+| Graph role | Serialized object | Transform source | Blender representation |
+|---|---|---|---|
+| Geometry definition | `Regular*MeshResource` | mesh-local or already-world vertex data | one reusable mesh datablock per Core directory object |
+| Multi wrapper | `Multi*MeshResource` | none | resource collection/graph node; expand every selected child |
+| LOD wrapper | `Lod*MeshResource` | none | resource collection/graph node; select child zero by default |
+| Static occurrence | `StaticMeshInstance` | its `+0x0C` matrix | one authored occurrence object or owner Empty |
+| Animated occurrence | `SimpleAnimatingSkinnedMeshInstance` | its `+0x0C` matrix plus preserved parent/animation references | one authored armature occurrence or owner Empty |
+| Baked world occurrence | unreferenced static resource root | implicit identity | separate direct-world occurrence, not a synthesized instance record |
+
+The ELF independently registers runtime allocation sizes of `0x20` for
+`StaticMeshResource`, `0x50` for `StaticMeshResource::Instance`, `0xD0` for
+`StaticMeshInstance`, `0x160` for `SkinnedMeshInstance`, `0x1A0` for
+`SimpleAnimatingSkinnedMeshInstance`, `0x90` for
+`MultiStaticMeshInstance`, and `0x140` for `CollisionMeshInstance`
+(`FUN_00313268`, `FUN_00313790`, `FUN_003bc790`, `FUN_003af580`,
+`FUN_003f0720`, and `FUN_003de0a8`). These are runtime/reflection sizes, not
+serialized blob sizes. In particular, the reflected
+`MultiStaticMeshInstance` class does not justify synthesizing one on import:
+no object of that type occurs in the validated 612-Core corpus.
+
+Identity rules for a Blender importer are:
+
+- key a definition by its Core plus exact directory identity, not by display
+  name or a bare object token;
+- key an authored occurrence by its compact-directory identity and retain its
+  referenced resource token separately;
+- treat Core string indices and object tokens as Core-local;
+- allow duplicate display names and repeated resource references;
+- retain a marker distinguishing an explicit identity-matrix instance from an
+  implicit direct-world occurrence;
+- retain the original 16 serialized `f32` values even when a Blender matrix is
+  also stored, so an unchanged export is not dependent on Blender transform
+  decomposition.
+
+Do not implement a shared byte-for-byte "instance header": the static layout
+serializes name-is-identifier then name, while the simple-skinned layout
+serializes name then name-is-identifier. Both place the parent token at
+`+0x08` and the matrix at `+0x0C`, but that common tail does not make their
+complete prefixes interchangeable.
+
+Blender applies matrices to column vectors. If `M_src` is constructed from the
+16 serialized values as the four source rows, the equivalent column-vector
+matrix is:
+
+```python
+M_column = M_src.transposed()
+```
+
+If decoded vertices are converted into Blender coordinates by a basis matrix
+`C`, apply the same basis to an occurrence exactly once:
+
+```python
+M_blender = C @ M_src.transposed() @ C.inverted()
+```
+
+This moves source translation from the last row into Blender's last column.
+Passing the serialized rows directly to `object.matrix_world` is wrong. A
+single scene-root axis conversion is also valid, but it must replace rather
+than accompany per-mesh/per-instance basis conversion. Direct-world leaves
+remain at identity after their already-world vertices receive the chosen axis
+conversion.
+
+For a Multi resource, create one authored owner for the placement and put the
+selected child leaves below it or instance a resource collection; never apply
+the placement once per wrapper level. Reuse leaf mesh datablocks, but create
+distinct occurrence objects when the same definition is placed more than
+once. A shared descendant reached through multiple legal wrapper paths is
+multiple render occurrences sharing one definition, not a reason to collapse
+the paths.
+
+Zone membership is not transform parenting. Store it as a typed reference or
+collection membership without changing `matrix_world`; an instance origin can
+lie outside the Zone while its transformed bounds overlap it. The 132
+simple-skinned parent references are different: they resolve to
+`ProximitySensorInstance`, but static evidence has not yet established whether
+the serialized child matrix is parent-local or already world-space. Preserve
+both the raw matrix and parent token. A read-only preview may show the raw
+matrix, but must not bake a Blender parent transform or claim a resolved world
+placement until one runtime parent/child matrix trace settles composition
+order.
+
 ### 4.16 Multi-resource wrappers
 
 All Multi and LOD resources use expanded 32-byte directories but have zero
@@ -2470,6 +2751,528 @@ u8  zero_padding[]
 The ELF track-length routine walks all 1,589,420 records and ends exactly at
 the declared packed size. A parser may keep track payloads opaque, but it
 must reproduce that bounded walk rather than search for plausible headers.
+
+#### Packed track records
+
+The executable fixes the packed byte block into one pointer per track:
+
+- `0x3B1868` allocates the pointer array and walks the packed block.
+- `0x3BEA88` computes the exact end of one record.
+- `0x3BE260` selects the two sample indices and interpolation fraction.
+- `0x3BE4F0`, `0x3BE638`, and `0x3BE778` sample rotation, translation, and
+  scale respectively.
+
+Each record starts with two control bytes:
+
+```text
+byte 0:
+  bits 0..3  T: time codec
+  bits 4..6  P: translation codec
+  bit  7     unassigned; ignored by the observed size and sample dispatches
+
+byte 1:
+  bits 0..3  R: rotation codec
+  bits 4..5  unassigned; ignored by the observed size and sample dispatches
+  bits 6..7  S: scale codec
+```
+
+The sample count and initial payload cursor are:
+
+```text
+if T == 0:
+    N = 1
+    cursor = record + 2
+else:
+    first = record[2]
+    if (first & 0x80) == 0:
+        N = first
+        cursor = record + 3
+    else:
+        N = (first & 0x7F) | (record[3] << 7)
+        cursor = record + 4
+```
+
+Payloads always follow in this order:
+
+```text
+time, rotation, translation, scale
+```
+
+The boundary walker advances through those four payloads using the sizes
+below. This is enough to split a packed animation block into records without
+understanding every quaternion reconstruction formula.
+
+##### Time codecs
+
+| `T` | Payload bytes | Sampling behavior |
+|---:|---:|---|
+| 0 | `0` | One implicit sample |
+| 1 | `4 + 2*N` | `f32` duration followed by `N` normalized 16-bit key times |
+| 2 | `N` | `N` explicit byte key times at 24 Hz |
+| 3 | `0` | Implicit uniform keys at 6 Hz |
+| 4 | `0` | Implicit uniform keys at 12 Hz |
+| 5 | `0` | Implicit uniform keys at 24 Hz |
+| 6 | `cursor[0]` | Bit-packed variable deltas at a 6 Hz base rate |
+| 7 | `cursor[0]` | Bit-packed variable deltas at a 12 Hz base rate |
+| 8 | `cursor[0]` | Bit-packed variable deltas at a 24 Hz base rate |
+
+For `T == 1`, the duration is a native little-endian float, but each
+normalized key time is assembled as a big-endian `u16`. A key value `k`
+represents `duration * k / 65535`. The sampler clamps the requested time to
+the duration and returns the bracketing indices plus their interpolation
+fraction.
+
+For `T == 2`, a key byte `k` represents `k / 24` seconds. The input is
+clamped to the representable `0..255/24`-second range.
+
+For `T == 6..8`, the first byte is the total timing-payload length, including
+that length byte. The bitstream starts at the following byte and is read
+least-significant bit first:
+
+```text
+0      -> advance 1 base-rate tick
+1 vvv  -> advance 2 + vvv base-rate ticks
+```
+
+The latter form encodes deltas of two through nine ticks. One time lookup is
+performed per track, and its lower index, upper index, and fraction are
+reused by all channels in that track.
+
+##### Rotation codecs
+
+`R = byte1 & 0x0F`:
+
+| `R` | Payload bytes | Observed representation |
+|---:|---:|---|
+| 0 | `0` | Default identity quaternion |
+| 1 | `8` | One four-component packed-`u16` quaternion |
+| 2 | `8*N` | `N` packed-`u16` quaternions |
+| 3 | `0` | Default identity quaternion |
+| 4 | `4*N` | `N` packed 10:10:10 quaternion samples |
+| 5 | `4` | One packed 10:10:10 quaternion sample |
+| 6 | `0` | Default identity quaternion |
+| 7 | adaptive | Adaptive reconstructed-component quaternion |
+| 8 | adaptive | Adaptive three-angle quaternion |
+| 9 | adaptive | Fixed-axis, adaptive-angle quaternion |
+
+The constant `R == 1` path expands four little-endian `u16` components using:
+
+```text
+component = -1.0 + packed * bit_cast<f32>(0x38000101)
+```
+
+The `R == 2` keyed path consumes the same eight-byte samples. VU0
+microprogram `0x4F0` expands both endpoints with the formula above, then
+falls through into the shared interpolation program at `0x520`.
+
+For `R == 4` and `R == 5`, bits `0..9`, `10..19`, and `20..29` are passed to
+VU0 microprogram `0xD18`, which reconstructs the four-component quaternion.
+Bits `30..31` are masked off and do not affect the decoder. Let:
+
+```text
+C10 = bit_cast<f32>(0x3B004020)
+p = float32(vec3(field0, field1, field2) * C10 - 1)
+s = dot(p, p)
+
+if s < 1:
+    q = (p.x, p.y, p.z, sqrt(1 - s))
+else:
+    q = (p / sqrt(s), 0)
+```
+
+The comparison is strict, so `s == 1` takes the normalization path.
+`R == 4` decodes both selected endpoints this way and then uses VU0 `0x520`;
+`R == 5` decodes one constant sample.
+
+For `R == 7` and `R == 8`, let `h0 = cursor[0]` and `h1 = cursor[1]`:
+
+```text
+sample_bits = (h0 >> 4) + (h1 & 0x0F) + (h1 >> 4) + (h0 & 1)
+size = 2 + ceil(sample_bits * N / 8)
+
+if h0 & 0x02:
+    size += 2
+    if h1 & 0xF0:
+        size += 2
+
+if h0 & 0x04:
+    size += 2
+    if h1 & 0x0F:
+        size += 2
+
+if h0 & 0x08:
+    size += 2
+    if h0 & 0xF0:
+        size += 2
+```
+
+Their shared two-byte descriptor means:
+
+```text
+wx = h1 >> 4
+wy = h1 & 0x0F
+wz = h0 >> 4
+
+x_present = h0 & 0x02
+y_present = h0 & 0x04
+z_present = h0 & 0x08
+```
+
+Metadata follows the descriptor in x/y/z order. For each component:
+
+```text
+if present:
+    lower = s16be(metadata) * bit_cast<f32>(0x38000100)
+    metadata += 2
+
+    if width != 0:
+        upper = s16be(metadata) * bit_cast<f32>(0x38000100)
+        metadata += 2
+    else:
+        upper = lower
+else:
+    lower = upper = 0
+```
+
+The sample bitstream begins immediately after that metadata. Samples are
+consecutive and least-significant bit first. Within a sample, z occupies the
+low `wz` bits, y the next `wy`, and x the next `wx`. A nonzero-width field is
+dequantized as:
+
+```text
+aligned = code << (16 - width)
+fraction = aligned * bit_cast<f32>(0x37800080)  # aligned / 65535
+value = lower + (upper - lower) * fraction
+```
+
+`R == 7` appends the optional `h0 & 1` bit above the x field. It reconstructs
+the fourth quaternion component as:
+
+```text
+w = sqrt(max(1 - x*x - y*y - z*z, 0))
+if (h0 & 1) and sample_sign_bit:
+    w = -w
+q = (x, y, z, w)
+```
+
+`R == 8` instead treats the three dequantized values as normalized angles,
+multiplies each by `pi`, and converts them to a quaternion. If the resulting
+angles are `x`, `y`, and `z`, the composition is
+`qz(z) * qy(y) * qx(x)`:
+
+```text
+sx, cx = sin(x/2), cos(x/2)
+sy, cy = sin(y/2), cos(y/2)
+sz, cz = sin(z/2), cos(z/2)
+
+q.x = sx*cy*cz - cx*sy*sz
+q.y = cx*sy*cz + sx*cy*sz
+q.z = cx*cy*sz - sx*sy*cz
+q.w = cx*cy*cz + sx*sy*sz
+```
+
+Unlike the shared size routine, both `R == 8` sample decoders omit `h0 & 1`
+from their sample stride and never read a sign bit. Valid `R == 8` streams
+are therefore expected to clear descriptor bit 0; real payloads are needed
+to confirm that encoder invariant. `R == 7` and `R == 8` both pass their
+decoded endpoint quaternions to VU0 `0x520`.
+
+For `R == 9`, with `h0 = cursor[0]`:
+
+```text
+size = ceil((h0 & 0x0F) * N / 8) + ((h0 & 0x10) ? 6 : 7)
+```
+
+This is a fixed-axis track whose low descriptor nibble is the per-sample
+angle width. Descriptor bit 4 selects one of two axis encodings:
+
+```text
+if (h0 & 0x10) == 0:
+    axis_code = u16be(cursor + 1)
+    angle_metadata = cursor + 3
+    sample_bits = cursor + 7
+else:
+    axis_code = cursor[1]
+    angle_metadata = cursor + 2
+    sample_bits = cursor + 6
+```
+
+The 16-bit axis code contains two folded magnitudes and three sign bits:
+
+```text
+mx = (axis_code >> 7) & 0x3F
+my = axis_code & 0x7F
+
+if mx + my >= 127:
+    mx = 127 - mx
+    my = 127 - my
+
+mz = 126 - (mx + my)
+
+if axis_code & 0x8000: mx = -mx
+if axis_code & 0x4000: my = -my
+if axis_code & 0x2000: mz = -mz
+
+axis = normalize(vec3(mx, my, mz))
+```
+
+The eight-bit form uses this exact lookup table:
+
+```text
+L = {
+    -1.0,
+    bit_cast<f32>(0xBF3504F7),
+    -0.5,
+     0.0,
+     0.5,
+    bit_cast<f32>(0x3F3504F7),
+     1.0,
+     1.0
+}
+
+axis.x = L[axis_code & 7]
+axis.y = L[(axis_code >> 3) & 7]
+axis.z = sqrt(max(1 - axis.x*axis.x - axis.y*axis.y, 0))
+if axis_code & 0x40:
+    axis.z = -axis.z
+```
+
+Bit 7 is ignored, and this branch does not normalize the result after the
+lookup; valid codes are expected to select a unit-sphere point.
+
+The four angle-metadata bytes are two little-endian values:
+
+```text
+Cangle = bit_cast<f32>(0x38C910A4)  # float32(2*pi/65535)
+extent = u16le(angle_metadata + 0) * Cangle
+lower  = u16le(angle_metadata + 2) * Cangle - pi
+```
+
+For `width = h0 & 0x0F`, sample `i` is:
+
+```text
+code = read_bits_lsb(sample_bits, i * width, width)
+aligned = code << (16 - width)
+angle[i] = lower + extent * aligned * bit_cast<f32>(0x37800080)
+```
+
+If two distinct keys bracket the requested time, `0x3BCE30` interpolates the
+angles. Its exact wrap behavior is:
+
+```text
+delta = angle1 - angle0
+
+if delta > pi:
+    angle = angle0 + (delta - 2*pi) * t
+    if angle < -pi:
+        angle += 2*pi
+elif delta < -pi:
+    angle = angle0 + (delta + 2*pi) * t
+    if angle > pi:
+        angle = 2*pi - angle
+else:
+    angle = angle0 + delta * t
+```
+
+The asymmetric `2*pi - angle` operation in the second branch is the retail
+instruction sequence, not a transcription of a conventional wrap helper.
+The final quaternion is formed directly on the CPU:
+
+```text
+q.xyz = axis * sin(angle / 2)
+q.w   = cos(angle / 2)
+```
+
+###### VU0 quaternion interpolation
+
+VU0 entry `0x520` is a shortest-path approximate SLERP, not exact SLERP or
+normalized linear interpolation. It receives `q0`, `q1`, and `t` and first
+computes:
+
+```text
+c = (q0.x*q1.x + q0.y*q1.y) + (q0.z*q1.z + q0.w*q1.w)
+d = abs(c)
+sign = -1 if c < 0 else 1
+K = bit_cast<f32>(0x3F7FFF58)  # 0.9999899864196777
+```
+
+For `d >= K`, it uses an unnormalized linear fallback:
+
+```text
+q = (1 - t) * q0 + (sign * t) * q1
+```
+
+For `d < K`, it approximates `theta = acos(d)` as:
+
+```text
+P(d) = a3 + d*(a2 + d*(a0 + a1*d))
+theta = sqrt(1 - d) * P(d)
+
+a0 = bit_cast<f32>(0x3D981627)
+a1 = bit_cast<f32>(0xBC996E30)
+a2 = bit_cast<f32>(0xBE593484)
+a3 = bit_cast<f32>(0x3FC90DA4)
+```
+
+Its sine and reciprocal-sine approximations are:
+
+```text
+S(u) = 1 + u*(s1 + u*(s2 + u*(s3 + u*(s4 + s5*u))))
+sin_approx(x) = x * S(x*x)
+
+s1 = -0.1666666716337204
+s2 =  0.008333331905305386
+s3 = -0.00019840900495182723
+s4 =  0.0000027526000394573202
+s5 = -0.000000023900000201138027
+
+csc_approx(x) =
+    1/x + x*(c0 + x*x*(c1 + x*x*(c2 + x*x*(c3 + c4*x*x))))
+
+c0 = 0.1666666716337204
+c1 = 0.01944444514811039
+c2 = 0.0020502645056694746
+c3 = 0.00020998677064199
+c4 = 0.00002133604539267253
+```
+
+The final blend is:
+
+```text
+inverse_sine = csc_approx(theta)
+w0 = sin_approx((1 - t) * theta) * inverse_sine
+w1 = sign * sin_approx(t * theta) * inverse_sine
+q = w0*q0 + w1*q1
+```
+
+The operation grouping above matches the VU program. Final low bits can
+differ between VU implementations because of FMAC-pipeline rounding.
+
+##### Translation codecs
+
+`P = (byte0 >> 4) & 7`:
+
+| `P` | Payload bytes | Observed representation |
+|---:|---:|---|
+| 0 | `0` | Default zero translation |
+| 1 | `8` | One mantissa-truncated float vector |
+| 2 | `8*N` | `N` mantissa-truncated float vectors |
+| 3 | `4*N` | `N` fixed-range 10:10:10 vectors |
+| 4 | `4` | One fixed-range 10:10:10 vector |
+| 5 | adaptive | Adaptive per-axis bit-packed vectors |
+| 6 | `2` | One sparse single-lane vector |
+| 7 | `0` | Not handled by the observed sampler |
+
+The eight-byte vector used by `P == 1`, `P == 2`, and the scale channel is a
+64-bit concatenation of truncated float32 bit patterns, not three
+half-floats:
+
+```text
+x_bits = u32(packed >> 43) << 11
+y_bits = u32(packed >> 22) << 11
+z_bits = u32(packed)       << 10
+```
+
+For `P == 3` and `P == 4`, a little-endian `u32` stores three fields; bits
+`30..31` are ignored:
+
+```text
+x = ((packed       & 0x3FF) - 512) / 1024
+y = (((packed>>10) & 0x3FF) - 512) / 1024
+z = (((packed>>20) & 0x3FF) - 512) / 1024
+```
+
+`P == 5` starts with a one-byte descriptor. It defines lower and upper
+endpoints plus a bit width for each axis. If descriptor bit 0 is set, the
+metadata is:
+
+```text
++0      descriptor
++1      packed-float lower vector, 8 bytes
++9      packed-float upper vector, 8 bytes
++17     x bit width
++18     y bit width
++19     z bit width
++20     sample bitstream
+```
+
+Otherwise, descriptor bits `1..2`, `3..4`, and `5..6` select one metadata
+mode for x, y, and z respectively. Axis metadata is concatenated in x/y/z
+order:
+
+| Mode | Bytes | Lower, upper, and width |
+|---:|---:|---|
+| 0 | `0` | `lower = upper = 0`, width `0` |
+| 1 | `4` | LE `u32`: width `raw & 0x3F`; lower `((raw >> 6) & 0x1FFF) / 4096 - 1`; upper `(raw >> 19) / 4096 - 1` |
+| 2 | `5` | LE `u32`: lower `(raw & 0xFFFF) / 4096 - 8`; upper `(raw >> 16) / 4096 - 8`; fifth byte is width |
+| 3 | `2` | BE `u16`: `lower = upper = raw / 4096 - 8`, width `0` |
+
+If the widths are `wx`, `wy`, and `wz`, each sample occupies
+`wx + wy + wz` bits. Samples are consecutive and least-significant bit first;
+within one sample, z occupies the low `wz` bits, y the next `wy`, and x the
+next `wx`. For an axis code `q` of width `w`, dequantization is:
+
+```text
+value = lower + (upper - lower) * q / 2^w
+```
+
+The full `P == 5` payload size is:
+
+```text
+1 + metadata_bytes + ceil((wx + wy + wz) * N / 8)
+```
+
+For `P == 6`, bits `0..1` select one of the four float lanes in the 16-byte
+translation slot and bits `2..15` form a signed 14-bit value:
+
+```text
+lane  = packed & 3
+value = sign_extend_16(packed) >> 2
+output[lane] = value / 1024
+```
+
+The xyz lanes are initialized to zero first. Keyed translations are
+interpolated component by component in CPU code.
+
+##### Scale codecs
+
+`S = byte1 >> 6`:
+
+| `S` | Payload bytes | Observed representation |
+|---:|---:|---|
+| 0 | `0` | Default unit scale |
+| 1 | `8` | One mantissa-truncated float vector |
+| 2 | `8*N` | `N` mantissa-truncated float vectors |
+| 3 | `0` | Default unit scale |
+
+Scale reuses the eight-byte vector decoder above. Keyed scale is interpolated
+component by component.
+
+#### Pose sampling and track scatter
+
+Three sampling entry points match the Skeleton's category-major pose layout
+independently of the later matrix builder:
+
+| Entry point | Channels sampled | Output stride |
+|---|---|---:|
+| `0x3BE838` | rotation | `0x10` |
+| `0x3BE8B0` | rotation, translation | `0x20` |
+| `0x3BE948` | rotation, translation, scale | `0x30` |
+
+Their category loops at `0x4E60F8`, `0x4E6190`, and `0x4E6228` consume
+two-byte mapping entries:
+
+```text
+u8 output_slot
+u8 track_index
+```
+
+`output_slot == 0xFF` terminates a category list. `track_index` selects the
+fixed-up packed-track pointer, while `output_slot` selects the destination
+record within that category. The resulting `0x10`, `0x20`, and `0x30` arrays
+are the same category-major pose arrays scattered back into source-bone order
+at `0x3AC468..0x3AC52C`.
+
 Runtime mapping compares BoneMap track names with Skeleton bone names and
 emits per-track bone mappings with `0xFF` sentinels; track order is BoneMap
 order, not Skeleton order. Shared animation-bank Cores often contain no
@@ -2489,8 +3292,12 @@ bounded. Remaining model work includes:
 - the semantic role of the serialized global transform pool, meanings of the
   bone XYZ, retained six-float bounds, categories/word tables, and attachment
   transform locality;
-- compressed animation-channel decoding, case-comparison behavior, and the
-  external resource path that selects a Skeleton for shared animation banks;
+- animation case-comparison behavior and the external resource path that
+  selects a Skeleton for shared animation banks;
+- real packed animation payloads are not present in this workspace, so codec
+  frequencies, `R == 8` descriptor-bit and `R == 9` valid-code invariants,
+  and decoded-pose comparisons against the retail runtime have not yet been
+  measured;
 - proximity-parent transform composition, blend-shape/linked-static behavior,
   conservative skinned bounds, and collision/render-mesh relationships;
 - the caller-supplied value for the final static VIF unpack and the exact
@@ -2511,7 +3318,7 @@ state-upload descriptor between the completed camera cache and VU1
 `TOP+0x1E4` can close the last non-selector matrix-upload edge.
 
 Native export remains blocked until the remaining animation/transform
-semantics and all edited stream layouts round-trip safely.
+semantics, quaternion codecs, and all edited stream layouts round-trip safely.
 
 The public
 [`io_scene_killzone2`](https://github.com/0ther1/io_scene_killzone2/blob/e022e23cd9f570c6f29e316e9ebc3404dcd67a0a/README.md)
@@ -2969,7 +3776,438 @@ zone/portal visibility, collision, entity lifecycle, mission scripts, and
 unknown records round-trip safely. A visually correct mesh-only scene is not
 a round-trippable level.
 
-## 6. `.mss` is audio
+## 6. Runtime decals
+
+This section describes the runtime decal path in the matching retail
+executable. The resource schema, geometry builder, maintenance pass, render
+callback, shared queue, and generic material submission are
+instruction-verified. The executable does not contain the retail Core/DAT
+payloads, so it proves how any `DecalResource` is interpreted but does not
+provide a frequency table of the property values used by shipped assets.
+
+Decals are not static card meshes and do not use a fixed blend/depth recipe.
+One `DecalInstance` owns receiver-local geometry, enters the ordinary render
+queue as one aggregate item, and submits its geometry through the ordinary
+Material renderer.
+
+### 6.1 Resource and runtime layouts
+
+The reflected resource is `0x48` bytes:
+
+| Offset | Type | Reflected role | Retail default |
+|---:|---|---|---:|
+| `+0x14` | `s32` | Max Decals | 200 |
+| `+0x18` | `s32` | Decal Threshold | 100 |
+| `+0x1C` | `bool` | Random Rotation | true |
+| `+0x20` | `f32` | Min Size | resource-selected |
+| `+0x24` | `f32` | Max Size | resource-selected |
+| `+0x28` | `f32` | Fade In Time | 0 |
+| `+0x2C` | `f32` | derived inverse fade-in time | derived |
+| `+0x30` | `f32` | Fade Time | 7 |
+| `+0x34` | `f32` | derived inverse fade time | derived |
+| `+0x38` | `bool` | Clip Decal | false |
+| `+0x3C` | `s32` | Sort Order | 11 |
+| `+0x40` | `s32` | Sort Mode | 2 |
+| `+0x44` | pointer | Material | resource-selected |
+
+The sort modes are:
+
+```text
+0  Off
+1  FrontToBack
+2  BackToFront
+```
+
+The fade-time reciprocal can be calculated without a zero guard. The
+maintenance path separately recognizes a non-positive fade time and retires
+selected marks immediately, so a reimplementation must not rely on an
+infinite reciprocal to produce that behavior.
+
+`DecalInstance` is `0xE0` bytes. Its relevant tail is:
+
+```text
++0x60  embedded generic render interface
++0x90  interface dispatch pointer
++0xC0  DecalResource*
++0xC4  sort/material descriptor
++0xC8  receiver-group count
++0xCC  receiver-group capacity
++0xD0  receiver-group array
+```
+
+The descriptor packs:
+
+```text
+bits 0..1  Sort Mode
+bits 2..5  Sort Order
+bit  6     render-interface enabled
+higher     flags aggregated from the Material layers
+```
+
+The material aggregation includes bit `0x0400`, selected from runtime
+`Material+0x29`; not every higher descriptor bit has a semantic name yet.
+
+A receiver group is `0x58` bytes:
+
+```text
++0x00  primary receiver/object key
++0x04  secondary receiver/submesh key
++0x08  geometry-dirty byte
++0x0C  mark count
++0x10  mark capacity
++0x14  mark array
++0x18..+0x2C  receiver-local bounds
++0x30  circular vertex-buffer cursor
++0x34..+0x50  generated geometry/material-buffer state
++0x3C  generated vertex-buffer pointer within that state
++0x54  active/visible byte
+```
+
+A mark is `0x2C` bytes:
+
+```text
++0x00..+0x08  projection position
++0x0C..+0x14  normalized projection direction
++0x18         opacity
++0x1C         random scalar
++0x20         caller placement/triangle identifier
++0x24         u16 generated-vertex start, or 0xFFFF while invalid
++0x26         u16 receiver/submesh tag
++0x28         u8 provisional budget or exact generated-vertex span
+```
+
+The `DecalManager` reflection size is `0x28`. No traced path establishes a
+second manager-wide capacity, lifetime, or fade policy. Preserve its unknown
+state rather than duplicating the per-resource thresholds as global rules.
+
+### 6.2 Insertion, sizing, grouping, and capacity
+
+Marks are grouped by the receiver/object and receiver/submesh key pair. New
+marks initialize as:
+
+```text
+opacity      = FadeInTime > 0 ? 0 : 1
+random       = engine_random()
+vertex_start = 0xFFFF
+budget       = MaxSize > 0.5 ? 128 : 16
+```
+
+The provisional `0x28` budget is replaced after geometry generation:
+
+```text
+unclipped mark  3
+clipped mark    actual fan-triangle vertex count
+```
+
+One random scalar controls both size and orientation:
+
+```text
+size  = MinSize + random * (MaxSize - MinSize)
+angle = random * 2*pi
+```
+
+Retail constructs an axis-angle quaternion around the mark's projection
+direction and rotates a deterministic perpendicular vector to obtain its
+oriented projector basis. None of the traced insertion or geometry-builder
+paths reads `DecalResource+0x1C Random Rotation`: the angle is applied
+unconditionally. This is strong evidence that the reflected property is
+ignored by this retail path, but not a whole-program proof that no alternate
+path consumes it.
+
+For one receiver group, let `B` be the sum of the marks' current
+`span_or_provisional_budget` values. Buffer growth uses:
+
+```text
+grown    = 3 * floor((B + floor(B / 2)) / 3)
+capacity = min(grown, 3 * MaxDecals)
+```
+
+Consequently:
+
+- compatible buffers grow to roughly `1.5 * B` and are not routinely shrunk;
+- capacity is rounded down to a multiple of three vertices;
+- `Max Decals` is a per-receiver triangle-capacity limit, not an instance-wide
+  mark count;
+- the unclipped path consumes one triangle per mark, while one clipped mark
+  may consume several triangles.
+
+Generated geometry is a circular vertex buffer. If the current build lacks a
+large enough contiguous span, retail immediately erases the smallest oldest
+receiver-local mark prefix that frees one. This hard eviction does not fade,
+does not compare ages across receiver groups, and never removes newer marks to
+preserve an older current build.
+
+### 6.3 Unclipped projector triangle
+
+With `Clip Decal == false`, every valid mark emits one oversized triangle. In
+the rotated projector basis its position and UV coordinates are:
+
+```text
+(-size, -size) -> (0, 0)
+( 3size, -size) -> (2, 0)
+(-size,  3size) -> (0, 2)
+```
+
+The triangle encloses the nominal square `[-size,+size]^2`; interpolation
+maps that square to `[0,1]^2`. It is deliberately not a four-vertex quad.
+
+Runtime `Material+0x2A != 0` swaps the second and third emitted vertices. The
+behavior is proven to select output winding, but the reflected property name
+for that byte remains unresolved.
+
+### 6.4 Clipped receiver projection
+
+Each receiver query candidate has this effective representation:
+
+```text
++0x04  u16 receiver/submesh tag
++0x08  s32 polygon vertex count
++0x10  f32 plane normal x
++0x14  f32 plane normal y
++0x18  f32 plane normal z
++0x1C  f32 plane constant d
++0x20  Vec2 plane-space polygon vertices[count]
+```
+
+The normalized plane is:
+
+```text
+dot(N, P) + d = 0
+```
+
+Retail deterministically constructs orthonormal tangents `T` and `B` from
+`N`. It reconstructs a plane-space point `(x,y)` as:
+
+```text
+P = T*x + B*y - d*N
+```
+
+The mark position and projection direction are first transformed into
+receiver-local space. A candidate is skipped unless:
+
+```text
+candidate.tag == mark.tag
+dot(mark_direction, N) >= -0.1
+```
+
+Let `C` be the local mark center and:
+
+```text
+q = dot(N, C) + d
+```
+
+The sign of `q` controls the direction used to move the footprint center
+along the mark projection direction. Retail reconstructs the corresponding
+point `P` on the receiver plane, computes `L = length(P-C)`, and uses:
+
+```text
+signed_distance = q < 0 ? +L : -L
+projected_center = C + signed_distance * mark_direction
+```
+
+Zero follows the non-negative branch. For the normalized plane and its
+orthogonal reconstructed point, `L == abs(q)`.
+
+For marks with `size >= 0.5`, retail adds an asymmetric back-side check:
+
+```text
+if q < 0 and dot(N, P-C) > 0.5:
+    reject
+```
+
+This is equivalently:
+
+```text
+reject if q < -0.5
+```
+
+The comparison is strict, so `q == -0.5` is accepted. There is no matching
+positive-side distance cap. The `0.5` threshold also selects the provisional
+budget from `MaxSize`, but those are otherwise separate decisions.
+
+The footprint is rotated by the same per-mark `angle` used by the projector
+basis. Its pre-clip polygon depends on the actual mark size:
+
+```text
+size < 0.2:
+    (-size, -size) -> (0, 0)
+    ( 3size, -size) -> (2, 0)
+    (-size,  3size) -> (0, 2)
+
+size >= 0.2:
+    (-size, -size) -> (0, 0)
+    (+size, -size) -> (1, 0)
+    (+size, +size) -> (1, 1)
+    (-size, +size) -> (0, 1)
+```
+
+The `0.2` footprint threshold is distinct from both uses of `0.5`.
+
+Retail clips this polygon against each edge of the convex receiver polygon
+using Sutherland-Hodgman clipping. Position and UV vectors are carried in
+parallel; crossing vertices linearly interpolate both. Signed edge
+classification uses an approximately `1e-5` epsilon, and an output with fewer
+than three vertices is discarded.
+
+A surviving `n`-vertex polygon becomes a triangle fan:
+
+```text
+(0, 1, 2), (0, 2, 3), ... (0, n-2, n-1)
+triangle count = n - 2
+vertex span    = 3 * (n - 2)
+```
+
+Each clipped 2D vertex is reconstructed on the candidate plane, transformed
+into receiver-local vertex space, and emitted with its interpolated UV.
+`Material+0x2A` applies the same final-winding swap as in the unclipped path.
+
+### 6.5 Fade, retirement, and vertex alpha
+
+There is no independent creation timestamp, fixed lifetime, or age-expiry
+test in the traced mark path. Two different capacity mechanisms exist:
+
+1. circular-buffer pressure causes immediate hard eviction during a geometry
+   build;
+2. the maintenance pass gradually fades an oldest prefix under soft pressure.
+
+For the soft-pressure pass:
+
+```text
+excess_vertices =
+    max(total_instance_vertices - 3 * DecalThreshold, 0)
+```
+
+Every receiver group independently starts at its oldest mark and selects full
+mark spans until their sum covers `excess_vertices`. The excess is not one
+global age-sorted work list. A selected mark's entire span is charged even
+while its opacity is only partly reduced:
+
+```text
+opacity = clamp(opacity - dt * inverse_fade_time, 0, 1)
+```
+
+Non-positive Fade Time retires selected marks immediately. Fade-in starts a
+new mark at zero and advances it toward one using the inverse fade-in time;
+the threshold also bounds the newest-mark region visited by that pass.
+Maintenance runs before receiver visibility selection, so culled groups
+continue to fade.
+
+Opacity updates only the generated vertex alpha byte:
+
+```text
+rgba = (rgba & 0x00FFFFFF)
+     | (clamp(opacity * 255, 0, 255) << 24)
+```
+
+The generated RGB bytes are unchanged. Whether that alpha blends, tests,
+masks, or has no visible effect depends on the Material state.
+
+### 6.6 Receiver, ring, and queue draw order
+
+The decal render callback visits receiver groups in receiver-group array
+order and skips a group when its `+0x54 active/visible` byte is zero. There is
+no global chronological merge between groups.
+
+Within one group, let:
+
+```text
+first  = oldest surviving mark.vertex_start
+cursor = receiver_group.cursor
+limit  = generated vertex-buffer capacity
+```
+
+Retail submits:
+
+```text
+if first < cursor:
+    draw(start=first, count=cursor-first)
+else:
+    draw(start=first, count=limit-first)  # older tail
+    draw(start=0,     count=cursor)       # newer head
+```
+
+Thus the circular buffer is submitted oldest-to-newest: one span when
+unwrapped, or the old tail followed by the new head when wrapped. Each span
+is a separate call through the same generic Material renderer.
+
+Individual marks and receiver groups are not queue items. The entire
+`DecalInstance` contributes one generic render item, with one aggregate bound
+and the descriptor from section 6.1. The shared queue contains 48 buckets:
+
+```text
+16 SortMode::Off buckets
+16 FrontToBack buckets
+16 BackToFront buckets
+```
+
+Queue traversal is:
+
+```text
+for sort_order in 0..15:
+    draw Off[sort_order]
+    draw FrontToBack[sort_order]
+    draw BackToFront[sort_order]
+```
+
+Lower order therefore draws first. At one order, Off precedes FrontToBack,
+which precedes BackToFront. Decals default to order 11 and BackToFront, so
+other generic items in that same bucket are intermingled by depth.
+
+`SortMode::Off` constructs sequential collection indices and orders those
+indices by their unsigned integer value before dispatch. The post-sort walk
+uses that ascending index array, so Off preserves collection order.
+
+The sorted modes use the aggregate bounds center:
+
+```text
+center = 0.5 * (bounds_min + bounds_max)
+delta  = center - camera_position
+d2     = dot(delta, delta)
+
+key = dot(camera_forward, delta) < 0 ? -d2 : d2
+```
+
+FrontToBack orders the float key ascending; BackToFront orders it descending.
+Objects behind the camera have negative squared-distance keys. The in-place
+quicksort is not stable for equal keys. Its deterministic pivot generator is:
+
+```text
+seed = seed * 0x0019660D + 0x3C6EF35F
+pivot_index = (seed >> 8) % element_count
+```
+
+The seed starts at zero for each invocation. Preserve this behavior if exact
+equal-depth replay matters; do not add an insertion-order tie breaker.
+
+No dedicated decal pass was found: decals participate in this shared generic
+interface queue. The current trace does not establish where the whole queue
+flush sits relative to separate opaque-world, particle, projector, and
+post-effect passes. That outer frame-graph boundary remains unknown and must
+not be replaced with a guessed cross-pass order.
+
+### 6.7 Material-selected blend and depth policy
+
+Both unwrapped and wrapped ring spans flow through the generic Material
+submission described in section 3.7. The traced decal setup does not mutate
+the resource Material, `Material::Layer`, or `HwLayer`, and it makes no
+decal-specific override for:
+
+- `ALPHA_1` blending;
+- alpha-test function, reference, or alpha-fail action;
+- depth comparison or `ZBUF_1.ZMSK`;
+- framebuffer mask;
+- PABE or FBA;
+- TCC, TFX, or texture-alpha interpretation;
+- wrap or filtering state.
+
+Material layers render in ascending serialized order. The only
+decal-lifecycle value introduced into that pipeline is generated vertex
+alpha. A faithful implementation must therefore submit decal geometry
+through the ordinary Material path. Hard-coding the common convention
+"alpha blend, depth test, no depth write" is not retail behavior: any of
+those choices may differ per decal Material and layer.
+
+## 7. `.mss` is audio
 
 All 8,704 `.mss` entries are under localized speech, sound banks, music, menu,
 or ambient-stream paths. Every one is 2,048-byte aligned and sized to a
@@ -2991,7 +4229,7 @@ For all checked samples, `file_size == 0x800 + value_at_0x0C`. This format is
 outside the Blender geometry importer except for preserving level sound
 references.
 
-## 7. What the ELF can provide
+## 8. What the ELF can provide
 
 `SCUS_974.02` is ELF32, little-endian MIPS (`e_machine = 8`) with entry point
 `0x00146F30`. Its main load segment maps file offset `0x1000` to EE virtual
@@ -3029,7 +4267,7 @@ If the UI accepts an ELF path and no DAT source is available, it should fail
 with a precise "executable metadata loaded; asset archives missing" message,
 not return an empty asset list.
 
-## 8. Recommended importer architecture
+## 9. Recommended importer architecture
 
 ```text
 InputResolver
@@ -3079,6 +4317,11 @@ LevelDecoder
   direct static roots, wrapper definitions, and mesh instances
   collision/paths/entities
   script and opaque-record preservation
+
+DecalRuntime
+  receiver grouping and local projection/clipping
+  circular geometry capacity, eviction, fade, and alpha maintenance
+  aggregate queue submission through the ordinary Material renderer
 ```
 
 All readers should be bounded and immutable. Unknown records should carry
@@ -3086,7 +4329,7 @@ their original bytes, source path, package, archive offset, and digest.
 Editing one understood object must not silently discard adjacent unknown
 objects from the same compound lump.
 
-## 9. Validation gates
+## 10. Validation gates
 
 ### Archive
 
@@ -3098,34 +4341,42 @@ objects from the same compound lump.
 ### Texture
 
 - Decode all 19 proven standalone samples identically.
-- Reproduce the 47-level totals: 12,613 physical Texture objects, 12,566
-  logical Core-local tokens, 273,141,504 payload bytes, and the exact
-  per-format counts in section 3.5.
+- Reproduce the complete variant-5 totals: 111 Texture-bearing Cores, 6,907
+  Texture sections, 13,891 physical objects, 13,718 logical Core-local
+  tokens, 305,231,104 payload bytes, and the exact per-format counts in
+  section 3.5. Preserve the 47-level subset totals independently.
+- Reproduce all 23 descriptor bit counts, masks, and loader sampling-table
+  entries. Require the complete catalog to contain only codes 0-5, 13, and
+  22; do not add serialized decoders for the 15 zero-count formats.
 - Reproduce the descriptor-table sampling PSMs and the large-buffer
   PSMT8-to-PSMCT32 and PSMT4-to-PSMCT16 upload aliases without adding a
   CPU-side transform.
 - Parse `RGBA_8888` as packed RGBA bytes and `RGB_888` as packed RGB bytes;
   do not swizzle, rescale alpha, or claim a stored RGB888 alpha channel.
-- Require each streamed chunk sum to equal its directory-owned CoreStream
-  size. Recompute every mip byte count, require `0x100` pixel-storage
-  alignment, and require every alignment byte to be zero.
-- Parse all 33,084 serialized span records, require identical halves, and
-  reconstruct all 12,609 valid raw mip prefixes byte-for-byte from the first
-  16,542 runtime-consumed records.
+- Require each of the 13,865 valid streamed chunk sums to equal its
+  directory-owned CoreStream size. Recompute every mip byte count, require
+  `0x100` pixel-storage alignment, and require every alignment byte to be
+  zero.
+- Parse all 36,752 serialized span records, require identical halves, and
+  reconstruct all 13,887 valid raw mip prefixes byte-for-byte from the first
+  18,376 runtime-consumed records.
 - Reproduce the exact PSMT8 and PSMT4 equations over all 98 validated
   dimension/format cases and 4,129,024 texels, including low-nibble-first
   PSMT4 and row-major native 8x8 mips.
-- Reproduce all 3,034 complementary-alpha `INDEX_4` palettes and all 6,320
+- Reproduce all 3,175 complementary-alpha `INDEX_4` palettes and all 7,383
   standard `INDEX_8` palettes byte-for-byte.
 - Reproduce ALPHA_4/8 normal and complement palette equations, the 256-entry
   CSM1 permutation, and CPSM/CSM/CSA/CLD = PSMCT32/CSM1/0/1.
 - Reproduce the GLOW lower-half zeros, upper-half alpha ramp, reversed RGB
   source walk, and CSM1 upload permutation without assigning semantics to the
   dynamic source buffer.
-- Reproduce Street1's inline `0x01F67930` framing without consuming its first
-  payload word as a palette index or its footer as pixel data.
-- Scope Texture tokens to their Core, retain all 47 equivalent duplicate
-  copies, and reject any duplicate group whose metadata or payload differs.
+- Reproduce all 22 inline objects without consuming their first payload word
+  as a palette index or their footer as pixel data. Require the exact
+  ten-`INDEX_8`, six-`ALPHA_8`, six-`RGBA_8888` split and retain Street1
+  `0x01F67930` as the only level-inline example.
+- Scope Texture tokens to their Core, retain all 173 equivalent extra
+  physical copies in 66 duplicate groups, and reject any group whose
+  metadata or payload differs.
 - Resolve the selected 11,870 Materials into exactly 30,814 Texture
   providers, 134 AnimatedTexture providers, and 46 null providers. Consume
   all 1,559 flag-`0x20` optional transforms without creating any
@@ -3138,6 +4389,21 @@ objects from the same compound lump.
   named-asset capture attribution separate until a continuous positive trace.
   Require all seven selected references to use operation 5 and the normal
   palette descriptor.
+- Resolve Street2 Material `0x01F7E8D4` to `INDEX_8` Texture `0x01F70942`.
+  Require its single direct-UV0 `ALPHAADD` layer, exact render-state table,
+  normal palette, 24,157 zero / 22,268 partial / 19,111 full-alpha texels,
+  11 instanced users, 404 triangle occurrences, and target V4-8 alpha values
+  121 or 128.
+- Resolve Mountain Pass foliage Material `0x00FB0B4A` to both same-texture
+  passes and require its exact alpha coverage, 411 instance occurrences, and
+  6,576 triangle occurrences. Resolve sandbag/rockwork Material `0x005436FE`
+  to its opaque Texture and 14 selected direct occurrences. Keep both
+  diagnostic color graphs explicitly separate from native multi-pass
+  reconstruction.
+- Reproduce Direct 0001 token `0x00566D60` as four records and 2,266
+  triangles. Connect the structurally selected diagnostic color source for
+  each record, and require record 0 to disclose that its six-float transform
+  was ignored.
 - Reproduce the three-pass candidate family's `TEX0`, `TEX1`, `TEXA`,
   `CLAMP`, `ALPHA`, `TEST`, `TEXCLUT`, and mip state without assigning it
   uniquely to either colliding SDDocking material or overriding the static
@@ -3207,11 +4473,21 @@ objects from the same compound lump.
 - Match the default render totals of 2,576,133 direct-world and 2,326,919
   instanced triangle occurrences without duplicating wrapper children or
   alternate LODs.
+- Preserve separate definition, wrapper, authored-occurrence, and
+  direct-world identities. Repeated occurrences may share Blender mesh data,
+  but explicit identity-matrix instances must not collapse into implicit
+  direct roots.
+- Verify `C @ transpose(M_src) @ inverse(C)` against transformed source
+  points and AABBs, retain all 16 source floats, and apply each occurrence
+  matrix once regardless of wrapper depth.
 - Require compact-section prefixes, directory-to-object alignment, mandatory
   zero object prefixes, blob-size equations, repeated visibility counts, and
   all zero padding to match.
 - Resolve Zone member IDs, visibility Zone IDs, LightZone light IDs, and
   Portal ZoneIDs in their separate, type-checked per-Core domains.
+- Keep Zone membership separate from transform parenting. Preserve the 132
+  simple-skinned proximity-parent links as unresolved metadata until runtime
+  evidence proves whether their matrices are local or world-space.
 - Trace the active LightZone-to-VU cubic-light coefficients rather than
   inferring mesh lighting from nearby serialized light colors.
 - Match portal front/back orientation, area/light matrix convention, and Zone
@@ -3223,7 +4499,43 @@ objects from the same compound lump.
 - Do not enable native export until an unchanged parse/serialize is
   byte-identical or has a documented canonical equivalence.
 
-## 10. References
+### Decal
+
+- Match every `DecalResource`, `DecalInstance`, receiver-group, and mark
+  offset in section 6.1, including descriptor bit packing and defaults.
+- Reproduce the shared random scalar's size and angle, and verify the current
+  retail path both with the reflected Random Rotation property set and
+  cleared before assigning that property behavior.
+- Emit the exact unclipped `(-1,-1)/(3,-1)/(-1,3)` position shape and
+  `(0,0)/(2,0)/(0,2)` UVs, with both `Material+0x2A` winding states.
+- Exercise clipped marks on both sides of a receiver plane. Accept exactly
+  `q == -0.5`, reject `q < -0.5` only for `size >= 0.5`, and confirm that the
+  positive side has no equivalent cap.
+- Test both sides of the `size == 0.2` footprint boundary, every polygon-edge
+  crossing class around the clipping epsilon, interpolated UVs, rejection
+  below three vertices, and `3*(n-2)` fan output.
+- Reproduce provisional budgets, the approximately 1.5x growth equation,
+  triangle rounding, the per-receiver `3*MaxDecals` cap, wraparound, and the
+  smallest-oldest-prefix hard eviction.
+- Test soft pressure across multiple receiver groups to ensure each group
+  fades its own oldest prefix. Cover partial opacity, non-positive Fade Time,
+  fade-in, invisible receivers, dead-mark retirement, and RGB-preserving
+  alpha-byte updates.
+- Verify group-array draw order and the unwrapped, wrapped-tail, then
+  wrapped-head span order. Ensure marks or groups never become independent
+  queue-sort items.
+- Cover all 16 sort orders and three modes. Match Off collection order,
+  ascending FrontToBack keys, descending BackToFront keys, negative keys
+  behind the camera, and deterministic but unstable equal-depth quicksort.
+- Run each decal span through the ordinary multi-layer Material renderer and
+  compare `ALPHA_1`, `TEST_1`, `ZBUF_1`, `FRAME_1`, PABE/FBA, TCC/TFX,
+  texture, wrap, and filter state. A special decal blend/depth preset is a
+  validation failure.
+- Keep ordering against dedicated world, particle, projector, and post-effect
+  passes explicitly unverified until an instruction-complete outer queue
+  flush trace or runtime frame capture establishes it.
+
+## 11. References
 
 Repository evidence and implementations:
 

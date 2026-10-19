@@ -1685,3 +1685,81 @@ Final integration validation passed strict dependency reconstruction (31 checks)
 verification, the complete MSVC ISO-free suite (12/12), and the complete clang-cl ISO-free suite (12/12). The broad
 standalone PS2Recomp test executable still reaches its pre-existing `sceMpegDemuxPssRing` failure and later access
 violation; only the focused MPEG regression is represented as passing.
+
+## Testing options (2026-10-17)
+
+Launcher Testing tab (`[Testing]` in `killzone.ini`, all off by default; nothing is hooked while off): unlock all
+campaign levels (WIN-02), skip intro, start in a chapter, and a separate test memory card (WIN-05). Code:
+`src/kz_testing.cpp`. Hook addresses are in the GEN-01 manifest (`SwitchToMenu`, `SetLevelFile`,
+`ProfileMaxDifficulty`, `ProfileLevelUnlocked`, `ProfileAnimaticUnlocked`; `MovieOpen` was already there).
+
+### Campaign unlock state
+
+- The front end is script-driven. PlayerProfile script methods are registered at 0x1D3558.. as member-function
+  pointers (name string followed by an 8-byte {delta, index -1, pfn}): `GetMaxDifficulty` 0x1D7118,
+  `IsLevelUnlocked` 0x1D7190, `IsAnimaticUnlocked` 0x1D7258.
+- `IsLevelUnlocked(profile, globalLevel)`: index = clamp(level-1, 0, 47); level 1 is always unlocked; otherwise true when
+  the profile data's per-level record `+0x2D4[index-1]` is > 0. `GetMaxDifficulty` returns `+0x214[index]`.
+- All three first compare the profile name with **"Shooterman"** (string 0x543C3C, referenced nowhere else): true, 2 and
+  true. **"Shooterman2"** (0x543C47) unlocks levels 1-5 only. A profile named Shooterman is the developers' cheat;
+  verified: the level list then opens on the last chapter and chapter 11 loads and plays.
+- Level select asks for the first sub-level of each of the 11 chapters: global levels 1, 5, 9, 12, 16, 20, 23, 26, 29,
+  31, 33. Difficulties are Easy 0, Normal 1, Hard 2.
+- The option replaces the three queries with the Shooterman answers; the profile is never written. Four unlock-on runs
+  left the memory-card files with identical SHA-256 hashes; an ordinary fresh profile (`Tester`) reached chapter 11.
+
+### Front-end flow
+
+- `main` (0x140138) opens menu sets with `OpenMenu(id, ...)` (0x18F7A8: 0 Intro, 1 FrontEnd, 2 Online, 3 Status,
+  4 EndGame, 5 TestMenu, 6/7 offline multiplayer, 8 Pause), Intro first, then the game loop 0x1402B0 opens FrontEnd.
+  The byte at 0x560110 also skips the Intro set; it is filled from `cdrom0:SYSTEM.CNF` (disc variant), so it was left
+  alone.
+- Screens are switched by `SwitchToMenu(menu, const char *name, push)` (0x1A9738). Intro: LanguageOutro, Logos (about
+  23 s, buttons do not skip it), MemoryCardTest, PlayGameIntro (cinematic `source:Movies/Intro/Intro_NTSC`, about 58 s).
+  FrontEnd campaign path: MainMenu, ScreenGame, ScreenSelectProfile (or ScreenCreateProfile on an empty card),
+  MapSelect, ScreenDifficulty, ScreenCharacterSelect.
+- `Game settings` (`*(*(0x559178)+0x74)`) setters called by the scripts: `SetModeScript("Story")`, `SetGameMode(0)`,
+  `SetGameType(0)`, `SetNrOfPlayers(1)`, `SetPlayerJoystick(0,0)`, `SetLevelFile("11.OTS")` (0x1B89A8, plain C string
+  "<chapter>.<name>", e.g. `1.Trenches`, `3.Station`), `SetGameScript("11.OTS.MissionScript")`,
+  `SetGameDifficulty(n)`, `SetPlayerCharacter(0, "Templar")`. Fields: level file +0x0C, abort +0x1A8, status +0x1AC,
+  difficulty +0x1B0, end-game option +0x1B4, game type +0x1B8, mode +0x1BC, players +0x220 (stride 0x1E0).
+- The menu object also has `EnableCheats` (0x433780, sets menu+0x260) and the profile option table lists God Mode, Hit
+  Info, Victory Status, Lock/Spread Circle and Show Coordinates. Not investigated further.
+- MapSelect is a one-item carousel that opens on the highest unlocked chapter; D-pad Up moves one chapter back (ten Ups
+  from chapter 11 chose `1.Trenches`).
+- `KZ_MC_ROOT` is the card folder itself (the default is `<ELF folder>/mc0`), not its parent.
+
+### Implementation choices
+
+- Skip intro keeps the Intro script running: the "Logos" switch is pointed at the script's own "MemoryCardTest" name
+  (found within 16 KB of "Logos"; 0x3F0 bytes before it in every run), and the cinematic's open fails, the path every
+  movie takes without the IPU. Main menu at 5.4-7.2 s instead of about 87 s.
+- Skipping the whole Intro set (`OpenMenu(0)` returns at once) also reached the menu, but skips MemoryCardTest; an
+  empty card then goes straight to Create Profile without the "No profiles found" dialog. Rejected (see below).
+- Start in a chapter drives the menus with pad pulses keyed on `SwitchToMenu` (settle 1.2 s, 150 ms press, 450 ms gap),
+  creates `Tester` through the on-screen keyboard when the card is empty (then answers Yes to "save this profile to the
+  memory card"), and checks the chapter with `SetLevelFile`. It turns on the unlock (the carousel count assumes chapter
+  11 is the start) and the intro skip.
+- A research call logger that wrapped about 30 front-end functions made the game thread jump to 0 during the chapter
+  11 load (2 of 2 runs); the shipped hooks either replace a whole leaf query or only inspect arguments before calling
+  the original.
+
+### Known issue: chapter 11 load after a skipped cinematic (WIN-06, parked)
+
+Chapter 11 (`11.OTS`) loads, win-clang-rel, headless, 2048x1792 frames:
+
+| Intro | Runs | Bad | Failures |
+|---|---:|---:|---|
+| played (baseline: `fe_nolog5`, `t_A`, `t_base1`-`4`) | 6 | 0 | - |
+| whole Intro set skipped (`t_p3`, `t_C2`, `t_B2`) | 3 | 2 | corrupt frame then 0xC0000005; corrupt HUD digits |
+| logos + cinematic skipped (`t_V1`-`3`) | 3 | 1 | 0xC0000374 heap corruption |
+| cinematic only skipped, `KZ_SKIP_INTRO_MASK=2` (`t_M2_1`-`3`) | 3 | 1 | 0xC0000005 |
+| logos + cinematic, menus started 80 s after boot (`t_D1`, `t_D2`) | 2 | 1 | 0xC0000005 |
+
+- Failures are in the host process (access violation, heap corruption), during or right after the chapter 11 loading
+  screen. Chapter 1 loaded cleanly after a skip (two runs). Delaying the level start does not help, so it is not the
+  time since boot; the common factor is that the intro cinematic was never played.
+- Skipping only the logos (`KZ_SKIP_INTRO_MASK=1`) left the cinematic playing past 160 s in 3 of 3 runs (normally it
+  ends at about 84 s), so the Logos screen also sets state that PlayGameIntro uses.
+- Not yet examined: which MPEG/IPU, audio or allocator state the played cinematic leaves behind, and the faulting host
+  stack (`KZ_CRASH_TRACE=1`).
