@@ -56,8 +56,17 @@ add_subdirectory(host)
 # memory helpers, __security_check_cookie in profiles). Keep strict float semantics (no /fp:fast: PS2 float
 # emulation depends on it). KZ_FAST_FLAGS=OFF restores CMake's defaults.
 option(KZ_FAST_FLAGS "Release-grade optimisation flags for RelWithDebInfo" ON)
+# Development link: /OPT:NOICF instead of /OPT:ICF. Identical-COMDAT folding over the ~250 generated unity objects is
+# most of the killzone.exe link (MSVC, warm cache: 3.8 s -> 1.0 s; the exe grows ~1.5 MB). Compile flags are unchanged,
+# so toggling it on an existing build directory only relinks. Leave OFF for builds that get packaged.
+option(KZ_DEV_LINK "Faster killzone.exe link for the edit-build-test loop (no identical-COMDAT folding)" OFF)
+if(KZ_DEV_LINK)
+    set(_kz_icf "/OPT:NOICF")
+else()
+    set(_kz_icf "/OPT:ICF")
+endif()
 # clang-cl (opt-in: configure with -DCMAKE_C_COMPILER=<llvm>/clang-cl.exe -DCMAKE_CXX_COMPILER=<llvm>/clang-cl.exe, see
-# docs/perf_research.md "clang-cl build"): same option set, spelled for clang. Float semantics stay strict:
+# docs/findings.md "clang-cl build"): same option set, spelled for clang. Float semantics stay strict:
 # -ffp-contract=off (no FMA fusing of a*b+c: PS2 float emulation is bit-exact), never /fp:fast. The kz* libraries
 # (PCSX2 code) add their own /fp:contract /arch:AVX2 after these, as they do with MSVC.
 if(MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -76,7 +85,7 @@ option(KZ_CLANG_PGO_GEN "clang-cl: build an instrumented (profile-generating) bi
 set(KZ_CLANG_PGO_USE "" CACHE FILEPATH "clang-cl: .profdata to optimise with")
 if(KZ_CLANG_CL AND KZ_FAST_FLAGS)
     set(_kz_clang_opt "/Zi /O2 /Oi /Gy /Gw /GS- /clang:-march=x86-64-v3 /clang:-ffp-contract=off /DNDEBUG")
-    set(_kz_clang_link "/DEBUG /INCREMENTAL:NO /OPT:REF /OPT:ICF")
+    set(_kz_clang_link "/DEBUG /INCREMENTAL:NO /OPT:REF ${_kz_icf}")
     if(KZ_CLANG_LTO)
         string(APPEND _kz_clang_opt " /clang:-flto=${KZ_CLANG_LTO}")
         string(APPEND _kz_clang_link " /lldltocache:${CMAKE_BINARY_DIR}/lto-cache")
@@ -96,7 +105,7 @@ if(KZ_CLANG_CL AND KZ_FAST_FLAGS)
 elseif(MSVC AND KZ_FAST_FLAGS)
     set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "/Zi /O2 /Ob3 /Oi /Gy /Gw /GS- /Qspectre- /arch:AVX2 /DNDEBUG")
     set(CMAKE_C_FLAGS_RELWITHDEBINFO "/Zi /O2 /Ob3 /Oi /Gy /Gw /GS- /Qspectre- /arch:AVX2 /DNDEBUG")
-    set(CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO "/DEBUG /INCREMENTAL:NO /OPT:REF /OPT:ICF")
+    set(CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO "/DEBUG /INCREMENTAL:NO /OPT:REF ${_kz_icf}")
 endif()
 
 # PS2Recomp runtime + IOP only (recompiler/analyzer are built separately by tools/scripts/build_ps2recomp.bat)
@@ -129,7 +138,8 @@ file(GLOB KZ_SRC CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/*.cpp")
 list(FILTER KZ_SRC EXCLUDE REGEX "/kz_(crash|profiler|sampler)\\.cpp$")
 
 # Our code lives in its own library so its dependencies (SDL3, ImGui, ...) never change the compile flags of the
-# ~650 generated-code unity batches (a flag change there means a full 15-minute rebuild).
+# ~250 generated-code unity batches (a flag change there means a full rebuild: about 2 minutes with MSVC, 1 with
+# clang-cl, on 16 cores).
 include(FetchContent)
 FetchContent_GetProperties(imgui SOURCE_DIR KZ_IMGUI_DIR)
 add_library(kz_port STATIC
