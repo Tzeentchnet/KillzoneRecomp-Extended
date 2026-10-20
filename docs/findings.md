@@ -2008,9 +2008,11 @@ timing and cannot close the task.
 
 The watch now retains allocator bounds, cleanup owner/list head, delete-wrapper caller and bounded list-chain
 provenance. A whole-RAM reference scan was tested and removed because it performed 22,003 scans in five runs and
-materially perturbed timing. The next narrow diagnostic is a return hook at `0x4299FC` to associate resize results
-with their owner fields before cleanup. Do not turn this evidence into allocator guards, ignored frees or generic
-field clearing; WIN-06 remains open at the lifecycle transition that leaves the alias live.
+materially perturbed timing. Debug hook `Vector36ResizeReturn` at `0x4299FC` (unique 128-byte executable signature)
+now associates resize results with owner fields, checks for a live owner at cleanup and reports the last owner on a
+bad realloc. Its first two ten-run batches were both 7/10; they reproduced GS faults, missing targets and mixed-size
+corruption, but not the exact earlier cross-owner alias. Do not turn this evidence into allocator guards, ignored
+frees or generic field clearing; WIN-06 remains open at the lifecycle transition that leaves the alias live.
 
 ## Windows gameplay baseline re-verification (2026-10-19)
 

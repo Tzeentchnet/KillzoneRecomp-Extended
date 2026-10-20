@@ -168,7 +168,8 @@ a plan revision.
   the multi-megabyte wrapped realloc copy, corrupt vtables, bad DMA records, timer/pool overwrites and renderer crashes.
 - **Latest gate evidence:** `win06_watch5` and `win06_watch6` were 4/5; watched batches can also complete despite
   allocator invariant breaks. Two clean watched batches and one uninstrumented batch reached 10/10, but the next
-  uninstrumented batch was 7/10 (one hang, one host exception, one missing target), so STAB-01 remains open.
+  uninstrumented batch was 7/10 (one hang, one host exception, one missing target). The new resize-owner hook then
+  produced two independent 7/10 batches, including host GS faults, missing targets and a mixed-size corruption run.
 - **Renderer hardening:** x64 crash registers proved that the GS palette crash was an inverted alpha-index range:
   its unsigned width wrapped to `0xFFFFFFC7`. The pinned PCSX2 guard now falls back to the full palette range and
   skips a separate null depth-target optimization; `kzgs_palette_guard` passes. This removed host exceptions, but
@@ -176,9 +177,10 @@ a plan revision.
   batch was 10/10, so the watch perturbs the timing and does not close the task.
 - **Current decision:** do not guard the allocator, skip bad frees, clear stale fields generically or hide corrupt
   pointers. The watch now records heap bounds, cleanup owner/list provenance, delete-wrapper callers and bounded list
-  chains. Next, add a targeted return hook for the 36-byte-element vector resize at `0x4299FC` so allocation results
-  are tied to owner fields before cleanup, then identify the missing lifecycle clear. Acceptance still requires an
-  uninstrumented 10/10 gate with visually clean captures.
+  chains. A manifest-validated return hook at `0x4299FC` now associates 36-byte-element vector resize results with
+  owner fields and checks them at cleanup/bad realloc; two batches have not yet reproduced the exact `LIVE OWNER`
+  event. Continue until that lifecycle transition is captured, then trace the owner teardown rather than masking the
+  stale pointer. Acceptance still requires an uninstrumented 10/10 gate with visually clean captures.
 
 ## Retired integration gate
 

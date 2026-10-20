@@ -526,6 +526,13 @@
       "signature_sha256": "e13de07c0e7d3abfeedea84c6b2fcd8bd204ef79fd54cba6f21ec9452f793210"
     },
     {
+      "symbol": "Vector36ResizeReturn",
+      "kind": "debug_hook",
+      "address": "0x004299FC",
+      "signature_size": 128,
+      "signature_sha256": "97ea99e34b0e2ce713577d59190401f309886627ae7a3cb334b9feab7ce6a6fc"
+    },
+    {
       "symbol": "StreamOpen",
       "kind": "debug_hook",
       "address": "0x00496168",

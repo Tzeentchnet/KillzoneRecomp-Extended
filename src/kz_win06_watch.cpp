@@ -554,7 +554,7 @@ namespace
     // object (s1).
     using Fn = PS2Runtime::RecompiledFunction;
     Fn g_origFree = nullptr, g_origRealloc = nullptr, g_origUpload = nullptr, g_origReallocC = nullptr;
-    Fn g_origVectorGrowReturn = nullptr;
+    Fn g_origVectorGrowReturn = nullptr, g_origVector36ResizeReturn = nullptr;
 
     struct FreeRecord
     {
@@ -566,6 +566,9 @@ namespace
         uint32_t requestedSize = 0;
         uint32_t cleanupOwner = 0;
         uint32_t cleanupListHead = 0;
+        uint32_t resizeObject = 0;
+        uint32_t resizeField = 0;
+        uint64_t resizeVsync = 0;
         uint32_t sp = 0;
         std::array<uint32_t, 12> stackWords{};
     };
@@ -591,6 +594,13 @@ namespace
     };
     std::array<VectorOwner, 1024> g_vectorOwners{};
     size_t g_vectorOwnerNext = 0;
+    struct ResizeOwner
+    {
+        uint64_t vsync = 0;
+        uint32_t object = 0;
+        uint32_t field = 0;
+    };
+    std::unordered_map<uint32_t, ResizeOwner> g_resizeOwners;
     int g_badUploads = 0, g_badBlocks = 0;
     std::array<uint32_t, kHeapStateWords> g_lastGoodHeap{};
     uint64_t g_lastGoodHeapVsync = 0;
@@ -689,10 +699,20 @@ namespace
             std::snprintf(buf, sizeof(buf), "last freed at vsync %llu by delete caller 0x%06x through ra 0x%06x",
                           static_cast<unsigned long long>(it->second.vsync), it->second.wrapperCaller, it->second.ra);
         else if (it->second.cleanupOwner)
-            std::snprintf(buf, sizeof(buf),
-                          "last freed at vsync %llu by cleanup owner 0x%08x, list head 0x%08x, ra 0x%06x",
-                          static_cast<unsigned long long>(it->second.vsync), it->second.cleanupOwner,
-                          it->second.cleanupListHead, it->second.ra);
+        {
+            if (it->second.resizeField)
+                std::snprintf(buf, sizeof(buf),
+                              "last freed at vsync %llu by cleanup owner 0x%08x while resize object 0x%08x "
+                              "field 0x%08x still referenced it (allocated vsync %llu)",
+                              static_cast<unsigned long long>(it->second.vsync), it->second.cleanupOwner,
+                              it->second.resizeObject, it->second.resizeField,
+                              static_cast<unsigned long long>(it->second.resizeVsync));
+            else
+                std::snprintf(buf, sizeof(buf),
+                              "last freed at vsync %llu by cleanup owner 0x%08x, list head 0x%08x, ra 0x%06x",
+                              static_cast<unsigned long long>(it->second.vsync), it->second.cleanupOwner,
+                              it->second.cleanupListHead, it->second.ra);
+        }
         else
             std::snprintf(buf, sizeof(buf), "last freed at vsync %llu by ra 0x%06x",
                           static_cast<unsigned long long>(it->second.vsync), it->second.ra);
@@ -824,6 +844,14 @@ namespace
                 std::fprintf(stderr, "\n");
             }
         }
+        if (const auto owner = g_resizeOwners.find(p); owner != g_resizeOwners.end())
+        {
+            std::fprintf(stderr,
+                         "[win06]   last recorded 36-byte resize owner: object 0x%08x field 0x%08x at vsync %llu%s\n",
+                         owner->second.object, owner->second.field,
+                         static_cast<unsigned long long>(owner->second.vsync),
+                         inRam(owner->second.field) && rd32(owner->second.field) == p ? " (field still matches)" : "");
+        }
         if (wrapper)
             printPointerSource(ctx, ra);
         else if (innerWrapperRealloc)
@@ -881,6 +909,20 @@ namespace
             {
                 record.cleanupOwner = reg(ctx, 18);
                 record.cleanupListHead = rd32(record.cleanupOwner + 0x24u);
+                if (const auto owner = g_resizeOwners.find(p);
+                    owner != g_resizeOwners.end() && inRam(owner->second.field) && rd32(owner->second.field) == p)
+                {
+                    record.resizeObject = owner->second.object;
+                    record.resizeField = owner->second.field;
+                    record.resizeVsync = owner->second.vsync;
+                    std::lock_guard<std::mutex> lock(g_reportLock);
+                    std::fprintf(stderr,
+                                 "[win06] LIVE OWNER: cleanup 0x%08x frees 0x%08x while resize object 0x%08x "
+                                 "field 0x%08x still points to it (allocated vsync %llu)\n",
+                                 record.cleanupOwner, p, record.resizeObject, record.resizeField,
+                                 static_cast<unsigned long long>(record.resizeVsync));
+                    std::fflush(stderr);
+                }
             }
             if (record.ra == 0x173200u)
             {
@@ -982,6 +1024,21 @@ namespace
         }
         t_haveVectorGrowHeapBefore = false;
         g_origVectorGrowReturn(rdram, ctx, rt);
+    }
+
+    void hookVector36ResizeReturn(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
+    {
+        const uint32_t result = reg(ctx, 2), object = reg(ctx, 19);
+        if (inRam(object, 8u))
+        {
+            const uint32_t previous = rd32(object + 4u);
+            if (const auto old = g_resizeOwners.find(previous);
+                old != g_resizeOwners.end() && old->second.field == object + 4u)
+                g_resizeOwners.erase(old);
+            if (result)
+                g_resizeOwners[result] = ResizeOwner{vsyncTick(), object, object + 4u};
+        }
+        g_origVector36ResizeReturn(rdram, ctx, rt);
     }
 
     void hookUpload(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
@@ -1153,7 +1210,9 @@ void kzWin06WatchInstall(PS2Runtime &runtime)
                         hook(runtime, kz_hook::HeapRealloc, &hookRealloc, &g_origRealloc) &&
                         hook(runtime, kz_hook::UploadRecords, &hookUpload, &g_origUpload) &&
                         hook(runtime, kz_hook::HeapReallocC, &hookReallocC, &g_origReallocC) &&
-                        hook(runtime, kz_hook::VectorGrowReturn, &hookVectorGrowReturn, &g_origVectorGrowReturn);
+                        hook(runtime, kz_hook::VectorGrowReturn, &hookVectorGrowReturn, &g_origVectorGrowReturn) &&
+                        hook(runtime, kz_hook::Vector36ResizeReturn, &hookVector36ResizeReturn,
+                             &g_origVector36ResizeReturn);
     std::fprintf(stderr, "[win06] heap and upload hooks %s\n", hooked ? "installed" : "NOT installed");
 
     AddVectoredExceptionHandler(1, &onException);

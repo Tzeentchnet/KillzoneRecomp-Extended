@@ -54,6 +54,7 @@ namespace kz_hook
     inline constexpr uint32_t MpegGetPicture = 0x003CD750u;
     inline constexpr uint32_t MpegClearRefBuff = 0x003CD9F8u;
     inline constexpr uint32_t KeyboardModuleInit = 0x003D7490u;
+    inline constexpr uint32_t Vector36ResizeReturn = 0x004299FCu;
     inline constexpr uint32_t StreamOpen = 0x00496168u;
     inline constexpr uint32_t StreamRead = 0x004963B8u;
 }
