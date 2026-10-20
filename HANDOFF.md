@@ -116,14 +116,14 @@ Safe parallel work:
 ## 7. Latest session record
 
 ```text
-Task: PROFILE-01 default Shooterman isolated test profile complete; CFG-01 complete; STAB-01 remains active
+Task: STAB-01 ownership tracing after CFG-01 and PROFILE-01 completion
 Owner/session: Copilot SDK in VS Code, 2026-10-20
 Machine: Windows 11 x64; MSVC and clang-cl presets; D3D12 on NVIDIA GeForce RTX 5070
-Status: PROFILE-01 and CFG-01 are complete in WORKDONE. BASE-01 still needs hands-on acceptance. STAB-01 remains in progress and its diagnostic changes were preserved.
-Files changed for PROFILE-01: src/kz_config.cpp and .h; src/kz_testing.cpp and .h; src/kz_main.cpp; src/kz_launcher.cpp; IMPLEMENTATION_PLAN.md; README.md; TODO.md; docs/findings.md; HANDOFF.md
-Acceptance commands and exact results: verify_deps.py --strict PASS 31/0/0; verify_resume_table.py PASS (132,656/100,661/31,995); inventory_generated.py --check PASS (52 hook signatures, 101,715 resumable entries); MSVC ISO-free 13/13; clang-cl ISO-free 13/13; git diff --check PASS.
-New facts or decisions: [Testing] DefaultProfile defaults to exact Shooterman and is consumed only when Start in reaches Create Profile with an explicit isolated card root. KZ_DEFAULT_PROFILE is the validated automation override. Explicit KZ_UNLOCK_ALL=0 suppresses convenience hooks for native-query testing. The empty-card run created exact Shooterman and reached chapter 1; the populated-card native run reached chapter 11 Hard with zero unlock-hook logs. Populated-test-card and normal-card hashes were unchanged. The generated card is retained only as an ignored local fixture under work/.
-Blocker and minimal reproducer: PROFILE-01 has no blocker. STAB-01 still reproduces with tools\scripts\win06_gate.ps1 -Runs 10 -Name win06 -Card work\win04_20261019_card -Iso <image> -Elf game\SCUS_974.02.
-Next command: complete the BASE-01 hands-on D3D12 checklist to unblock TEST-01, or continue STAB-01 with tools\scripts\win06_gate.ps1 -Runs 10 -Name win06_watch5 -Card work\win04_20261019_card -Iso <image> -Elf game\SCUS_974.02 -EnvSet "KZ_WIN06_WATCH=1|KZ_CRASH_TRACE=1".
+Status: STAB-01 remains in progress. PROFILE-01 and CFG-01 are complete in WORKDONE. BASE-01 still needs hands-on acceptance.
+Files changed this continuation: src/kz_win06_watch.cpp; TODO.md; docs/findings.md; LEARNINGS.md; HANDOFF.md. Temporary PCSX2 tracing was removed and the pinned checkout is clean.
+Acceptance commands and exact results: watched batches win06_watch5 4/5 and win06_watch6 4/5; later watched batches reached 10/10. Uninstrumented win06_uninstrumented1 passed 10/10, but independent win06_uninstrumented2 passed only 7/10 (hang, host exception, missing target). verify_deps.py --strict PASS 31/0/0; both generated gates PASS (52 hook signatures, 101,715 resumable entries); MSVC ISO-free 13/13; clang-cl ISO-free 13/13; git diff --check PASS.
+New facts or decisions: cleanup owner 0x007E1EC0 frees node 0x01F0FF00 through 0x2E7B38 -> 0x2E7440 -> 0x2E8170, while live parent 0x01281020 retains it in vector pointer field 0x0128107C. Resize call 0x4299F4 reallocates that freed pointer seven vsyncs later and repeats. Another completed run received a freed, header-overwritten block for a first vector allocation. Passing runs can therefore contain allocator corruption. Do not clear fields or guard allocator failures.
+Blocker and minimal reproducer: the lifecycle transition that leaves the cross-owner alias live is not yet identified. The standard gate remains tools\scripts\win06_gate.ps1 -Runs 10 -Name <name> -Card work\win04_20261019_card -Iso <image> -Elf game\SCUS_974.02.
+Next command: add a manifest-validated diagnostic return hook at 0x4299FC to associate 36-byte vector resize results with owner fields before cleanup, then rerun the watched gate until the freeing transition is captured.
 Safe parallel work: WIN-01; WIN-03; BASE-01 hands-on
 ```

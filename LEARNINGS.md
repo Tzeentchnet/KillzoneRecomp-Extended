@@ -59,6 +59,9 @@ few lines with a pointer to the evidence.
 - **`replaceFunction` hooks can check arguments, not results.** Generated functions often return through tail-jump
   fragments (`ctx->pc = target | 1`, followed by the call site), so `v0` is not final when the original returns to
   the hook.
+- **A passing repeated-load run can still contain allocator corruption.** `win06_listhead2_01` completed while the
+  watch recorded an invalid vector allocation and later free. Treat internal invariant reports as failures when
+  evaluating a fix, and use a targeted return hook rather than a whole-RAM reference scan to preserve timing.
 
 ## Gates and automation
 

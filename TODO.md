@@ -149,8 +149,8 @@ a plan revision.
 ### STAB-01 (legacy WIN-06) - Chapter 11 repeated-load corruption
 
 - **Status:** in progress. A full-intro run reached `11.OTS` at 225.7 s and hit the same missing-target failure, ruling
-  out the testing shortcut as the common cause. The earliest captured invalid state is now a stale/free list node in
-  the `0x2E7xxx` cleanup path before the allocator/vector collapse.
+  out the testing shortcut as the common cause. Ownership tracing now proves a cross-owner use-after-free before the
+  allocator/vector collapse; the lifecycle transition that leaves the alias live is not yet identified.
 - **Gate:** `tools\scripts\win06_gate.ps1 -Runs 10 -Name <name> -Card work\win04_20261019_card -Iso <image>
   -Elf game\SCUS_974.02` (D3D12, skipped intro, fresh card copy per run, pass/fail summary). Acceptance is 10/10.
 - **Ruled out (ten-run batches, win-clang-rel, D3D12):**
@@ -160,22 +160,24 @@ a plan revision.
     run, and enforcing the mask gave 8/10. Kept as `patches/ps2recomp/experimental/ee-di-interrupt-gate.diff`.
   - Threaded IOP: `PS2X_IOP_THREAD=0` (synchronous IOP on the EE thread) gave 4/10 (`win06_iopsync_*`).
   - Earlier sessions: scratchpad-to-RAM DMA into low RAM.
-- **Current localization:** the game calls `realloc` (C wrapper `0x173660`, return address `0x173694`) with a
-  garbage pointer (seen: `0x00000008`, `0x0D3A0C15`). realloc reads a multi-megabyte "size" from the fake chunk
-  header and its copy loop (`0x1731A0`-`0x1731C4`) runs past 32 MB; the runtime's slow store path masks the address
-  (`0x02517740` -> `0x517740`), so the copy overwrites low RAM: kernel area, main stack, libkernel's timer block and
-  pools. That explains the alarm head `0x5000`, the jumps into the stack and the EE stuck at pc `0x1731A0`. Other
-  failing runs show other consumers of the same kind of corruption: corrupt vtables (`0x3B4978`, `0x3A40A4`), a DMA
-  packet builder (`0x159D30`) fed a garbage upload record, and the host GS palette crash
-  (`GSGetRGBA8AlphaMinMax` <- `AttachPaletteToSource`). Four watched batches: 6/10, 5/10, 8/10, 6/10.
+- **Current localization:** cleanup `0x2E7B38 -> 0x2E7440 -> 0x2E8170` freed node `0x01F0FF00` for owner
+  `0x007E1EC0`, while live parent `0x01281020` retained that allocation in its embedded vector field
+  `parent+0x5C = 0x0128107C`. Seven guest-vsyncs later vector resize `0x4299F4` called realloc on the freed pointer,
+  repeating at least three times. A separate successful watched run showed the allocator returning a different block
+  ten vsyncs after free even though its header had been overwritten with live float data. Later consequences remain
+  the multi-megabyte wrapped realloc copy, corrupt vtables, bad DMA records, timer/pool overwrites and renderer crashes.
+- **Latest gate evidence:** `win06_watch5` and `win06_watch6` were 4/5; watched batches can also complete despite
+  allocator invariant breaks. Two clean watched batches and one uninstrumented batch reached 10/10, but the next
+  uninstrumented batch was 7/10 (one hang, one host exception, one missing target), so STAB-01 remains open.
 - **Renderer hardening:** x64 crash registers proved that the GS palette crash was an inverted alpha-index range:
   its unsigned width wrapped to `0xFFFFFFC7`. The pinned PCSX2 guard now falls back to the full palette range and
   skips a separate null depth-target optimization; `kzgs_palette_guard` passes. This removed host exceptions, but
   `win06_gsguard` remained 8/10: one severe texture-corruption run and one EE `pc=ra=0x50` run. A guarded watched
   batch was 10/10, so the watch perturbs the timing and does not close the task.
-- **Current decision:** do not guard the allocator, skip bad frees, or hide corrupt pointers. The range-only watch
-  named the later `0x00000008` realloc path, while ownership provenance moved the first observed invariant break to a
-  stale node freed by `0x2E8194`/cleaned through `0x2E7B38`. Continue from that ownership transition and require an
+- **Current decision:** do not guard the allocator, skip bad frees, clear stale fields generically or hide corrupt
+  pointers. The watch now records heap bounds, cleanup owner/list provenance, delete-wrapper callers and bounded list
+  chains. Next, add a targeted return hook for the 36-byte-element vector resize at `0x4299FC` so allocation results
+  are tied to owner fields before cleanup, then identify the missing lifecycle clear. Acceptance still requires an
   uninstrumented 10/10 gate with visually clean captures.
 
 ## Retired integration gate

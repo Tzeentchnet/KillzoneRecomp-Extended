@@ -1987,8 +1987,30 @@ The stronger ownership diagnostics captured two earlier states than pointer `8`:
   free chunk before its first observed call to `free`. The later allocator return, wrapped copy, timer overwrite and
   renderer crashes are downstream of this stale ownership transition.
 
-Do not turn these observations into allocator guards or ignored frees. WIN-06 remains open at the `0x2E7xxx` list
-ownership boundary.
+Follow-up batches resolved a cross-owner stale pointer:
+
+- In `win06_block1_01`, cleanup owner `0x007E1EC0` freed node `0x01F0FF00` at vsync 1655 through
+  `0x2E7B38 -> 0x2E7440 -> 0x2E8170`.
+- Live parent `0x01281020` still held that allocation in its embedded vector at `parent+0x58`, pointer field
+  `parent+0x5C = 0x0128107C`.
+- At vsync 1662, resize call `0x4299F4` requested 72 bytes by reallocating the freed pointer. The same stale field was
+  reused again at vsync 1671 and 1678. The call site's pointer-field neighborhood and the previous-free stack agree;
+  this is not an allocator-header heuristic.
+- In a separate successful watched run (`win06_listhead2_01`), a stack-local vector requested its first 12-byte
+  allocation and received `0x01051C30`, freed ten vsyncs earlier through the generic delete wrapper. Its chunk header
+  had already been overwritten with live float data. The run completed, proving that a pass/fail-only gate can miss
+  allocator corruption.
+
+Measured after the PROFILE-01 changes, the first uninstrumented batch was 10/10, but an independent repeat was 7/10:
+one 35-second hang, one host access violation and one indirect-call missing target. Watched `win06_watch5` and
+`win06_watch6` batches were each 4/5; later watched batches reached 10/10, confirming that page protection perturbs
+timing and cannot close the task.
+
+The watch now retains allocator bounds, cleanup owner/list head, delete-wrapper caller and bounded list-chain
+provenance. A whole-RAM reference scan was tested and removed because it performed 22,003 scans in five runs and
+materially perturbed timing. The next narrow diagnostic is a return hook at `0x4299FC` to associate resize results
+with their owner fields before cleanup. Do not turn this evidence into allocator guards, ignored frees or generic
+field clearing; WIN-06 remains open at the lifecycle transition that leaves the alias live.
 
 ## Windows gameplay baseline re-verification (2026-10-19)
 

@@ -560,9 +560,12 @@ namespace
     {
         uint64_t vsync = 0;
         uint32_t ra = 0;
+        uint32_t wrapperCaller = 0;
         uint32_t reallocCaller = 0;
         uint32_t pointerField = 0;
         uint32_t requestedSize = 0;
+        uint32_t cleanupOwner = 0;
+        uint32_t cleanupListHead = 0;
         uint32_t sp = 0;
         std::array<uint32_t, 12> stackWords{};
     };
@@ -682,6 +685,14 @@ namespace
                           "last freed at vsync %llu by realloc from caller 0x%06x, field 0x%08x, request 0x%x",
                           static_cast<unsigned long long>(it->second.vsync), it->second.reallocCaller,
                           it->second.pointerField, it->second.requestedSize);
+        else if (it->second.wrapperCaller)
+            std::snprintf(buf, sizeof(buf), "last freed at vsync %llu by delete caller 0x%06x through ra 0x%06x",
+                          static_cast<unsigned long long>(it->second.vsync), it->second.wrapperCaller, it->second.ra);
+        else if (it->second.cleanupOwner)
+            std::snprintf(buf, sizeof(buf),
+                          "last freed at vsync %llu by cleanup owner 0x%08x, list head 0x%08x, ra 0x%06x",
+                          static_cast<unsigned long long>(it->second.vsync), it->second.cleanupOwner,
+                          it->second.cleanupListHead, it->second.ra);
         else
             std::snprintf(buf, sizeof(buf), "last freed at vsync %llu by ra 0x%06x",
                           static_cast<unsigned long long>(it->second.vsync), it->second.ra);
@@ -704,8 +715,10 @@ namespace
         if (!wrapper && !innerWrapperRealloc && ++g_badBlocks > 12)
             return;
         std::lock_guard<std::mutex> lock(g_reportLock);
-        std::fprintf(stderr, "[win06] BAD %s(0x%08x, 0x%08x) at vsync %llu by ra 0x%06x: chunk size 0x%x, %s; %s\n", what, p,
-                     reg(ctx, 5), static_cast<unsigned long long>(vsyncTick()), ra, size,
+        std::fprintf(stderr,
+                     "[win06] BAD %s(0x%08x, 0x%08x) at vsync %llu by ra 0x%06x: chunk size 0x%x, "
+                     "heap 0x%08x-0x%08x, %s; %s\n",
+                     what, p, reg(ctx, 5), static_cast<unsigned long long>(vsyncTick()), ra, size, heapLo, heapHi,
                      !fits ? "header does not fit the heap" : "already free (double free or use after free)",
                      lastFree(p).c_str());
         if (const auto previous = g_frees.find(p); previous != g_frees.end() && previous->second.sp != 0u)
@@ -748,6 +761,27 @@ namespace
             std::fprintf(stderr,
                          "[win06]   vector destructor object 0x%08x: count 0x%08x capacity 0x%08x pointer 0x%08x\n",
                          object, rd32(object), rd32(object + 4u), rd32(object + 8u));
+        }
+        if (ra == 0x2E819Cu && inRam(reg(ctx, 18), 0x68u))
+        {
+            const uint32_t object = reg(ctx, 18);
+            uint32_t node = rd32(object + 0x24u);
+            std::fprintf(stderr, "[win06]   cleanup owner 0x%08x list head 0x%08x, words +0x00..+0x64:", object,
+                         node);
+            for (uint32_t o = 0; o < 0x68u; o += 4u)
+                std::fprintf(stderr, " %08x", rd32(object + o));
+            std::fprintf(stderr, "\n[win06]   cleanup list chain:");
+            for (int i = 0; i < 8 && inRam(node, 12u); ++i)
+            {
+                const uint32_t next = rd32(node + 8u);
+                std::fprintf(stderr, " [0x%08x: %08x %08x next=%08x]", node, rd32(node), rd32(node + 4u), next);
+                if (next == node)
+                    break;
+                node = next;
+            }
+            if (node != 0u && !inRam(node, 12u))
+                std::fprintf(stderr, " -> invalid 0x%08x", node);
+            std::fprintf(stderr, "\n");
         }
         if (ra == 0x17327Cu && inRam(reg(ctx, 23), 12u))
         {
@@ -841,6 +875,13 @@ namespace
         if (const uint32_t p = reg(ctx, 4))
         {
             FreeRecord record{vsyncTick(), reg(ctx, 31)};
+            if (record.ra == 0x1737A0u && inRam(reg(ctx, 29)))
+                record.wrapperCaller = rd32(reg(ctx, 29));
+            if (record.ra == 0x2E819Cu && inRam(reg(ctx, 18), 0x28u))
+            {
+                record.cleanupOwner = reg(ctx, 18);
+                record.cleanupListHead = rd32(record.cleanupOwner + 0x24u);
+            }
             if (record.ra == 0x173200u)
             {
                 const auto it = g_reallocs.find(p);
