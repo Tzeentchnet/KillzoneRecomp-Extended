@@ -1,7 +1,7 @@
 # TODO - current milestone queue
 
 **Milestone:** M0 - Feasibility approved (Phase 0)
-**Last updated:** 2026-10-19
+**Last updated:** 2026-10-20
 
 The durable queue of open work. Definitions, dependencies, acceptance commands and stop conditions are in
 [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md); verified completions are in [`WORKDONE.md`](WORKDONE.md). A task
@@ -26,7 +26,7 @@ owns edits; `[SERIAL]` waits on dependencies or the integration owner; `[HUMAN]`
 | 8 | WIN-03 | PS2Recomp standalone test-suite failures | Windows | `[SUBAGENT-PARALLEL]` | not started | - |
 | 9 | WIN-02 | Unlock All Campaign Levels launcher option | Windows | `[SERIAL]` | in progress | hands-on check |
 | 10 | WIN-05 | Testing start-up options (skip intro, start in chapter, test card) | Windows | `[SERIAL]` | in progress | WIN-06 |
-| 11 | WIN-06 | Chapter 11 load crash after a skipped intro cinematic | Windows | `[SUBAGENT-PARALLEL]` | not started | - |
+| 11 | WIN-06 | Chapter 11 load crash after a skipped intro cinematic | Windows | `[SUBAGENT-PARALLEL]` | in progress | - |
 | 12 | LEGAL-01 | Distribution and provenance disposition | Human | `[HUMAN]` | not started | - |
 | 13 | P0-EXIT | Phase 0 integration and exit review | Mac + Windows | `[SERIAL]` | blocked | 1-6, 12 |
 
@@ -146,11 +146,22 @@ available on the current Windows machine.
 
 ### 11. WIN-06 - Chapter 11 load crash after a skipped intro cinematic
 
-- **Status:** not started (parked by decision on 2026-10-17, to be analyzed later). Evidence and run names are in
-  `docs/findings.md` "Testing options", section "Known issue". Diagnostic switch: `KZ_SKIP_INTRO_MASK` (1 logos only,
-  2 cinematic only, 3 both).
-- **Next command:** repeat a chapter 11 load with `KZ_START_LEVEL=11` (intro skipped) under `KZ_CRASH_TRACE=1` to get
-  the faulting host stack.
+- **Status:** in progress. VIF1 MPG correctness was fixed and covered by focused tests, but it is not the WIN-06 root
+  cause: the production-like ten-run chapter 11 gate still failed in 2/10 runs.
+- **Gate evidence (win-clang-rel, D3D12):** runs 2 and 3 ended with malformed `1536x2688` captures instead of the
+  normal `2048x1792` output. Both were preceded by recurring invalid indirect calls from guest PC `0x2B70DC`.
+- **VIF1 result:** MPG now masks/wraps destination addresses in VU1 micro memory and preserves `NUM=0` as 256
+  instructions. The suspicious `MSCAL 0x2CE8` XGKICK reproduced without a split MPG payload, so speculative
+  cross-buffer MPG buffering is not part of the fix.
+- **Current localization:** `0x2B70DC` is the Timer1 alarm dispatcher callback. In `win06_timerhead_06`, the alarm-list
+  head at `0x517760` and register `s0` both held `0x5000`; the callback at node offset `0x28` was `0x0220202D`, and
+  the node bytes matched guest code beginning at `0x29F4E0`. Other runs showed `0x5000` being legitimately cleared
+  and reused, making a stale linked alarm node/use-after-free the leading hypothesis rather than a register-only fault.
+- **Ruled out so far:** observed scratchpad-to-RAM DMA never targeted low RAM below `0x10000`. The captured host access
+  violation remains downstream in `GSGetRGBA8AlphaMinMax` through palette attachment/source creation.
+- **Next steps:** complete the interrupted `PS2X_LAZY_TIMERS=0` A/B, then trace only Timer1 node insert/remove/free/reuse
+  around `0x517760`. Correlate the first stale node or malformed VIF packet with the GS failure, apply the smallest
+  evidence-backed fix, and require a clean 10/10 skipped-intro chapter 11 gate before closing WIN-06.
 
 ## Human
 
