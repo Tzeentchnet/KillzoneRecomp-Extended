@@ -169,7 +169,9 @@ a plan revision.
 - **Latest gate evidence:** `win06_watch5` and `win06_watch6` were 4/5; watched batches can also complete despite
   allocator invariant breaks. Two clean watched batches and one uninstrumented batch reached 10/10, but the next
   uninstrumented batch was 7/10 (one hang, one host exception, one missing target). The new resize-owner hook then
-  produced two independent 7/10 batches, including host GS faults, missing targets and a mixed-size corruption run.
+  produced three independent 7/10 batches, including host GS faults, missing targets and mixed-size corruption runs.
+  The third batch had no allocator/owner marker before its failures, so this hook is deliberately not a universal
+  corruption detector.
 - **Renderer hardening:** x64 crash registers proved that the GS palette crash was an inverted alpha-index range:
   its unsigned width wrapped to `0xFFFFFFC7`. The pinned PCSX2 guard now falls back to the full palette range and
   skips a separate null depth-target optimization; `kzgs_palette_guard` passes. This removed host exceptions, but
