@@ -255,6 +255,8 @@ parallel after BASE-01, CFG-01 and TEST-01.
 - **Acceptance:** At least ten consecutive chapter 11 loads complete without host crash, texture corruption or HUD
   corruption using the standard gate and a known isolated card.
 - **Stop:** Do not hide the failure by disabling content, swallowing an allocator error or excluding failed runs.
+- **Status (2026-10-20):** Investigation deferred by project decision after multiple independent ten-run diagnostic
+  arms. This does not waive acceptance; STAB-01 remains an M4 and release blocker.
 
 #### TEST-01 - Graphics and weapon measurement harness
 
@@ -503,7 +505,7 @@ This plan records the requested direction but does not substitute for named rele
 | Role | Status |
 |---|---|
 | Product direction | Graphics/gameplay focus requested 2026-10-20 |
-| Windows/runtime owner | Pending M0 evidence |
+| Windows/runtime owner | Pending M0 evidence; STAB-01 investigation deferred 2026-10-20 without waiving its release gate |
 | Graphics owner | Pending GFX-04 and DLSS-01 |
 | Gameplay owner | Pending WPN-01 evidence |
 | Test/release owner | Pending hardware and campaign matrices |

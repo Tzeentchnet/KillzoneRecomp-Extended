@@ -32,8 +32,8 @@ Test build, currently in M0 (Windows enhancement baseline); see [`TODO.md`](TODO
 - **Verified on this fork (2026-10-17, D3D12):** boot, host memory cards, the opening movies with audio at their
   29.97 fps source cadence, the main menu and the attract reel. Profile creation and first-mission gameplay were
   verified upstream and are queued for re-verification on the current build (WIN-04).
-- **Known issue:** on an NVIDIA RTX 5070 (driver `32.0.16.1742`) D3D11 shows a black image while D3D12 renders
-  correctly. Use `Renderer=d3d12`; the launcher suggests it (WIN-01).
+- **Renderer verification (2026-10-20):** D3D11 and D3D12 render on an NVIDIA RTX 5070 (driver `32.0.16.1742`).
+  The repeated 90-second D3D11 black-output defect is no longer reproducible on the pinned renderer stack.
 - **Frame rate (upstream measurement):** runs at the monitor's refresh rate; about 117-120 fps at 120 Hz and about
   130-140 fps at 144 Hz in gameplay. The game's clock runs at real time at 120 Hz (the frame timer is rescaled, not
   sped up).

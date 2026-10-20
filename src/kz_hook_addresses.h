@@ -50,6 +50,7 @@ namespace kz_hook
     inline constexpr uint32_t MovieFeed = 0x002E0AC0u;
     inline constexpr uint32_t MovieAudioFeed = 0x002E19C0u;
     inline constexpr uint32_t MovieAudioFull = 0x002E1A40u;
+    inline constexpr uint32_t ListNodeAllocReturn = 0x002E7238u;
     inline constexpr uint32_t ZoneParams = 0x00339C38u;
     inline constexpr uint32_t MpegGetPicture = 0x003CD750u;
     inline constexpr uint32_t MpegClearRefBuff = 0x003CD9F8u;

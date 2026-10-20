@@ -10,12 +10,12 @@
     "repository_path": "ext/PS2Recomp",
     "patch_directory": "patches/ps2recomp",
     "base_commit": "75d729ce40d7eed9649fd4bb05628dee520f3d0c",
-    "target_commit": "9221581cd69b10bfb3dcf198cf4180ffcd795ef7",
-    "target_tree": "4fda3312930360c40c65f0512b55086074022dfa",
+    "target_commit": "93d19aaa4f933787df05eed348a8283aa249a22b",
+    "target_tree": "8c10f68b5adf588f434c84a3baa990120963e780",
     "canonical_patch": {
       "path": "patches/ps2recomp/combined.lock.diff",
-      "changed_paths": 62,
-      "sha256": "72404dfa2dc7bb33fd7bdcf544f28315ff3f93dafd2dcda29fc35974c2a66d32"
+      "changed_paths": 65,
+      "sha256": "91d6e8be22a0045afb11ebc038d13bc3d1335d762492f8295e36398a37735849"
     },
     "patches": [
       {
@@ -137,6 +137,10 @@
       {
         "path": "0031-dmac-call-overflow-vif-provenance.patch",
         "sha256": "433dc5ad9c264071e2394e34892ad421d024ed0d8c3e7d8876a6200f2fc4f4e6"
+      },
+      {
+        "path": "0032-standalone-runtime-test-suite.patch",
+        "sha256": "3fedb3956f8a1b8e6487d6830078ef659d0044ea349582e8f18601c1ba82cc2f"
       }
     ]
   },
@@ -145,7 +149,7 @@
       "id": "ps2recomp",
       "kind": "git-submodule",
       "source_url": "https://github.com/Tzeentchnet/PS2Recomp.git",
-      "revision": "9221581cd69b10bfb3dcf198cf4180ffcd795ef7",
+      "revision": "93d19aaa4f933787df05eed348a8283aa249a22b",
       "license": "GPL-3.0-only",
       "redistribution": "Copyleft; distribute corresponding source and notices.",
       "acquisition": "git submodule update --init --recursive",

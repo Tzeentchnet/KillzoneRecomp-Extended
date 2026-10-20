@@ -498,6 +498,13 @@
       "signature_sha256": "f629a3ab60e27afdb8f5b4ba7f260c29384dc35f91d3ea65e0aca1efe5f05309"
     },
     {
+      "symbol": "ListNodeAllocReturn",
+      "kind": "debug_hook",
+      "address": "0x002E7238",
+      "signature_size": 128,
+      "signature_sha256": "dff1a9f0a51940752558bae4cf777d09aa272d1b7ee77ddd03b5d6dc313584f5"
+    },
+    {
       "symbol": "ZoneParams",
       "kind": "hook",
       "address": "0x00339C38",

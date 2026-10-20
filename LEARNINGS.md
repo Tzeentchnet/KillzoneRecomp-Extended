@@ -62,6 +62,9 @@ few lines with a pointer to the evidence.
 - **A passing repeated-load run can still contain allocator corruption.** `win06_listhead2_01` completed while the
   watch recorded an invalid vector allocation and later free. Treat internal invariant reports as failures when
   evaluating a fix, and use a targeted return hook rather than a whole-RAM reference scan to preserve timing.
+- **Re-run old renderer defects before changing code.** WIN-01's historical D3D11 all-zero output no longer
+  reproduced on the same RTX 5070/driver: the hardware golden, actual swap-chain capture and original 90-second
+  scenario all rendered. Close stale findings with current evidence instead of adding speculative backend workarounds.
 
 ## Gates and automation
 
@@ -76,3 +79,6 @@ few lines with a pointer to the evidence.
   a `cd` in another command; `tools\scripts\win06_gate.ps1` then fails with "module 'tools' could not be loaded".
 - **A one-in-five failure needs ten runs per arm.** Three-run batches (as in the original WIN-06 table) cannot
   separate a 20% failure rate from zero.
+- **Run `ps2x_tests.exe` from `ext/PS2Recomp`.** Some code-generator tests read source fixtures relative to that
+  directory. Use `PS2X_TEST_FILTER=<substring>` for focused diagnosis. The accepted broad result is 439/439, not a
+  root-directory run with unrelated fixture-path failures.

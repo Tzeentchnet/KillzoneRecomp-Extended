@@ -1491,6 +1491,20 @@ bursts (3.5, 3.5, 0, 0, 0, 3.4 ...) were first read as video. A fixed text regio
   that the D3D11 defect has been repaired.
 - `dev9: unknown dev9 hardware` and unhandled `cdvdman:78` remain nonfatal; neither prevents D3D12 rendering.
 
+### D3D11 re-verification (2026-10-20)
+
+The historical all-zero result no longer reproduces on the same RTX 5070 and driver `32.0.16.1742` with the current
+pinned renderer stack. The hardware-adapter D3D11 golden passed at 1x and 2x with zero pixel mismatches. A 35-second
+isolated-card chapter 1 run exited 0 and produced nonblack captures from 10 seconds onward (35.0-99.1% nonblack).
+Four captures taken from the actual D3D11 swap-chain back buffer were also nonblack (55.5-71.4%). Finally, the
+original no-input 90-second scenario exited 0; its eight captures were distinct, and frames from 20 through 80
+seconds contained rendered output with nonblack coverage up to 94.4%.
+
+No renderer behavior was changed to force this result. The PCSX2 checkout did move from
+`646df006a4688063e56c0826e7ea4b8bb0c112c4` at the failed measurement to
+`d3e6982a3e36647d642bcd805d3ca5b442d0975c`, but the exact clearing change was not isolated. WIN-01 is closed as no
+longer reproducible on the supported pinned stack; the earlier finding remains above as historical evidence.
+
 ### Late black screen: shadowed runtime stubs
 
 - Early D3D12 acceptance did not cover the complete boot path. A 60-second capture later showed valid SCEA, legal,
@@ -1684,7 +1698,28 @@ runtime, host-output, and dependency-lock changes.
 Final integration validation passed strict dependency reconstruction (31 checks), generated inventory, resume-table
 verification, the complete MSVC ISO-free suite (12/12), and the complete clang-cl ISO-free suite (12/12). The broad
 standalone PS2Recomp test executable still reaches its pre-existing `sceMpegDemuxPssRing` failure and later access
-violation; only the focused MPEG regression is represented as passing.
+violation; only the focused MPEG regression was represented as passing at that revision. WIN-03 resolves this later
+below.
+
+## PS2Recomp standalone suite restoration (2026-10-20)
+
+The prior broad-suite failure combined one stale MPEG fixture with an independent null-runtime crash. The PCM stream
+callback was registered with libmpeg type 2 but fed a private-stream header that could not match the verified
+`BD FF A0 00 00` key. After that assertion, the first `sceSdRemote` regression called `sceSdRemoteInit` without a
+`PS2Runtime`; the new SDRDRV probe dereferenced that null runtime before reaching the fallback model.
+
+Correcting the PCM header and guarding the optional runtime removed both symptoms. The now-completing suite exposed
+seven VIF regressions plus stale JALR and SIF expectations:
+
+- the PCSX2-derived UNPACK path treated zero `STCYCL.CL` as zero source vectors instead of 256;
+- two PATH2 fixtures placed raw image bytes outside a subsequent `DIRECT`, contradicting the corrected parser;
+- the unresolved-JALR test still expected broad caller fallback entries even though calls intentionally publish only
+  their return PC;
+- the SIF test sampled threaded IOP cycles synchronously instead of testing persistent IOP state.
+
+Zero `CL` now follows hardware semantics, and the fixtures assert the current contracts. The minimal harness also
+supports `PS2X_TEST_FILTER=<substring>` for focused reproduction. Focused audio (2/2), VIF (29/29), JALR (2/2) and
+SifInitRpc (1/1) runs pass. The complete standalone executable now exits 0 with 439/439 tests passing.
 
 ## Testing options (2026-10-17)
 
@@ -2015,6 +2050,21 @@ corruption, but not the exact earlier cross-owner alias. The third batch emitted
 three failures, so the hook remains a targeted ownership diagnostic rather than a success oracle. Do not turn this
 evidence into allocator guards, ignored frees or generic field clearing; WIN-06 remains open at the lifecycle
 transition that leaves the alias live.
+
+One final bounded investigation tested whether the cleanup-list and 36-byte-vector allocations overlap before the
+later bad realloc. A manifest-validated return hook at `0x2E7238` records cleanup-list node allocations and compares
+them with the existing `0x4299FC` resize-owner history. `win06_listoverlap1` ran with page watches disabled and was
+8/10: one missing-target/mixed-frame run and one host access violation. Neither failure nor any passing run emitted
+an overlap or linked-free marker. The corrupt run instead caught a first-allocation failure: `malloc(0x600)` returned
+`0x01F101A0`, whose header was live non-allocator data, while heap descriptor word `0x0055EC6C` changed from
+`0x01F10198` to `0x00000600` during the call. A follow-up single-word hardware-watch arm, `win06_heapword1`, was
+7/10 and reproduced the same shape with `malloc(0x400)` returning `0x01F10020` before the allocator collapsed to
+`0x408` and then `0x8`; it yielded no usable writer event.
+
+These arms show that the earlier cross-owner alias is real but not a universal first-fault signature. The common
+frontier remains allocator candidate/bin corruption before the invalid return. By project decision on 2026-10-20,
+further STAB-01 investigation is deferred. The failure remains an M4/release blocker, and no allocator guard, ignored
+free, generic field clear or excluded failed run is accepted as a fix.
 
 ## Windows gameplay baseline re-verification (2026-10-19)
 

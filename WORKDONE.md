@@ -330,6 +330,56 @@ submodule, and the failed toml11 GCC-flag probes during the PS2Recomp configure.
 - **Residual risk:** D3D11 stays black on this driver (TODO WIN-01). Gameplay past the menu was not re-run (TODO
   WIN-04).
 
+### WIN-01 - D3D11 output on NVIDIA re-verification
+
+- **Completed:** 2026-10-20 in the current working tree; commit pending.
+- **Machine:** Windows 11 x64; clang-cl D3D11 on NVIDIA GeForce RTX 5070, driver `32.0.16.1742`.
+- **Disposition:** the historical all-zero D3D11 defect is no longer reproducible on the current pinned renderer
+  stack. No speculative renderer change was made. The stale README warning and launcher workaround text were removed.
+- **Evidence:**
+
+| Command / run | Result |
+|---|---|
+| `kzgs_test.exe --renderer d3d11 --golden --frames 2` on the hardware adapter | PASS at 1x and 2x; 0 pixel mismatches |
+| `win01_d3d11_repro`, isolated card, `KZ_RENDERER=d3d11`, chapter 1, 35 s | Exit 0; chapter 1 reached; 5/6 captures nonblack with 35.0-99.1% coverage |
+| `win01_d3d11_present`, `KZ_SHOT_BURST_PRESENT=2` | Four actual 1280x896 swap-chain frames were nonblack with 55.5-71.4% coverage |
+| `win01_d3d11_90s`, original no-input 90-second scenario | Exit 0; eight distinct captures; frames from 20-80 s nonblack with 0.1-94.4% coverage |
+
+- **Residual risk:** the exact historical change that cleared the defect was not isolated. The PCSX2 pin moved from
+  `646df006a4688063e56c0826e7ea4b8bb0c112c4` to `d3e6982a3e36647d642bcd805d3ca5b442d0975c`
+  between the failed and passing measurements. The present-hook measurement mode produced its frames but faulted
+  during shutdown; ordinary D3D11 runs exited cleanly, so that debug-tool teardown is not evidence of a renderer
+  output failure.
+- **Protected-content disposition:** captures and isolated cards remain untracked under `work/`; no retail image,
+  path, save data or screenshot is committed.
+
+### WIN-03 - PS2Recomp standalone test suite
+
+- **Completed:** 2026-10-20; PS2Recomp commit `93d19aaa4f933787df05eed348a8283aa249a22b`; parent commit pending.
+- **Machine:** Windows 11 x64; MSVC RelWithDebInfo standalone PS2Recomp build.
+- **Runtime fixes:** VIF1 UNPACK now interprets zero `STCYCL.CL` as 256, matching zero `WL` and PS2 hardware
+  semantics. `sceSdRemoteInit` checks for a runtime before probing the emulated SDRDRV, preserving its standalone
+  fallback instead of dereferencing null.
+- **Regression corrections:** the MPEG PCM fixture uses the verified private-stream key; PATH2 image continuation
+  bytes are carried by a subsequent `DIRECT`; the JALR test reflects the return-PC-only resume policy; the SIF RPC
+  test verifies IOP allocator continuity without assuming synchronous IOP timing. The minimal harness accepts
+  `PS2X_TEST_FILTER=<substring>` for focused runs.
+- **Acceptance results:**
+
+| Command | Result |
+|---|---|
+| `PS2X_TEST_FILTER=sceSdRemote ps2x_tests.exe` | PASS: 2/2; prior access violation removed |
+| `PS2X_TEST_FILTER=VIF ps2x_tests.exe` | PASS: 29/29 |
+| `PS2X_TEST_FILTER=unresolved JALR ps2x_tests.exe` | PASS: 2/2 |
+| `PS2X_TEST_FILTER=SifInitRpc ps2x_tests.exe` | PASS: 1/1 |
+| `ps2x_tests.exe` from the PS2Recomp source root | PASS: 439/439, exit 0 |
+| `python .\tools\scripts\verify_deps.py --strict` | PASS after parent gitlink/lock update |
+| MSVC build plus `ctest --preset win-msvc-rel -L iso-free` | PASS: 13/13 |
+| clang-cl build plus `ctest --preset win-clang-rel -L iso-free` | PASS: 13/13 |
+
+- **Provenance:** topic patch `patches/ps2recomp/0032-standalone-runtime-test-suite.patch`; canonical 65-path diff
+  reconstructs tree `8c10f68b5adf588f434c84a3baa990120963e780`.
+
 ### MPEG playback cadence
 
 - **Commit:** `24e9cfa` (2026-10-17); PS2Recomp `917b379` on `Tzeentchnet/PS2Recomp` branch `killzone`; patch

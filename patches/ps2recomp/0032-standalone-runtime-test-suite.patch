@@ -1,0 +1,178 @@
+From 93d19aaa4f933787df05eed348a8283aa249a22b Mon Sep 17 00:00:00 2001
+From: Tzeentchnet <58480142+Tzeentchnet@users.noreply.github.com>
+Date: Tue, 20 Oct 2026 14:47:41 -0700
+Subject: [PATCH] fix: restore standalone runtime test suite
+
+---
+ ps2xRuntime/src/lib/Kernel/Stubs/Audio.cpp   |  2 +-
+ ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp |  4 ++--
+ ps2xTest/include/MiniTest.h                  | 10 ++++++++++
+ ps2xTest/src/code_generator_tests.cpp        | 10 ++++++----
+ ps2xTest/src/ps2_memory_tests.cpp            |  4 +++-
+ ps2xTest/src/ps2_runtime_expansion_tests.cpp |  2 +-
+ ps2xTest/src/ps2_sif_rpc_tests.cpp           | 10 +++++-----
+ 7 files changed, 28 insertions(+), 14 deletions(-)
+
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/Audio.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/Audio.cpp
+index 1b87f4a..17803b8 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/Audio.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/Audio.cpp
+@@ -333,7 +333,7 @@ namespace ps2_stubs
+         // shows up; the IOP thread keeps running meanwhile). Without one the old stub model stays in charge.
+         g_sdr.bound = false;
+         static const bool s_remoteEnabled = [] { const char *v = std::getenv("PS2X_SDR_REMOTE"); return !(v && v[0] == '0'); }();
+-        if (s_remoteEnabled && PS2IopTransport::canBindRpc(runtime, kLibSdSid) && sdrAllocate(runtime))
++        if (runtime && s_remoteEnabled && PS2IopTransport::canBindRpc(runtime, kLibSdSid) && sdrAllocate(runtime))
+         {
+             for (int attempt = 0; attempt < 2000 && !g_sdr.bound; ++attempt)
+             {
+diff --git a/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp b/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
+index 6f45e60..7dadd8d 100644
+--- a/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
++++ b/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
+@@ -398,7 +398,7 @@ namespace
+         uint32_t num = (cmd >> 16) & 0xFFu;
+         if (num == 0u)
+             num = 256u;
+-        const uint32_t cl = regs.cycle & 0xFFu;
++        const uint32_t cl = (regs.cycle & 0xFFu) ? (regs.cycle & 0xFFu) : 256u;
+         const uint32_t wl = ((regs.cycle >> 8) & 0xFFu) ? ((regs.cycle >> 8) & 0xFFu) : 256u;
+         const bool isFill = cl < wl;
+         const uint32_t mode = (vnvl == 15u) ? 0u : (regs.mode & 3u);
+@@ -1198,7 +1198,7 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
+             if (!legacyVif1Unpack())
+             {
+                 // PCSX2 source size: fill mode reads CL vectors per WL block (WL = 0 means 256).
+-                const uint32_t pcl = vif1_regs.cycle & 0xFFu;
++                const uint32_t pcl = (vif1_regs.cycle & 0xFFu) ? (vif1_regs.cycle & 0xFFu) : 256u;
+                 const uint32_t pwl = ((vif1_regs.cycle >> 8) & 0xFFu) ? ((vif1_regs.cycle >> 8) & 0xFFu) : 256u;
+                 const uint32_t srcVectors = (pcl < pwl) ? pcl * (writeVectorCount / pwl) + std::min(writeVectorCount % pwl, pcl)
+                                                         : writeVectorCount;
+diff --git a/ps2xTest/include/MiniTest.h b/ps2xTest/include/MiniTest.h
+index 9fc510b..359a47c 100644
+--- a/ps2xTest/include/MiniTest.h
++++ b/ps2xTest/include/MiniTest.h
+@@ -5,6 +5,7 @@
+ #include <map>
+ #include <iostream>
+ #include <exception>
++#include <cstdlib>
+ 
+ class TestCase;
+ using TestRunnerCallback = std::function<void(TestCase&)>;
+@@ -124,6 +125,8 @@ public:
+     {
+         int failedCount = 0;
+         int totalTests = 0;
++        const char* filterEnv = std::getenv("PS2X_TEST_FILTER");
++        const std::string filter = filterEnv ? filterEnv : "";
+ 
+         for (auto& c : m_cases)
+         {
+@@ -144,6 +147,13 @@ public:
+             {
+                 const std::string& testName = cc.first;
+                 const TestRunnerCallback& testFn = cc.second;
++                if (!filter.empty() &&
++                    suiteName.find(filter) == std::string::npos &&
++                    testName.find(filter) == std::string::npos &&
++                    (suiteName + "." + testName).find(filter) == std::string::npos)
++                {
++                    continue;
++                }
+ 
+                 totalTests++;
+                 testCase.ClearFailures();
+diff --git a/ps2xTest/src/code_generator_tests.cpp b/ps2xTest/src/code_generator_tests.cpp
+index 463b6cf..96dd7fd 100644
+--- a/ps2xTest/src/code_generator_tests.cpp
++++ b/ps2xTest/src/code_generator_tests.cpp
+@@ -628,7 +628,7 @@ void register_code_generator_tests()
+                   "unresolved JR should not pretend it has a resolved local jump table");
+     });
+ 
+-    tc.Run("unresolved JALR marks internal labels as indirect fallback resume entries", [](TestCase &t) {
++    tc.Run("unresolved JALR marks only its return pc as a resume entry", [](TestCase &t) {
+         Function func;
+         func.name = "unresolved_jalr_fallback";
+         func.start = 0x3200;
+@@ -647,10 +647,12 @@ void register_code_generator_tests()
+         CodeGenerator gen({}, {});
+         CodeGenerator::AnalysisResult analysis = gen.collectInternalBranchTargets(func, instructions);
+ 
+-        t.IsTrue(analysis.indirectFallbackEntryPoints.contains(0x320Cu),
+-                 "unresolved JALR should register internal labels as resumable entries for the owning function");
++        t.IsFalse(analysis.indirectFallbackEntryPoints.contains(0x320Cu),
++                  "unresolved JALR calls should not promote the caller to broad indirect fallback entries");
++        t.IsTrue(analysis.resumeEntryPoints.contains(0x320Cu),
++                 "unresolved JALR should register its return pc as a resume entry");
+         t.IsTrue(analysis.entryPoints.contains(0x320Cu),
+-                 "unresolved JALR fallback targets should still emit labels in the owner");
++                 "unresolved JALR return pc should emit a label in the owner");
+         t.IsFalse(analysis.jumpTableTargets.contains(0x3204u),
+                   "unresolved JALR should not pretend it has a resolved local jump table");
+     });
+diff --git a/ps2xTest/src/ps2_memory_tests.cpp b/ps2xTest/src/ps2_memory_tests.cpp
+index 186ab18..07c0a5a 100644
+--- a/ps2xTest/src/ps2_memory_tests.cpp
++++ b/ps2xTest/src/ps2_memory_tests.cpp
+@@ -2209,9 +2209,10 @@ void register_ps2_memory_tests()
+             gs.writeRegister(GS_REG_TRXDIR, 0ull);
+ 
+             std::vector<uint8_t> packet;
+-            appendU32(packet, makeVifCmd(0x50u, 0u, 1u)); // DIRECT 1 QW payload: GIF IMAGE tag only.
++            appendU32(packet, makeVifCmd(0x50u, 0u, 1u)); // DIRECT 1 QW payload: GIF IMAGE tag.
+             appendU64(packet, makeGifTag(1u, GIF_FMT_IMAGE, 0u, true));
+             appendU64(packet, 0ull);
++            appendU32(packet, makeVifCmd(0x50u, 0u, 1u)); // Next DIRECT carries the IMAGE payload.
+             for (uint32_t i = 0; i < 16u; ++i)
+             {
+                 packet.push_back(static_cast<uint8_t>(0xA0u + i));
+@@ -2265,6 +2266,7 @@ void register_ps2_memory_tests()
+             appendU64(packet, GS_REG_TEXA);
+             appendU64(packet, makeGifTag(1u, GIF_FMT_IMAGE, 0u, true));
+             appendU64(packet, 0ull);
++            appendU32(packet, makeVifCmd(0x50u, 0u, 1u)); // Next DIRECT carries the IMAGE payload.
+             for (uint32_t i = 0; i < 16u; ++i)
+                 packet.push_back(static_cast<uint8_t>(0xC0u + i));
+ 
+diff --git a/ps2xTest/src/ps2_runtime_expansion_tests.cpp b/ps2xTest/src/ps2_runtime_expansion_tests.cpp
+index d8165c4..dd5d17f 100644
+--- a/ps2xTest/src/ps2_runtime_expansion_tests.cpp
++++ b/ps2xTest/src/ps2_runtime_expansion_tests.cpp
+@@ -671,7 +671,7 @@ void register_ps2_runtime_expansion_tests()
+             t.Equals(gMpegStreamCallbackUserData.load(std::memory_order_acquire), kVideoUserData,
+                      "video callback should receive registered user data");
+ 
+-            const std::vector<uint8_t> audioPayload = {0x80u, 0x01u, 0x02u, 0x03u, 0x04u, 0x05u};
++            const std::vector<uint8_t> audioPayload = {0xFFu, 0xA0u, 0x00u, 0x00u, 0x04u, 0x05u};
+             const uint32_t audioPacketSize = writePesPacket(kAudioPacketAddr, 0xBDu, audioPayload);
+ 
+             gMpegStreamCallbackCount.store(0u, std::memory_order_release);
+diff --git a/ps2xTest/src/ps2_sif_rpc_tests.cpp b/ps2xTest/src/ps2_sif_rpc_tests.cpp
+index 7242e65..c99c049 100644
+--- a/ps2xTest/src/ps2_sif_rpc_tests.cpp
++++ b/ps2xTest/src/ps2_sif_rpc_tests.cpp
+@@ -193,14 +193,14 @@ void register_ps2_sif_rpc_tests()
+         {
+             TestEnv env;
+ 
+-            env.runtime.eeScheduler().accountCycles(80u);
+-            const uint64_t cyclesBeforeInit = env.runtime.iopDebugSnapshot().emulatorCycles;
+-            t.IsTrue(cyclesBeforeInit != 0u, "IOP cycle counter should advance before RPC initialization");
++            const uint32_t allocationBeforeInit = env.runtime.allocateIopMemory(0x40u, 0x10u);
++            t.IsTrue(allocationBeforeInit != 0u, "IOP allocator should be active before RPC initialization");
+ 
+             SifInitRpc(env.rdram.data(), &env.ctx, &env.runtime);
+ 
+-            t.Equals(env.runtime.iopDebugSnapshot().emulatorCycles, cyclesBeforeInit,
+-                     "SifInitRpc must not reboot or reset the IOP");
++            const uint32_t allocationAfterInit = env.runtime.allocateIopMemory(0x40u, 0x10u);
++            t.IsTrue(allocationAfterInit > allocationBeforeInit,
++                     "SifInitRpc must not reboot or reset the IOP allocator");
+         });
+ 
+         tc.Run("SifLoadModule validates ROM modules and activates their HLE service", [](TestCase &t)
+-- 
+2.55.0.windows.5
+

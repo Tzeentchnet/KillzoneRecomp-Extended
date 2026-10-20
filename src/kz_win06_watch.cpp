@@ -554,7 +554,7 @@ namespace
     // object (s1).
     using Fn = PS2Runtime::RecompiledFunction;
     Fn g_origFree = nullptr, g_origRealloc = nullptr, g_origUpload = nullptr, g_origReallocC = nullptr;
-    Fn g_origVectorGrowReturn = nullptr, g_origVector36ResizeReturn = nullptr;
+    Fn g_origVectorGrowReturn = nullptr, g_origVector36ResizeReturn = nullptr, g_origListNodeAllocReturn = nullptr;
 
     struct FreeRecord
     {
@@ -601,7 +601,16 @@ namespace
         uint32_t field = 0;
     };
     std::unordered_map<uint32_t, ResizeOwner> g_resizeOwners;
-    int g_badUploads = 0, g_badBlocks = 0;
+    struct ListNodeOwner
+    {
+        uint64_t allocatedVsync = 0;
+        uint64_t freedVsync = 0;
+        uint32_t owner = 0;
+        uint32_t count = 0;
+        uint32_t freeRa = 0;
+    };
+    std::unordered_map<uint32_t, ListNodeOwner> g_listNodeOwners;
+    int g_badUploads = 0, g_badBlocks = 0, g_listOverlapReports = 0;
     std::array<uint32_t, kHeapStateWords> g_lastGoodHeap{};
     uint64_t g_lastGoodHeapVsync = 0;
     bool g_haveLastGoodHeap = false;
@@ -611,6 +620,26 @@ namespace
     uint32_t reg(const R5900Context *ctx, int r) { return static_cast<uint32_t>(_mm_cvtsi128_si32(ctx->r[r])); }
 
     bool inRam(uint32_t a, uint32_t bytes = 4) { return a < PS2_RAM_SIZE && bytes <= PS2_RAM_SIZE - a; }
+
+    bool listContains(const ListNodeOwner &record, uint32_t target)
+    {
+        if (!inRam(record.owner, 0x28u))
+            return false;
+        uint32_t node = rd32(record.owner + 0x24u);
+        for (int i = 0; i < 4096 && node; ++i)
+        {
+            if (node == target)
+                return true;
+            if (!inRam(node, 12u))
+                return false;
+            const uint32_t primary = rd32(node + 8u);
+            const uint32_t next = primary == node ? rd32(node + 4u) : primary;
+            if (next == node)
+                return false;
+            node = next;
+        }
+        return false;
+    }
 
     uint32_t chunkSize(uint32_t p) { return inRam(p - 4) ? (rd32(p - 4) & 0x0FFFFFFEu) : 0; }
 
@@ -902,6 +931,23 @@ namespace
         checkBlockArgument("free", ctx);
         if (const uint32_t p = reg(ctx, 4))
         {
+            if (const auto node = g_listNodeOwners.find(p); node != g_listNodeOwners.end())
+            {
+                const bool linked = listContains(node->second, p);
+                if (linked && ++g_listOverlapReports <= 16)
+                {
+                    std::lock_guard<std::mutex> lock(g_reportLock);
+                    std::fprintf(stderr,
+                                 "[win06] LIST NODE FREED WHILE LINKED: 0x%08x owner 0x%08x count %u, "
+                                 "allocated vsync %llu, free ra 0x%06x at vsync %llu\n",
+                                 p, node->second.owner, node->second.count,
+                                 static_cast<unsigned long long>(node->second.allocatedVsync), reg(ctx, 31),
+                                 static_cast<unsigned long long>(vsyncTick()));
+                    std::fflush(stderr);
+                }
+                node->second.freedVsync = vsyncTick();
+                node->second.freeRa = reg(ctx, 31);
+            }
             FreeRecord record{vsyncTick(), reg(ctx, 31)};
             if (record.ra == 0x1737A0u && inRam(reg(ctx, 29)))
                 record.wrapperCaller = rd32(reg(ctx, 29));
@@ -1029,6 +1075,25 @@ namespace
     void hookVector36ResizeReturn(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
     {
         const uint32_t result = reg(ctx, 2), object = reg(ctx, 19);
+        if (result)
+        {
+            if (const auto node = g_listNodeOwners.find(result); node != g_listNodeOwners.end())
+            {
+                const bool linked = listContains(node->second, result);
+                if ((node->second.freedVsync == 0u || linked) && ++g_listOverlapReports <= 16)
+                {
+                    std::lock_guard<std::mutex> lock(g_reportLock);
+                    std::fprintf(stderr,
+                                 "[win06] OVERLAPPING ALLOCATION: resize object 0x%08x received list node "
+                                 "0x%08x owned by 0x%08x (count %u, allocated vsync %llu%s%s) at vsync %llu\n",
+                                 object, result, node->second.owner, node->second.count,
+                                 static_cast<unsigned long long>(node->second.allocatedVsync),
+                                 node->second.freedVsync ? ", freed earlier" : ", still allocated",
+                                 linked ? ", still linked" : "", static_cast<unsigned long long>(vsyncTick()));
+                    std::fflush(stderr);
+                }
+            }
+        }
         if (inRam(object, 8u))
         {
             const uint32_t previous = rd32(object + 4u);
@@ -1039,6 +1104,29 @@ namespace
                 g_resizeOwners[result] = ResizeOwner{vsyncTick(), object, object + 4u};
         }
         g_origVector36ResizeReturn(rdram, ctx, rt);
+    }
+
+    void hookListNodeAllocReturn(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
+    {
+        const uint32_t result = reg(ctx, 2), owner = reg(ctx, 16), count = reg(ctx, 18);
+        if (result)
+        {
+            if (const auto resize = g_resizeOwners.find(result);
+                resize != g_resizeOwners.end() && inRam(resize->second.field) &&
+                rd32(resize->second.field) == result && ++g_listOverlapReports <= 16)
+            {
+                std::lock_guard<std::mutex> lock(g_reportLock);
+                std::fprintf(stderr,
+                             "[win06] OVERLAPPING ALLOCATION: list owner 0x%08x received live resize block "
+                             "0x%08x from object 0x%08x field 0x%08x (allocated vsync %llu) at vsync %llu\n",
+                             owner, result, resize->second.object, resize->second.field,
+                             static_cast<unsigned long long>(resize->second.vsync),
+                             static_cast<unsigned long long>(vsyncTick()));
+                std::fflush(stderr);
+            }
+            g_listNodeOwners[result] = ListNodeOwner{vsyncTick(), 0, owner, count, 0};
+        }
+        g_origListNodeAllocReturn(rdram, ctx, rt);
     }
 
     void hookUpload(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
@@ -1212,7 +1300,9 @@ void kzWin06WatchInstall(PS2Runtime &runtime)
                         hook(runtime, kz_hook::HeapReallocC, &hookReallocC, &g_origReallocC) &&
                         hook(runtime, kz_hook::VectorGrowReturn, &hookVectorGrowReturn, &g_origVectorGrowReturn) &&
                         hook(runtime, kz_hook::Vector36ResizeReturn, &hookVector36ResizeReturn,
-                             &g_origVector36ResizeReturn);
+                             &g_origVector36ResizeReturn) &&
+                        hook(runtime, kz_hook::ListNodeAllocReturn, &hookListNodeAllocReturn,
+                             &g_origListNodeAllocReturn);
     std::fprintf(stderr, "[win06] heap and upload hooks %s\n", hooked ? "installed" : "NOT installed");
 
     AddVectoredExceptionHandler(1, &onException);

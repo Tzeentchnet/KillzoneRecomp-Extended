@@ -4,7 +4,7 @@
 **Workspace:** `D:\Github` (also holds the superseded `plan.md` and `KillzoneRecomp_Master_PRD.md`, history only)
 **Implementation repository:** `D:\Github\KillzoneRecomp-Extended`
 **Branch / last substantive commit:** `master` / see `git log` (2026-10-20 session commits)
-**PS2Recomp revision:** `b44b2dcba0fe5a247b6f42176dd41f36168b6565` (`Tzeentchnet/PS2Recomp`, branch `killzone`)
+**PS2Recomp revision:** `93d19aaa4f933787df05eed348a8283aa249a22b` (`Tzeentchnet/PS2Recomp`, branch `killzone`)
 **GitHub origin:** `Tzeentchnet/KillzoneRecomp-Extended`, private during cleanup
 
 This file is the session protocol for people and agents: how to start, which rules apply, how to check for
@@ -116,14 +116,14 @@ Safe parallel work:
 ## 7. Latest session record
 
 ```text
-Task: STAB-01 ownership tracing after CFG-01 and PROFILE-01 completion
+Task: Defer STAB-01; complete WIN-01 and WIN-03
 Owner/session: Copilot SDK in VS Code, 2026-10-20
 Machine: Windows 11 x64; MSVC and clang-cl presets; D3D12 on NVIDIA GeForce RTX 5070
-Status: STAB-01 remains in progress. PROFILE-01 and CFG-01 are complete in WORKDONE. BASE-01 still needs hands-on acceptance.
-Files changed this continuation: src/kz_win06_watch.cpp; src/kz_hook_addresses.h; config/generated-manifest.json; TODO.md; docs/findings.md; LEARNINGS.md; HANDOFF.md. Temporary PCSX2 tracing was removed and the pinned checkout is clean.
-Acceptance commands and exact results: watched batches win06_watch5 4/5 and win06_watch6 4/5; later watched batches reached 10/10. Uninstrumented win06_uninstrumented1 passed 10/10, but independent win06_uninstrumented2 passed only 7/10 (hang, host exception, missing target). The manifest-validated resize-owner hook then produced win06_ownerhook1, win06_ownerhook2 and win06_ownerhook3 at 7/10 each; ownerhook3 had no allocator/owner marker before its three failures. verify_deps.py --strict PASS 31/0/0; both generated gates PASS (53 hook signatures, 101,715 resumable entries); MSVC ISO-free 13/13; clang-cl ISO-free 13/13; git diff --check PASS.
-New facts or decisions: cleanup owner 0x007E1EC0 frees node 0x01F0FF00 through 0x2E7B38 -> 0x2E7440 -> 0x2E8170, while live parent 0x01281020 retains it in vector pointer field 0x0128107C. Resize call 0x4299F4 reallocates that freed pointer seven vsyncs later and repeats. Another completed run received a freed, header-overwritten block for a first vector allocation. Passing runs can therefore contain allocator corruption. Do not clear fields or guard allocator failures.
-Blocker and minimal reproducer: the lifecycle transition that leaves the cross-owner alias live is not yet identified. The standard gate remains tools\scripts\win06_gate.ps1 -Runs 10 -Name <name> -Card work\win04_20261019_card -Iso <image> -Elf game\SCUS_974.02.
-Next command: rerun the watched gate until the 0x4299FC owner history and a cleanup/bad-realloc event coincide, then trace the parent teardown that leaves the field live.
-Safe parallel work: WIN-01; WIN-03; BASE-01 hands-on
+Status: STAB-01 investigation is deferred by project decision and remains an M4/release blocker. WIN-01 and WIN-03 are complete in WORKDONE. BASE-01 still needs hands-on acceptance.
+Files changed: IMPLEMENTATION_PLAN.md; README.md; TODO.md; WORKDONE.md; docs/findings.md; LEARNINGS.md; HANDOFF.md; src/kz_launcher.cpp; src/kz_win06_watch.cpp; src/kz_hook_addresses.h; config/generated-manifest.json; config/dependencies.lock.json; patches/README.md; patches/ps2recomp/0032-standalone-runtime-test-suite.patch; patches/ps2recomp/combined.lock.diff; ext/PS2Recomp gitlink. The temporary generated allocator trace was removed.
+Acceptance commands and exact results: STAB diagnostics `win06_listoverlap1` 8/10 and `win06_heapword1` 7/10, then deferred without a workaround. D3D11 hardware golden PASS at 1x/2x with zero mismatches; chapter 1 run exit 0 with nonblack frames; actual swap-chain frames 55.5-71.4% nonblack; original 90-second run exit 0 with advancing nonblack frames. Standalone PS2Recomp suite PASS 439/439. verify_deps.py --strict PASS 31/0/0; resume table PASS 132,656/100,661/31,995; generated inventory PASS (54 hooks, 101,715 resumable entries); MSVC ISO-free 13/13; clang-cl ISO-free 13/13; git diff checks PASS.
+New facts or decisions: the historical D3D11 all-zero defect no longer reproduces on the same RTX 5070/driver and stale warnings were removed. WIN-03 combined a stale PCM fixture, a null-runtime libsd probe, zero-CL VIF semantics, and stale regression expectations; PS2Recomp commit 93d19aa fixes them. The later STAB arms did not reproduce the list/vector overlap and instead caught allocator bin/candidate corruption directly, so that alias is not assumed to be the universal first fault.
+Blocker and minimal reproducer: BASE-01 requires a human play-test with all testing options disabled. STAB-01 remains deferred but its standard reproducer is tools\scripts\win06_gate.ps1 -Runs 10 -Name <name> -Card work\win04_20261019_card -Iso <image> -Elf game\SCUS_974.02.
+Next command: perform the BASE-01 hands-on D3D12 run: create/select a profile, play the first mission, save/load, return to the front end, and check high-refresh timing, mouse aim, controller input and clean shutdown with all testing options off.
+Safe parallel work: none in the active M0 queue; reactivating STAB-01 requires reprioritization.
 ```

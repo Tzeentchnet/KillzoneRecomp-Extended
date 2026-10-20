@@ -17,7 +17,7 @@ owns edits; `[SERIAL]` waits on dependencies or the integration owner; `[HUMAN]`
 | # | ID | Task | Machine | Label | Status | Blocked by |
 |---|---|---|---|---|---|---|
 | 1 | BASE-01 | Lock the Windows enhancement baseline (legacy WIN-04) | Windows | `[SERIAL]` | in progress | hands-on play-test |
-| 2 | STAB-01 | Resolve chapter 11 repeated-load corruption (legacy WIN-06) | Windows | `[SERIAL]` | in progress | - |
+| 2 | STAB-01 | Resolve chapter 11 repeated-load corruption (legacy WIN-06) | Windows | `[SERIAL]` | blocked | deferred by project decision |
 | 3 | TEST-01 | Graphics and weapon measurement harness | Windows | `[SERIAL]` | blocked | BASE-01 |
 | 4 | GFX-01 | D3D12 presentation and post-process parity | Windows | `[SERIAL]` | blocked | TEST-01 |
 | 5 | GFX-03 | Qualify render distance, LOD and texture clarity | Windows | `[SERIAL]` | blocked | BASE-01, TEST-01 |
@@ -27,9 +27,10 @@ owns edits; `[SERIAL]` waits on dependencies or the integration owner; `[HUMAN]`
 | 9 | GFX-04 | Temporal input feasibility contract | Windows | `[SERIAL]` | blocked | GFX-02 |
 | 10 | DLSS-01 | DLSS 5 qualification and go/no-go decision | Windows | `[HUMAN]` | blocked | GFX-04, SDK/legal access |
 
-BASE-01 and STAB-01 are the current executable work. TEST-01 follows BASE-01. Graphics and gameplay then split into
-independent lanes as defined in the plan. CFG-01 and PROFILE-01 are complete in [`WORKDONE.md`](WORKDONE.md). DLSS-01
-is qualification only; product integration is not in this queue.
+BASE-01 is the current milestone gate while its hands-on acceptance is pending. STAB-01 investigation is deferred by
+project decision but remains a release blocker. TEST-01 follows BASE-01. Graphics and gameplay then split into
+independent lanes as defined in the plan. CFG-01, PROFILE-01, WIN-01 and WIN-03 are complete in
+[`WORKDONE.md`](WORKDONE.md). DLSS-01 is qualification only; product integration is not in this queue.
 
 ## Paused work from the superseded portability roadmap
 
@@ -110,19 +111,6 @@ a plan revision.
   mission, save/load, quit to the front end, and check high-refresh timing and mouse aim.
 - **Why now:** it protects every graphics and gameplay comparison in the revised plan.
 
-### 7. WIN-01 - D3D11 black output on NVIDIA
-
-- **Status:** not started. D3D11 stays exactly black through a 90-second capture on an RTX 5070 (driver
-  `32.0.16.1742`), while D3D12 renders the same GS stream with the same executable, ELF, ISO, settings and guest state.
-  The synthetic `kzgs_d3d11_golden` test passes on WARP, so the defect is in the hardware path.
-- **Workaround in place:** the local `killzone.ini` uses `Renderer=d3d12`, and the launcher points users with a black
-  D3D11 frame to D3D12.
-
-### 8. WIN-03 - PS2Recomp standalone test-suite failures
-
-- **Status:** not started. The broad standalone PS2Recomp test executable reaches a `sceMpegDemuxPssRing` failure and
-  later an access violation. The focused MPEG low-water and two-callback regressions pass before that point.
-
 ### 9. WIN-02 - Unlock All Campaign Levels launcher option
 
 - **Status:** in progress; implemented 2026-10-17 (launcher Testing tab, `[Testing] UnlockAllLevels`, `KZ_UNLOCK_ALL`).
@@ -148,9 +136,9 @@ a plan revision.
 
 ### STAB-01 (legacy WIN-06) - Chapter 11 repeated-load corruption
 
-- **Status:** in progress. A full-intro run reached `11.OTS` at 225.7 s and hit the same missing-target failure, ruling
-  out the testing shortcut as the common cause. Ownership tracing now proves a cross-owner use-after-free before the
-  allocator/vector collapse; the lifecycle transition that leaves the alias live is not yet identified.
+- **Status:** blocked (deferred by project decision on 2026-10-20). A full-intro run reached `11.OTS` at 225.7 s and
+  hit the same missing-target failure, ruling out the testing shortcut as the common cause. The defect is not waived:
+  STAB-01 remains required for M4 and release acceptance.
 - **Gate:** `tools\scripts\win06_gate.ps1 -Runs 10 -Name <name> -Card work\win04_20261019_card -Iso <image>
   -Elf game\SCUS_974.02` (D3D12, skipped intro, fresh card copy per run, pass/fail summary). Acceptance is 10/10.
 - **Ruled out (ten-run batches, win-clang-rel, D3D12):**
@@ -171,18 +159,20 @@ a plan revision.
   uninstrumented batch was 7/10 (one hang, one host exception, one missing target). The new resize-owner hook then
   produced three independent 7/10 batches, including host GS faults, missing targets and mixed-size corruption runs.
   The third batch had no allocator/owner marker before its failures, so this hook is deliberately not a universal
-  corruption detector.
+  corruption detector. A low-overhead list-node provenance arm (`win06_listoverlap1`) was 8/10 with no list/vector
+  overlap marker. Its corrupt run instead caught `malloc(0x600)` returning non-chunk `0x01F101A0`; allocator
+  descriptor word `0x0055EC6C` changed from the candidate chunk base to `0x600` during the call. A single-word
+  hardware-watch arm (`win06_heapword1`) was 7/10 and reproduced the same collapse with `malloc(0x400)` returning
+  `0x01F10020`, but emitted no usable writer event.
 - **Renderer hardening:** x64 crash registers proved that the GS palette crash was an inverted alpha-index range:
   its unsigned width wrapped to `0xFFFFFFC7`. The pinned PCSX2 guard now falls back to the full palette range and
   skips a separate null depth-target optimization; `kzgs_palette_guard` passes. This removed host exceptions, but
   `win06_gsguard` remained 8/10: one severe texture-corruption run and one EE `pc=ra=0x50` run. A guarded watched
   batch was 10/10, so the watch perturbs the timing and does not close the task.
-- **Current decision:** do not guard the allocator, skip bad frees, clear stale fields generically or hide corrupt
-  pointers. The watch now records heap bounds, cleanup owner/list provenance, delete-wrapper callers and bounded list
-  chains. A manifest-validated return hook at `0x4299FC` now associates 36-byte-element vector resize results with
-  owner fields and checks them at cleanup/bad realloc; two batches have not yet reproduced the exact `LIVE OWNER`
-  event. Continue until that lifecycle transition is captured, then trace the owner teardown rather than masking the
-  stale pointer. Acceptance still requires an uninstrumented 10/10 gate with visually clean captures.
+- **Current decision:** defer further investigation. Do not guard the allocator, skip bad frees, clear stale fields
+  generically or hide corrupt pointers. The diagnostic hooks remain available for a future bounded investigation;
+  reactivation should start from the allocator candidate/bin state rather than assuming the earlier ownership alias
+  is the universal first fault. Acceptance still requires an uninstrumented 10/10 gate with visually clean captures.
 
 ## Retired integration gate
 

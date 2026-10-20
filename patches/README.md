@@ -693,6 +693,12 @@ resulting tree to equal the pinned submodule tree.
   `PS2X_VIF1_STOP_ON_UNKNOWN=1` stops that diagnostic packet at the first unknown command. No CALL overflow occurred
   in the WIN-06 acceptance workload, and source-mapped failures had zero unknown VIF commands, so this is retained as
   a correctness fix and diagnostic rather than claimed as the WIN-06 root cause.
+- **0032-standalone-runtime-test-suite.patch** - restores the complete standalone PS2Recomp suite to 439/439 on
+  Windows. VIF1 UNPACK now treats zero `STCYCL.CL` as 256, matching the existing zero-`WL` handling and hardware
+  semantics. The libsd remote initializer keeps its non-runtime fallback safe when no `PS2Runtime` is supplied.
+  Regression fixtures now use the verified PCM stream key, place PATH2 image continuations inside a subsequent
+  `DIRECT`, reflect the optimized JALR return-only resume policy, and verify `SifInitRpc` without assuming synchronous
+  IOP timing. `PS2X_TEST_FILTER=<substring>` provides focused execution in the minimal test harness.
 - **experimental/ee-di-interrupt-gate.diff** (not applied; `git apply --directory=ext/PS2Recomp`) - makes
   `EeScheduler` honour Status.EIE: while the running context is inside `di`/`ei`, pending interrupt, SIF and stream
   invocations, time-slice preemption and event-driven thread switches wait for `ei` (50 ms safety valve,
