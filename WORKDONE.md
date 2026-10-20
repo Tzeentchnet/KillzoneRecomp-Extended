@@ -122,7 +122,7 @@ submodule, and the failed toml11 GCC-flag probes during the PS2Recomp configure.
 
 ### ASSET-01 - Retail asset storage and build-pipeline research (BYOD, read-only)
 
-- **Commit:** uncommitted documentation working tree (2026-10-19)
+- **Commit:** `b4d01ee` (2026-10-19)
 - **Machine:** Windows 11 x64; supported NTSC-U `SCUS_974.02`; read-only executable, repository and previously
   validated archive evidence.
 - **Evidence:** [`docs/assetforms.md`](docs/assetforms.md) now separates shipped containment, runtime I/O and
@@ -143,7 +143,7 @@ submodule, and the failed toml11 GCC-flag probes during the PS2Recomp configure.
 
 ### ASSET-02 - Skinned geometry and animation decoder review (BYOD, read-only)
 
-- **Commit:** uncommitted documentation working tree (2026-10-19)
+- **Commit:** `b4d01ee` (2026-10-19)
 - **Machine:** Windows 11 x64; supported NTSC-U `SCUS_974.02`; executable SHA-256
   `7d3c8ee59c9800ea5238e7ce62bfd09825eb50867123f71a42b81142b6842169`.
 - **Corrected decoding:** category-major pose records are consumed sequentially and scattered to original-order bone
@@ -164,7 +164,7 @@ submodule, and the failed toml11 GCC-flag probes during the PS2Recomp configure.
 
 ### ASSET-03 - Retail animation playback contract (BYOD, read-only)
 
-- **Commit:** uncommitted documentation working tree (2026-10-19)
+- **Commit:** `b4d01ee` (2026-10-19)
 - **Machine and source:** Windows 11 x64; authorized NTSC-U ISO SHA-256
   `01f071a7381df2aa4ddb49cff3b594ef4066a82dfaff26978cec8ec69cfe91d6`; matching executable SHA-256
   `7d3c8ee59c9800ea5238e7ce62bfd09825eb50867123f71a42b81142b6842169`.
