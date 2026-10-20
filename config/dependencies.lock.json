@@ -10,12 +10,12 @@
     "repository_path": "ext/PS2Recomp",
     "patch_directory": "patches/ps2recomp",
     "base_commit": "75d729ce40d7eed9649fd4bb05628dee520f3d0c",
-    "target_commit": "6e4bc1827a65d45be92d10f9eca97c04f062f4b8",
-    "target_tree": "5bcfadbdca9a6a67a3a08c7a9dc8a1df1006ea6c",
+    "target_commit": "b44b2dcba0fe5a247b6f42176dd41f36168b6565",
+    "target_tree": "e45bc6a6c727dd282b480c87323d7b61f0bbe0c3",
     "canonical_patch": {
       "path": "patches/ps2recomp/combined.lock.diff",
-      "changed_paths": 61,
-      "sha256": "434916cdcb5835911f2281d22b02d545fd6a3dd23988bab1347c0ff476df6498"
+      "changed_paths": 62,
+      "sha256": "d3ebd894ad87d3b16dd92928847b4f60828a9ac523276d4088706712604d738d"
     },
     "patches": [
       {
@@ -129,6 +129,10 @@
       {
         "path": "0029-mpeg-refill-budget.patch",
         "sha256": "77832ed2bb74d916582ff09dfaa24a5243926ca93c60cc8c0919b35ba899047a"
+      },
+      {
+        "path": "0030-vif1-mpg-address-wrap.patch",
+        "sha256": "fba774f9cb63527e0b7b65f1b58ed5dcbaa2b8b69ffad9fb215e5816ca214cd4"
       }
     ]
   },
@@ -137,7 +141,7 @@
       "id": "ps2recomp",
       "kind": "git-submodule",
       "source_url": "https://github.com/Tzeentchnet/PS2Recomp.git",
-      "revision": "6e4bc1827a65d45be92d10f9eca97c04f062f4b8",
+      "revision": "b44b2dcba0fe5a247b6f42176dd41f36168b6565",
       "license": "GPL-3.0-only",
       "redistribution": "Copyleft; distribute corresponding source and notices.",
       "acquisition": "git submodule update --init --recursive",

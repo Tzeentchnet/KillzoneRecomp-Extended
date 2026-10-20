@@ -1,7 +1,7 @@
 // Killzone runner entry point. Replaces ps2xRuntime/src/main.cpp so we control boot paths.
 //
 // Usage: killzone.exe [--elf <path to SCUS_974.02>] [--iso <path to Killzone ISO>] [--sample <seconds>]
-// Defaults: --elf game/SCUS_974.02 (relative to the working directory); --iso unset.
+// Defaults: the ELF extracted from the disc image (killzone.ini [Paths] ISO, or --iso) into <settings dir>/disc.
 // With an ISO, its extracted boot files are mounted as cdrom0: and the image backs raw sceCdRead sector reads.
 
 #include "ps2_runtime.h"
@@ -234,6 +234,14 @@ int main(int argc, char *argv[])
         const std::filesystem::path elf = opts.elfGiven
                                               ? std::filesystem::absolute(opts.elf).lexically_normal()
                                               : preparedElf;
+        if (elf.empty())
+        {
+            const std::string msg = "No game disc image is selected. Choose your Killzone disc image in the launcher.";
+            std::cerr << "[kz] " << msg << std::endl;
+            if (!headless)
+                SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Killzone", msg.c_str(), nullptr);
+            return 1;
+        }
         if (!std::filesystem::exists(elf))
         {
             std::cerr << "[kz] ELF not found: " << elf.string() << std::endl;

@@ -681,3 +681,16 @@ resulting tree to equal the pinned submodule tree.
   existing no-progress guard still prevents retry spinning. This preserves the four-picture video reserve without
   letting a long callback chain delay guest audio maintenance. The focused scheduler regression forces continued
   callback progress and verifies that exactly two proactive callbacks run before the queued picture is returned.
+- **0030-vif1-mpg-address-wrap.patch** - VIF1 `MPG` now masks its destination into the 16 KB VU1 micro memory and
+  wraps an upload that crosses the end back to address 0, as the hardware does; `NUM=0` still means 256
+  instructions. A truncated payload stops the packet instead of being partly copied. Identical uploads still skip
+  invalidating host VU programs. Found while investigating WIN-06 (a suspicious `MSCAL 0x2CE8` XGKICK); it is a
+  correctness fix with focused memory tests, not the WIN-06 root cause (the ten-run gate still failed 2/10).
+- **experimental/ee-di-interrupt-gate.diff** (not applied; `git apply --directory=ext/PS2Recomp`) - makes
+  `EeScheduler` honour Status.EIE: while the running context is inside `di`/`ei`, pending interrupt, SIF and stream
+  invocations, time-slice preemption and event-driven thread switches wait for `ei` (50 ms safety valve,
+  `PS2X_DI_GATE=0|log`), plus a scheduler regression (`di holds a pending interrupt until ei`). The current runtime
+  delivers handlers inside guest critical sections, which real hardware never does. Measured on the WIN-06 workload
+  (2026-10-20): `log` mode saw 0-2 such deliveries per run, all benign (the frame-pipeline VIF1 handler during
+  `SyncDCache` or at the `ei` itself), and the ten-run gate scored 8/10 with the gate on, the same as without it. Kept
+  for a future fault that does involve a critical section; not adopted without evidence of benefit.

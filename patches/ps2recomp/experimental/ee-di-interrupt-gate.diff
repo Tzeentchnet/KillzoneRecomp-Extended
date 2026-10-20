@@ -1,0 +1,237 @@
+diff --git a/ps2xRuntime/include/runtime/ee_scheduler.h b/ps2xRuntime/include/runtime/ee_scheduler.h
+index ede4cb5..653ace0 100644
+--- a/ps2xRuntime/include/runtime/ee_scheduler.h
++++ b/ps2xRuntime/include/runtime/ee_scheduler.h
+@@ -384,6 +384,9 @@ private:
+     void makeReady(GuestThread &thread, int result, bool interruptSafe);
+     void requestPreemptionIfHigher(const GuestThread &readyThread, bool interruptSafe);
+     void applyPendingPreemption();
++    // True while `context` has interrupts disabled (`di`, Status.EIE clear): pending invocations and asynchronous thread
++    // switches wait for `ei`. `what`/`detail` name the held delivery for PS2X_DI_GATE=log.
++    [[nodiscard]] bool interruptsHeldOff(const R5900Context &context, const char *what, uint32_t detail);
+     void processPendingEvents();
+     void processDueDeadlines();
+     void processEvent(const EeEvent &event);
+@@ -426,6 +429,8 @@ private:
+     bool m_rescheduleRequested = false;
+     bool m_timeSliceExpired = false;
+     bool m_insideInterrupt = false;
++    uint64_t m_diHoldStartCycle = 0;  // EE cycle the current `di` first held a delivery back (0: none held)
++    uint64_t m_diHeldDeliveries = 0;  // deliveries held back by `di` (logged ones with PS2X_DI_GATE=log)
+     uint32_t m_pendingEeTimerInterrupts = 0;
+     uint64_t m_eeCycle = 0;
+     uint64_t m_sliceEndCycle = kDefaultTimeSliceCycles;
+diff --git a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
+index 72017a4..efbcb5a 100644
+--- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
++++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
+@@ -73,6 +73,31 @@ namespace
+         const char *v = std::getenv("PS2X_STRESS_YIELD");
+         return v ? static_cast<uint32_t>(std::strtoul(v, nullptr, 10)) : 0u;
+     }();
++    // Status.EIE gate. The EE takes no interrupt while Status.EIE is clear (`di`), so no interrupt handler, SIF or stream
++    // callback, and no thread switch that one of them (or the time slice) causes, may run inside a di/ei critical section.
++    // libkernel's timer-alarm list (SetTimerAlarm, used by DelayThread) is edited inside one while the TIM2 handler walks
++    // it; delivering the handler there corrupted the list (Killzone WIN-06). PS2X_DI_GATE=0 restores the old behaviour,
++    // PS2X_DI_GATE=log keeps it and reports the first deliveries the gate would have held back.
++    enum class DiGateMode
++    {
++        Off,
++        Log,
++        On,
++    };
++    const DiGateMode g_diGate = []() {
++        const char *v = std::getenv("PS2X_DI_GATE");
++        if (v && v[0] == '0')
++            return DiGateMode::Off;
++        if (v && std::string_view(v) == "log")
++            return DiGateMode::Log;
++        return DiGateMode::On;
++    }();
++    constexpr uint32_t kCop0StatusEie = 0x00010000u;
++
++    bool guestInterruptsDisabled(const R5900Context &context) noexcept
++    {
++        return g_diGate == DiGateMode::On && (context.cop0_status & kCop0StatusEie) == 0u;
++    }
+ }
+ 
+ #define SCHED_STAT(expr) do { if (g_schedStats.on) { expr; } } while (0)
+@@ -345,6 +370,8 @@ void EeScheduler::reset(uint8_t *rdram, const R5900Context &mainContext)
+     m_rescheduleRequested = false;
+     m_timeSliceExpired = false;
+     m_insideInterrupt = false;
++    m_diHoldStartCycle = 0u;
++    m_diHeldDeliveries = 0u;
+     m_pendingEeTimerInterrupts = 0u;
+     m_eeCycle = 0u;
+     m_sliceEndCycle = kDefaultTimeSliceCycles;
+@@ -527,7 +554,8 @@ void EeScheduler::run()
+         // code, including guest code an HLE function called on its behalf (HleCall): a libmpeg nodata callback that
+         // blocks on a file read needs the SIF command that completes the read.
+         if (!m_pendingInvocations.empty() &&
+-            (running->invocations.empty() || running->invocations.back().kind == GuestInvocationKind::HleCall))
++            (running->invocations.empty() || running->invocations.back().kind == GuestInvocationKind::HleCall) &&
++            !interruptsHeldOff(context, "invocation", m_pendingInvocations.front().context.pc))
+         {
+             GuestInvocation invocation = std::move(m_pendingInvocations.front());
+             m_pendingInvocations.pop_front();
+@@ -674,7 +702,8 @@ void EeScheduler::run()
+ 
+         if (eventPumpNeeded())
+             processPendingEvents();
+-        if (m_rescheduleRequested && m_currentThreadId != 0)
++        if (m_rescheduleRequested && m_currentThreadId != 0 &&
++            !interruptsHeldOff(currentThread()->activeContext(), "thread switch", static_cast<uint32_t>(m_currentThreadId)))
+         {
+             GuestThread *preempted = currentThread();
+             assert(preempted != nullptr);
+@@ -755,7 +784,8 @@ bool EeScheduler::checkpointDue(uint32_t cycles) noexcept
+     }
+ 
+     const GuestThread *running = currentThread();
+-    if (running != nullptr && hasReadyAtOrAbovePriority(running->currentPriority))
++    if (running != nullptr && hasReadyAtOrAbovePriority(running->currentPriority) &&
++        !guestInterruptsDisabled(running->activeContext())) // the slice ends with a timer interrupt, which `di` holds off
+     {
+         m_rescheduleRequested = true;
+         m_timeSliceExpired = true;
+@@ -2181,12 +2211,56 @@ void EeScheduler::applyPendingPreemption()
+     }
+     GuestThread *self = currentThread();
+     assert(self != nullptr);
++    if (interruptsHeldOff(self->activeContext(), "thread switch", static_cast<uint32_t>(self->id)))
++    {
++        return; // stays requested; applied at the first scheduler pass after `ei`
++    }
+     enqueueReady(*self, !m_timeSliceExpired);
+     m_currentThreadId = 0;
+     m_rescheduleRequested = false;
+     m_timeSliceExpired = false;
+ }
+ 
++bool EeScheduler::interruptsHeldOff(const R5900Context &context, const char *what, uint32_t detail)
++{
++    if (g_diGate == DiGateMode::Off || (context.cop0_status & kCop0StatusEie) != 0u)
++    {
++        m_diHoldStartCycle = 0u;
++        return false;
++    }
++    if (g_diGate == DiGateMode::Log)
++    {
++        if (m_diHeldDeliveries++ < 64u)
++        {
++            std::fprintf(stderr, "[ee-sched] di-gate(log): %s 0x%x delivered inside di at pc=0x%x ra=0x%x thread=%d\n", what,
++                         detail, context.pc, getRegU32(&context, 31), m_currentThreadId);
++        }
++        return false;
++    }
++    if (m_diHoldStartCycle == 0u)
++    {
++        m_diHoldStartCycle = std::max<uint64_t>(m_eeCycle, 1u);
++    }
++    else if (m_eeCycle - m_diHoldStartCycle > kEeClockHz / 20u)
++    {
++        // A guest that keeps `di` for 50 ms is not in a short critical section (or set Status some other way): deliver
++        // as before rather than starve every interrupt.
++        static bool warned = false;
++        if (!warned)
++        {
++            warned = true;
++            std::fprintf(stderr, "[ee-sched] di-gate: interrupts disabled for over 50 ms at pc=0x%x status=0x%x; delivering\n",
++                         context.pc, context.cop0_status);
++        }
++        return false;
++    }
++    ++m_diHeldDeliveries;
++    // `ei` is an inline Status write in generated code: keep the checkpoint flag raised so the guest yields at its next
++    // checkpoint and the held delivery happens right after it.
++    m_checkpointPending.store(true, std::memory_order_release);
++    return true;
++}
++
+ void EeScheduler::processPendingEvents()
+ {
+     assertExecutor();
+diff --git a/ps2xTest/src/ps2_runtime_interrupt_tests.cpp b/ps2xTest/src/ps2_runtime_interrupt_tests.cpp
+index 4261bfa..d58d83b 100644
+--- a/ps2xTest/src/ps2_runtime_interrupt_tests.cpp
++++ b/ps2xTest/src/ps2_runtime_interrupt_tests.cpp
+@@ -72,6 +72,11 @@ namespace
+     constexpr uint32_t kInvocationQueuePc = 0x00160530u;
+     constexpr uint32_t kInvocationQueueResumePc = 0x00160540u;
+     constexpr uint32_t kInvocationQueueHandlerPc = 0x00160550u;
++    constexpr uint32_t kDiQueuePc = 0x00160600u;
++    constexpr uint32_t kDiInsidePc = 0x00160610u;
++    constexpr uint32_t kDiAfterEiPc = 0x00160620u;
++    constexpr uint32_t kDiHandlerPc = 0x00160630u;
++    constexpr uint32_t kCop0StatusEie = 0x00010000u;
+ 
+     constexpr uint32_t kTimer2Count = 0x10001000u;
+     constexpr uint32_t kTimer2Mode = 0x10001010u;
+@@ -373,6 +378,39 @@ namespace
+         ctx->pc = 0u;
+         runtime->requestStop();
+     }
++
++    // `di`, queue an interrupt, leave to the scheduler inside the critical section, then `ei`.
++    void schedulerDiQueue(uint8_t *, R5900Context *ctx, PS2Runtime *runtime)
++    {
++        g_dispatchTrace.push_back(1);
++        ctx->cop0_status &= ~kCop0StatusEie;
++        GuestInvocation invocation{};
++        invocation.kind = GuestInvocationKind::Interrupt;
++        invocation.context.pc = kDiHandlerPc;
++        setRegU32(invocation.context, 31, 0u);
++        runtime->eeScheduler().queueInvocation(std::move(invocation));
++        ctx->pc = kDiInsidePc;
++    }
++
++    void schedulerDiInside(uint8_t *, R5900Context *ctx, PS2Runtime *)
++    {
++        g_dispatchTrace.push_back(2);
++        ctx->cop0_status |= kCop0StatusEie;
++        ctx->pc = kDiAfterEiPc;
++    }
++
++    void schedulerDiHandler(uint8_t *, R5900Context *ctx, PS2Runtime *)
++    {
++        g_dispatchTrace.push_back(3);
++        ctx->pc = 0u;
++    }
++
++    void schedulerDiAfterEi(uint8_t *, R5900Context *ctx, PS2Runtime *runtime)
++    {
++        g_dispatchTrace.push_back(4);
++        ctx->pc = 0u;
++        runtime->requestStop();
++    }
+ }
+ 
+ void register_ps2_runtime_interrupt_tests()
+@@ -602,6 +640,25 @@ void register_ps2_runtime_interrupt_tests()
+             t.IsFalse(g_invocationQueueSpChanged, "sequential callbacks should reuse the same stack depth");
+         });
+ 
++        tc.Run("di holds a pending interrupt until ei", [](TestCase &t)
++        {
++            TestEnv env;
++            env.runtime.registerFunction(kDiQueuePc, schedulerDiQueue);
++            env.runtime.registerFunction(kDiInsidePc, schedulerDiInside);
++            env.runtime.registerFunction(kDiAfterEiPc, schedulerDiAfterEi);
++            env.runtime.registerFunction(kDiHandlerPc, schedulerDiHandler);
++
++            g_dispatchTrace.clear();
++            R5900Context mainContext{};
++            mainContext.pc = kDiQueuePc;
++            env.runtime.eeScheduler().reset(env.rdram.data(), mainContext);
++            env.runtime.eeScheduler().run();
++
++            const std::vector<int> expected{1, 2, 3, 4};
++            t.IsTrue(g_dispatchTrace == expected,
++                     "an interrupt queued inside di/ei must run after ei, not inside the critical section");
++        });
++
+         tc.Run("iSignalSema defers selection until IRQ return", [](TestCase &t)
+         {
+             TestEnv env;

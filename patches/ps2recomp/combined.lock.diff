@@ -9648,7 +9648,7 @@ index 45cb9d2..31917e6 100644
      RUNTIME_LOG("[run] exiting loop");
  }
 diff --git a/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp b/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
-index b02c7ca..22a2af6 100644
+index b02c7ca..0701864 100644
 --- a/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
 +++ b/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
 @@ -1,6 +1,12 @@
@@ -10192,7 +10192,7 @@ index b02c7ca..22a2af6 100644
      uint32_t pendingGifImageQwc(const uint8_t *data, uint32_t sizeBytes)
      {
          if (!data || sizeBytes < 16u)
-@@ -295,39 +822,98 @@ void PS2Memory::processVIF1Data(uint32_t srcPhys, uint32_t sizeBytes)
+@@ -295,39 +822,119 @@ void PS2Memory::processVIF1Data(uint32_t srcPhys, uint32_t sizeBytes)
      processVIF1Data(m_rdram + srcPhys, sizeBytes);
  }
  
@@ -10270,10 +10270,32 @@ index b02c7ca..22a2af6 100644
 +        if (stats)
 +            c.fetch_add(n, std::memory_order_relaxed);
 +    };
++
++    auto applyMpgUpload = [&](uint32_t destAddr, const uint8_t *src, uint32_t size)
++    {
++        if (!m_vu1Code || size == 0u)
++            return;
++
++        const uint32_t firstSize = std::min<uint32_t>(size, PS2_VU1_CODE_SIZE - destAddr);
++        const uint32_t secondSize = size - firstSize;
++        const bool same =
++            std::memcmp(m_vu1Code + destAddr, src, firstSize) == 0 &&
++            (secondSize == 0u || std::memcmp(m_vu1Code, src + firstSize, secondSize) == 0);
++        if (!same || !mpgSkipSameEnabled())
++        {
++            std::memcpy(m_vu1Code + destAddr, src, firstSize);
++            if (secondSize != 0u)
++                std::memcpy(m_vu1Code, src + firstSize, secondSize);
++            markVU1CodeModified();
++        }
++        if (ps2Vif1StatsEnabled())
++            ps2Vif1StatMpg(same);
++    };
  
      uint32_t pos = 0;
  
-     while (pos + 4 <= sizeBytes)
+-    while (pos + 4 <= sizeBytes)
++    while (pos + 4u <= sizeBytes)
      {
 -        if (m_vif1PendingPath2ImageQwc != 0u)
 +        if (m_vif1PendingDirectQwc != 0u)
@@ -10307,7 +10329,7 @@ index b02c7ca..22a2af6 100644
              continue;
          }
  
-@@ -379,6 +965,7 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
+@@ -379,6 +986,7 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
          else if (opcode == VIF_STMOD)
          {
              vif1_regs.mode = imm & 3u;
@@ -10315,7 +10337,7 @@ index b02c7ca..22a2af6 100644
              continue;
          }
          else if (opcode == VIF_MSKPATH3)
-@@ -416,7 +1003,9 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
+@@ -416,7 +1024,9 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
                  vif1_regs.tops = (vif1_regs.base + vif1_regs.ofst) & 0x3FFu;
              vif1_regs.stat ^= (1u << 7); // toggle DBF
  
@@ -10326,7 +10348,7 @@ index b02c7ca..22a2af6 100644
                  m_vu1MscalCallback(startPC, runTop, runItop);
              continue;
          }
-@@ -434,7 +1023,8 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
+@@ -434,7 +1044,8 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
                  vif1_regs.tops = (vif1_regs.base + vif1_regs.ofst) & 0x3FFu;
              vif1_regs.stat ^= (1u << 7); // toggle DBF
  
@@ -10336,35 +10358,38 @@ index b02c7ca..22a2af6 100644
                  m_vu1MscntCallback(runTop, runItop);
              continue;
          }
-@@ -466,6 +1056,7 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
+@@ -466,23 +1077,16 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
          }
          else if (opcode == VIF_MPG)
          {
+-            uint32_t destAddr = (uint32_t)imm * 8u;
 +            count(st.vif1Mpg);
-             uint32_t destAddr = (uint32_t)imm * 8u;
++            const uint32_t destAddr = (static_cast<uint32_t>(imm) * 8u) & (PS2_VU1_CODE_SIZE - 1u);
              const uint32_t instructionCount = (num == 0u) ? 256u : static_cast<uint32_t>(num);
              const uint32_t mpgBytes = instructionCount * 8u;
-@@ -476,8 +1067,17 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
-                     copyBytes = PS2_VU1_CODE_SIZE - destAddr;
-                 if (pos + copyBytes <= sizeBytes)
-                 {
+-            if (m_vu1Code && destAddr < PS2_VU1_CODE_SIZE && mpgBytes > 0)
+-            {
+-                uint32_t copyBytes = mpgBytes;
+-                if (destAddr + copyBytes > PS2_VU1_CODE_SIZE)
+-                    copyBytes = PS2_VU1_CODE_SIZE - destAddr;
+-                if (pos + copyBytes <= sizeBytes)
+-                {
 -                    std::memcpy(m_vu1Code + destAddr, data + pos, copyBytes);
 -                    markVU1CodeModified();
-+                    // The game re-sends microcode all the time; an upload that changes nothing must not invalidate the
-+                    // host VU's recompiled programs (each generation change makes the next MSCALs search the program
-+                    // lists again).
-+                    const bool same = std::memcmp(m_vu1Code + destAddr, data + pos, copyBytes) == 0;
-+                    if (!same || !mpgSkipSameEnabled())
-+                    {
-+                        std::memcpy(m_vu1Code + destAddr, data + pos, copyBytes);
-+                        markVU1CodeModified();
-+                    }
-+                    if (ps2Vif1StatsEnabled())
-+                        ps2Vif1StatMpg(same);
-                 }
-             }
-             pos += mpgBytes;
-@@ -490,22 +1090,24 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
+-                }
+-            }
+-            pos += mpgBytes;
+-            if (pos > sizeBytes)
++            if (sizeBytes - pos < mpgBytes)
+                 break;
++
++            // The game re-sends microcode frequently. Identical uploads do not invalidate host VU programs.
++            applyMpgUpload(destAddr, data + pos, mpgBytes);
++            pos += mpgBytes;
+             continue;
+         }
+         else if (opcode == VIF_DIRECT || opcode == VIF_DIRECTHL)
+@@ -490,22 +1094,24 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
              uint32_t qwCount = imm;
              if (qwCount == 0)
                  qwCount = 65536;
@@ -10398,7 +10423,7 @@ index b02c7ca..22a2af6 100644
              }
  
              pos += qwCount * 16;
-@@ -571,6 +1173,34 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
+@@ -571,6 +1177,34 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
                  vuAddr = (vuAddr + (vif1_regs.tops & 0x3FFu)) & 0x3FFu;
  
              const bool zeroExtend = (imm & 0x4000u) != 0u;
@@ -10433,7 +10458,7 @@ index b02c7ca..22a2af6 100644
  
              if (m_vu1Data && totalBytes > 0 && pos + totalBytes <= sizeBytes)
              {
-@@ -777,6 +1407,7 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
+@@ -777,6 +1411,7 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
          }
          else
          {
@@ -11474,6 +11499,45 @@ index 0000000..44f468e
 +#else
 +void ps2Vif1TuneWorkerThread() {}
 +#endif
+diff --git a/ps2xTest/src/ps2_memory_tests.cpp b/ps2xTest/src/ps2_memory_tests.cpp
+index 0b22fe0..39ba9d5 100644
+--- a/ps2xTest/src/ps2_memory_tests.cpp
++++ b/ps2xTest/src/ps2_memory_tests.cpp
+@@ -410,6 +410,34 @@ void register_ps2_memory_tests()
+             t.IsTrue(matches, "MPG num=0 should copy 2048 bytes into VU1 code memory");
+         });
+ 
++        tc.Run("VIF MPG masks and wraps VU1 micro memory addresses", [](TestCase &t)
++        {
++            PS2Memory mem;
++            t.IsTrue(mem.initialize(), "PS2Memory initialize should succeed");
++
++            std::memset(mem.getVU1Code(), 0xCD, PS2_VU1_CODE_SIZE);
++            std::vector<uint8_t> packet;
++            appendU32(packet, makeVifCmd(0x4Au, 2u, 0x07FFu));
++            for (uint32_t i = 0; i < 16u; ++i)
++                packet.push_back(static_cast<uint8_t>(0x10u + i));
++            appendU32(packet, makeVifCmd(0x4Au, 1u, 0x0800u));
++            for (uint32_t i = 0; i < 8u; ++i)
++                packet.push_back(static_cast<uint8_t>(0x80u + i));
++
++            mem.processVIF1Data(packet.data(), static_cast<uint32_t>(packet.size()));
++
++            const uint8_t *code = mem.getVU1Code();
++            bool tailMatches = true;
++            bool maskedStartMatches = true;
++            for (uint32_t i = 0; i < 8u; ++i)
++            {
++                tailMatches &= code[PS2_VU1_CODE_SIZE - 8u + i] == static_cast<uint8_t>(0x10u + i);
++                maskedStartMatches &= code[i] == static_cast<uint8_t>(0x80u + i);
++            }
++            t.IsTrue(tailMatches, "MPG should write through the end of VU1 micro memory");
++            t.IsTrue(maskedStartMatches, "MPG immediate 0x800 should wrap to VU1 micro address zero");
++        });
++
+         tc.Run("VIF UNPACK num zero uploads 256 vectors", [](TestCase &t)
+         {
+             PS2Memory mem;
 diff --git a/ps2xTest/src/ps2_runtime_expansion_tests.cpp b/ps2xTest/src/ps2_runtime_expansion_tests.cpp
 index 4772f3f..d8165c4 100644
 --- a/ps2xTest/src/ps2_runtime_expansion_tests.cpp
