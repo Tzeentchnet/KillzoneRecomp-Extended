@@ -1,10 +1,10 @@
 # KillzoneRecomp session handoff
 
-**Last updated:** 2026-10-19
+**Last updated:** 2026-10-20
 **Workspace:** `D:\Github` (also holds the superseded `plan.md` and `KillzoneRecomp_Master_PRD.md`, history only)
 **Implementation repository:** `D:\Github\KillzoneRecomp-Extended`
-**Branch / last substantive commit:** `master` / `b4d01ee`
-**PS2Recomp revision:** `6e4bc1827a65d45be92d10f9eca97c04f062f4b8` (`Tzeentchnet/PS2Recomp`, branch `killzone`)
+**Branch / last substantive commit:** `master` / see `git log` (2026-10-20 session commits)
+**PS2Recomp revision:** `b44b2dcba0fe5a247b6f42176dd41f36168b6565` (`Tzeentchnet/PS2Recomp`, branch `killzone`)
 **GitHub origin:** `Tzeentchnet/KillzoneRecomp-Extended`, private during cleanup
 
 This file is the session protocol for people and agents: how to start, which rules apply, how to check for
@@ -19,6 +19,7 @@ regressions, and how to hand off. It does not hold task status. That lives in [`
 3. [`WORKDONE.md`](WORKDONE.md) - what is proven, with evidence. Authoritative for completion.
 4. This file - session rules.
 5. [`README.md`](README.md) - build, test and BYOD workflows.
+6. [`LEARNINGS.md`](LEARNINGS.md) - lessons from earlier sessions (lock updates, A/B tools, gates).
 
 Code and passing acceptance commands override prose. Fix any stale document in the same session.
 
@@ -65,8 +66,9 @@ tools\scripts\cmake_preset.ps1 -Preset win-clang-rel -Action test -Label iso-fre
 git diff --check
 ```
 
-Expected today: 31/0/0 dependency checks, both generated gates PASS (47 hook signatures and 101,715
-recompiler-resumable entries), 12/12 ISO-free under each compiler. The focused PORT-01 gate is
+Expected today: 31/0/0 dependency checks, both generated gates PASS (51 hook signatures and 101,715
+recompiler-resumable entries), 12/12 ISO-free under each compiler. WIN-06 has its own gate,
+`tools\scripts\win06_gate.ps1` (about 18 minutes for ten runs; see `LEARNINGS.md`). The focused PORT-01 gate is
 `tools\scripts\cmake_preset.ps1 -Preset win-clang-rel -Action build -Target kz_host_core`.
 
 The recompiler is built separately: `tools\scripts\build_ps2recomp.bat` (output in `build\ps2recomp`). Rebuild it
@@ -92,8 +94,9 @@ Before handing off:
 1. Update the task's entry in `TODO.md` (status, evidence so far, next command, blocker).
 2. If the task passed its plan acceptance, move it to `WORKDONE.md` with commit, machine, commands and exact results.
 3. Add any new evidence to `docs/findings.md` and any runtime patch rationale to `patches/README.md`.
-4. Replace the session record below.
-5. When a milestone changes state or a role signs off, update `IMPLEMENTATION_PLAN.md` (section 12, approval status).
+4. Add any lesson that would have saved this session time to `LEARNINGS.md`.
+5. Replace the session record below.
+6. When a milestone changes state or a role signs off, update `IMPLEMENTATION_PLAN.md` (section 12, approval status).
 
 Session record template:
 
@@ -113,14 +116,14 @@ Safe parallel work:
 ## 7. Latest session record
 
 ```text
-Task: ASSET-01/02/03 documentation closeout; Windows regression; WIN-04 scripted gameplay baseline
-Owner/session: VS Code session, 2026-10-19
+Task: WIN-06 write watch (side session of the 2026-10-20 session: TODO review and src audit; dependency lock repair; WIN-06 investigation; LEGAL-01 disposition)
+Owner/session: Claude Code desktop sessions, 2026-10-20
 Machine: Windows 11 x64; MSVC and clang-cl presets; D3D12 on NVIDIA GeForce RTX 5070
-Status: asset research and Windows regression complete; WIN-04 in progress (scripted portion passed, hands-on pending)
-Files changed: docs/assetforms.md; IMPLEMENTATION_PLAN.md; README.md; TODO.md; WORKDONE.md; HANDOFF.md
-Acceptance commands and exact results: verify_deps.py --strict PASS 31/0/0; verify_resume_table.py PASS (132,656 dispatch entries, 100,661 resume cases, 31,995 targets); inventory_generated.py --check PASS (47 hook signatures, 101,715 recompiler-resumable entries); MSVC ISO-free 12/12; clang-cl ISO-free 12/12; WIN-04 headless D3D12/120 Hz exit 0 with an isolated saved profile and 11 distinct nonblack captures; git diff --check PASS; Markdown fences balanced (assetforms 438)
-New facts or decisions: the previously documented 48-hook count was incorrect; the locked manifest has 47. The WIN-05 autopilot is suitable as a scripted WIN-04 driver but does not replace the required hands-on baseline with testing options disabled.
-Blocker and minimal reproducer: WIN-04 still needs profile/gameplay/save-load/quit/high-refresh/mouse hands-on evidence. WIN-05 remains blocked by WIN-06: KZ_START_LEVEL=11 with the intro skipped fails in about 1 of 3 runs; 0 of 6 with the intro played.
-Next command: complete the WIN-04 hands-on D3D12 play-test, then run WIN-06 with KZ_CRASH_TRACE=1
-Safe parallel work: Apple Silicon VU-01/MAC-01/ARM-01; LEGAL-01 human disposition; WIN-01; WIN-03
+Status: lock repaired and regression set green; LEGAL-01 complete; WIN-06 in progress: the writer of the timer block is named (realloc of a garbage pointer wraps past 32 MB), the source of the garbage pointer is not
+Files changed: src/kz_win06_watch.cpp and .h (new, KZ_WIN06_WATCH diagnostic); src/kz_hook_addresses.h and config/generated-manifest.json (4 debug hooks: HeapFree, HeapRealloc, HeapReallocC, UploadRecords); src/kz_main.cpp; config/dependencies.lock.json; patches/ps2recomp/combined.lock.diff; patches/ps2recomp/0030-vif1-mpg-address-wrap.patch; patches/ps2recomp/experimental/ee-di-interrupt-gate.diff; patches/README.md; tools/scripts/win06_gate.ps1; docs/findings.md; IMPLEMENTATION_PLAN.md; TODO.md; WORKDONE.md; HANDOFF.md; README.md; LEARNINGS.md (new)
+Acceptance commands and exact results: verify_deps.py --strict PASS 31/0/0; verify_resume_table.py PASS; inventory_generated.py --check PASS (51 hook signatures, 101,715 resumable entries); MSVC ISO-free 12/12; clang-cl ISO-free 12/12; git diff --check PASS; WIN-06 gate 6/10, 5/10, 8/10, 6/10 with KZ_WIN06_WATCH=1 (win06_watch, _watch2, _watch3, _watch4); 4/10 with PS2X_IOP_THREAD=0 (win06_iopsync); earlier 8/10 with KZ_IPU=off and 8/10 with the experimental di/ei gate
+New facts or decisions: The game calls realloc (wrapper 0x173660, ra 0x173694) with garbage pointers (0x8, 0x0D3A0C15); realloc's copy (0x1731A0-0x1731C4) takes a multi-MB size from the fake header, runs past 32 MB, and ps2CgWr128Slow masks it onto low RAM (destination 0x02517740 -> 0x517740), wiping the kernel area, main stack and libkernel's timer block. Other failures are other consumers of corrupt heap data (vtable call 0x3B4978, DMA packet builder 0x159D30, host GS palette crash). No host DMA/SIF/VIF/IPU write touched the timer block. Threaded IOP, movies and di/ei delivery are ruled out. src audit against upstream 5f07000 found one regression (no-disc path; fixed). The repository owner supplied the written LEGAL-01 disposition; origin remains private.
+Blocker and minimal reproducer: tools\scripts\win06_gate.ps1 -Runs 10 -Name win06 -Card work\win04_20261019_card -Iso <image> -Elf game\SCUS_974.02 fails 2-5/10.
+Next command: tools\scripts\win06_gate.ps1 -Runs 10 -Name win06_watch5 -Card work\win04_20261019_card -Iso <image> -Elf game\SCUS_974.02 -EnvSet "KZ_WIN06_WATCH=1|KZ_CRASH_TRACE=1" until a "BAD realloc wrapper" line names the caller of 0x173660; then watch that container's pointer field
+Safe parallel work: GS palette-read bounds check (host crash in GSGetRGBA8AlphaMinMax); Apple Silicon VU-01/MAC-01/ARM-01; WIN-01; WIN-03; WIN-04 hands-on
 ```

@@ -10,8 +10,12 @@ namespace kz_hook
     inline constexpr uint32_t TimelineKick = 0x00150090u;
     inline constexpr uint32_t TimelineKickCheck = 0x00151FC8u;
     inline constexpr uint32_t TimelineVblank = 0x00152018u;
+    inline constexpr uint32_t UploadRecords = 0x0015A268u;
     inline constexpr uint32_t GlowPass = 0x0015DFC0u;
     inline constexpr uint32_t FrameBlend = 0x0015F768u;
+    inline constexpr uint32_t HeapFree = 0x00172DD0u;
+    inline constexpr uint32_t HeapRealloc = 0x00173038u;
+    inline constexpr uint32_t HeapReallocC = 0x00173660u;
     inline constexpr uint32_t TimelineWaitD1Idle = 0x001759C0u;
     inline constexpr uint32_t TimelineWaitVblankKick = 0x001759F8u;
     inline constexpr uint32_t LensBlur = 0x001A9308u;

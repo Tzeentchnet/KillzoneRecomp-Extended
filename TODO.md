@@ -27,8 +27,7 @@ owns edits; `[SERIAL]` waits on dependencies or the integration owner; `[HUMAN]`
 | 9 | WIN-02 | Unlock All Campaign Levels launcher option | Windows | `[SERIAL]` | in progress | hands-on check |
 | 10 | WIN-05 | Testing start-up options (skip intro, start in chapter, test card) | Windows | `[SERIAL]` | in progress | WIN-06 |
 | 11 | WIN-06 | Chapter 11 load crash after a skipped intro cinematic | Windows | `[SUBAGENT-PARALLEL]` | in progress | - |
-| 12 | LEGAL-01 | Distribution and provenance disposition | Human | `[HUMAN]` | not started | - |
-| 13 | P0-EXIT | Phase 0 integration and exit review | Mac + Windows | `[SERIAL]` | blocked | 1-6, 12 |
+| 12 | P0-EXIT | Phase 0 integration and exit review | Mac + Windows | `[SERIAL]` | blocked | 1-6 |
 
 Rows 1-3 have no dependency edges between them and form the first parallel batch on the Mac. Rows 6-11 are the work
 available on the current Windows machine.
@@ -146,36 +145,37 @@ available on the current Windows machine.
 
 ### 11. WIN-06 - Chapter 11 load crash after a skipped intro cinematic
 
-- **Status:** in progress. VIF1 MPG correctness was fixed and covered by focused tests, but it is not the WIN-06 root
-  cause: the production-like ten-run chapter 11 gate still failed in 2/10 runs.
-- **Gate evidence (win-clang-rel, D3D12):** runs 2 and 3 ended with malformed `1536x2688` captures instead of the
-  normal `2048x1792` output. Both were preceded by recurring invalid indirect calls from guest PC `0x2B70DC`.
-- **VIF1 result:** MPG now masks/wraps destination addresses in VU1 micro memory and preserves `NUM=0` as 256
-  instructions. The suspicious `MSCAL 0x2CE8` XGKICK reproduced without a split MPG payload, so speculative
-  cross-buffer MPG buffering is not part of the fix.
-- **Current localization:** `0x2B70DC` is the Timer1 alarm dispatcher callback. In `win06_timerhead_06`, the alarm-list
-  head at `0x517760` and register `s0` both held `0x5000`; the callback at node offset `0x28` was `0x0220202D`, and
-  the node bytes matched guest code beginning at `0x29F4E0`. Other runs showed `0x5000` being legitimately cleared
-  and reused, making a stale linked alarm node/use-after-free the leading hypothesis rather than a register-only fault.
-- **Ruled out so far:** observed scratchpad-to-RAM DMA never targeted low RAM below `0x10000`. The captured host access
-  violation remains downstream in `GSGetRGBA8AlphaMinMax` through palette attachment/source creation.
-- **Next steps:** complete the interrupted `PS2X_LAZY_TIMERS=0` A/B, then trace only Timer1 node insert/remove/free/reuse
-  around `0x517760`. Correlate the first stale node or malformed VIF packet with the GS failure, apply the smallest
-  evidence-backed fix, and require a clean 10/10 skipped-intro chapter 11 gate before closing WIN-06.
-
-## Human
-
-### 12. LEGAL-01 - distribution and provenance disposition
-
-- **Status:** not started. Needs written decisions on licenses, notices and source offers, generated-code treatment,
-  trademarks and naming, SDK redistribution, and protected-content scanning. Also needs a decision on when, if ever,
-  the private `origin` becomes public. Agents must not change repository visibility.
+- **Status:** in progress. The write that wipes libkernel's timer state is named (2026-10-20, `KZ_WIN06_WATCH`); its
+  upstream cause, garbage pointers inside live heap objects, is not. Details in `docs/findings.md` "WIN-06: write
+  watch names the realloc wrap (2026-10-20)".
+- **Gate:** `tools\scripts\win06_gate.ps1 -Runs 10 -Name <name> -Card work\win04_20261019_card -Iso <image>
+  -Elf game\SCUS_974.02` (fresh card copy per run, pass/fail summary). Acceptance is 10/10.
+- **Ruled out (ten-run batches, win-clang-rel, D3D12):**
+  - VIF1 MPG address wrap (`0030`, kept as a correctness fix): 8/10.
+  - Movie/MPEG/IPU path: `KZ_IPU=off`, so no movie, decoder or stream callback exists at all: 8/10.
+  - Interrupts delivered inside guest `di`/`ei` (the scheduler ignores Status.EIE): only 0-2 benign deliveries per
+    run, and enforcing the mask gave 8/10. Kept as `patches/ps2recomp/experimental/ee-di-interrupt-gate.diff`.
+  - Threaded IOP: `PS2X_IOP_THREAD=0` (synchronous IOP on the EE thread) gave 4/10 (`win06_iopsync_*`).
+  - Earlier sessions: scratchpad-to-RAM DMA into low RAM.
+- **Current localization:** the game calls `realloc` (C wrapper `0x173660`, return address `0x173694`) with a
+  garbage pointer (seen: `0x00000008`, `0x0D3A0C15`). realloc reads a multi-megabyte "size" from the fake chunk
+  header and its copy loop (`0x1731A0`-`0x1731C4`) runs past 32 MB; the runtime's slow store path masks the address
+  (`0x02517740` -> `0x517740`), so the copy overwrites low RAM: kernel area, main stack, libkernel's timer block and
+  pools. That explains the alarm head `0x5000`, the jumps into the stack and the EE stuck at pc `0x1731A0`. Other
+  failing runs show other consumers of the same kind of corruption: corrupt vtables (`0x3B4978`, `0x3A40A4`), a DMA
+  packet builder (`0x159D30`) fed a garbage upload record, and the host GS palette crash
+  (`GSGetRGBA8AlphaMinMax` <- `AttachPaletteToSource`). Four watched batches: 6/10, 5/10, 8/10, 6/10.
+- **Next steps:** name the caller of `0x173660` that passes the garbage pointer (the `KZ_WIN06_WATCH` realloc-wrapper
+  hook prints its guest stack; it needs a failing run that takes the realloc path, about 1 in 5 failures), then watch
+  that container's pointer field with the same page-protection mechanism to find who overwrites it. Separately,
+  bounds-check the GS palette read so a corrupt CLUT cannot crash the host. Apply the smallest evidence-backed fix and
+  require 10/10 on the gate.
 
 ## Integration
 
-### 13. P0-EXIT - Phase 0 integration and exit review
+### 12. P0-EXIT - Phase 0 integration and exit review
 
-- **Status:** blocked on rows 1-6 and 12.
+- **Status:** blocked on rows 1-6.
 - **Work:** merge the macOS branches serially, rerun every macOS gate, rerun the Windows regression set from
   [`HANDOFF.md`](HANDOFF.md), record the JIT/interpreter decision, and replace estimates with measured results.
   Writer subagents never share a worktree: the macOS branches all touch `CMakeLists.txt`, `CMakePresets.json`,

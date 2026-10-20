@@ -1763,6 +1763,126 @@ Chapter 11 (`11.OTS`) loads, win-clang-rel, headless, 2048x1792 frames:
   ends at about 84 s), so the Logos screen also sets state that PlayGameIntro uses.
 - Not yet examined: which MPEG/IPU, audio or allocator state the played cinematic leaves behind, and the faulting host
   stack (`KZ_CRASH_TRACE=1`).
+- Superseded in part by "WIN-06: timer-alarm list, interrupt masking and movie A/B (2026-10-20)" below: the movie
+  path is not required for the failure.
+
+## WIN-06: timer-alarm list, interrupt masking and movie A/B (2026-10-20)
+
+Gate: `tools/scripts/win06_gate.ps1` (ten sequential headless runs, `KZ_START_LEVEL=11`, so the intro is skipped, each
+on a fresh copy of `work/win04_20261019_card`; win-clang-rel, D3D12, 35 s). A run fails on a non-zero exit, a guest
+`missing-target`, a host exception, a missing `11.OTS` level file or mixed capture sizes.
+
+### The alarm list that `0x2B70DC` walks
+
+- `0x2B6FB8` is libkernel's **Timer 2** handler (INTC 11; it reads `T2_COUNT`/`T2_MODE` at `0x10001000`/`0x10001010`),
+  not Timer 1 as earlier notes said. `0x2B70DC` is its `jalr` to the node's handler (`node+0x28`, gp `+0x2C`,
+  argument `+0x30`).
+- State block `0x517748`: `+0x00` overflow count (u64), `+0x08` INTC handler id, `+0x0C` sequence, `+0x10` nodes in
+  use, `+0x14` free list, `+0x18` active list head (**`0x517760`**, sorted by expiry), `+0x1C` id being handled.
+- `InitTimer` (`0x2B6B70`, called from libkernel init `0x2B65D0`) builds a pool of 128 nodes of 0x40 bytes at
+  **`0x56CB40`-`0x56EB40`**. Node: `+0` next, `+4` prev, `+8` tag, `+0xC` flags (bit 0 counting, bit 1 handler set),
+  `+0x10` start, `+0x18` base, `+0x20` schedule, `+0x28` handler. Ids are `node << 4 | tag`; `node = (id >> 10) << 6`.
+- API: `AllocTimerCounter` `0x2B72B8` (`0x2B7328` with interrupts off), `StartTimerCounter` `0x2B7380`/`0x2B7430`,
+  `SetTimerHandler` `0x2B74B0`/`0x2B75A8`, list insert `0x2B6EF8`, remove `0x2B6F80`, reprogram `0x2B6D68`.
+  `SetTimerAlarm` `0x2B7758` (and `iSetTimerAlarm` `0x2B7888`) adds a second pool of 64 records of 0x10 bytes at
+  `0x56EB40` (free head `0x56EF40`) and the trampoline `0x2B76F8`. The only caller of `SetTimerAlarm` is libkernel's
+  `DelayThread` (`0x2B7E38`: CreateSema, SetTimerAlarm with an iSignalSema callback, WaitSema, DeleteSema).
+- Consequence: the head value `0x5000` seen in `win06_timerhead_06` is **not a node at all** (outside the pool,
+  unaligned to it). The head is only written by insert/remove, so the list memory or a node link was overwritten by
+  a stray write. The other signatures point the same way: a jump to `0x7005728` with DMA-tag-like words at
+  `0x13F800` (main stack, `win06_dilog_01`), an indirect call from `0x3A40A4` to `0x123610` (inside the main stack
+  range, `win06_ipuoff_09`), and host access violations (`0xC0000005`) at 20-30 s.
+
+### Interrupt delivery inside `di`/`ei`
+
+- `EeScheduler::run()` injects pending invocations (interrupts, SIF and stream callbacks) and switches threads
+  without checking the running context's Status.EIE, so a handler can run inside a guest `di`/`ei` section; the
+  alarm-list edits rely on such sections. `PS2X_DI_GATE=log` (experimental runtime change) reported 2 deliveries in
+  the one failing run of three and none in the two passing runs; both were the frame-pipeline VIF1 handler
+  `0x14E0C8`, once at the `ei` of the interrupt-off wrapper `0x2B63B0` and once during `SyncDCache` (`0x2B1320`,
+  cache operations are no-ops here). Neither touches the alarm list.
+- With the gate enforced (`PS2X_DI_GATE` default in that build): **8/10** (`win06_digate_*`; runs 8 and 9 host
+  `0xC0000005`). Not the cause; kept as `patches/ps2recomp/experimental/ee-di-interrupt-gate.diff`.
+
+### Movies are not required
+
+- `KZ_IPU=off` makes every movie open fail (the path the intro skip takes), so no MPEG/IPU HLE state, decoder or
+  stream callback is ever created. Result: **8/10** (`win06_ipuoff_*`; run 8 host `0xC0000005` at about 22 s, run 9
+  the `0x3A40A4` indirect call). The baseline with movies on was 8/10 (`win06_mpgfix_*`).
+- So "the intro cinematic was never played" does not mean "a movie code path misbehaves": with every movie absent the
+  load still fails. What playing the cinematic contributes is something it leaves behind or the time it occupies
+  (heap and VRAM layout, IOP/SPU2 state) that moves or masks a stray write during the chapter 11 load.
+- Checked and ruled out on the way: the libmpeg HLE's callback scratch and private packet copies come from the
+  runtime arena `0x80000`-`0xB0000` (`ps2SetRuntimeArena`), not the game heap. The game's video stream callback
+  `0x2E0628` copies each packet into the player's ring (`*(0x55B3D8)`, `+0xF4` base, `+0xF8` size, `+0xFC` write)
+  and runs asynchronously in the HLE, which could write through a stale player; it cannot explain the movies-off
+  failures. `sceMpegDelete` is guest code (not HLE-bound).
+
+### Next
+
+- Superseded by "WIN-06: write watch names the realloc wrap (2026-10-20)" below.
+- Find the writer, not more signatures: a host write watch on the alarm pool and list head (`0x517748`-`0x517780`,
+  `0x56CB40`-`0x56EF50`) that logs any write from a pc outside libkernel's timer code (`0x2B6B50`-`0x2B7F00`), with
+  the guest pc and the DMA/VIF/SIF/IPU channel when the write comes from a host-side transfer. Generated stores go
+  through `FAST_WRITE*`, so a page-protection watch (as used for the quit-to-front-end white screen) is the
+  cheapest option that needs no regeneration.
+- Then compare heap state at the `11.OTS` level-file call with and without the cinematic (`KZ_DUMP_RAM`).
+
+## WIN-06: write watch names the realloc wrap (2026-10-20)
+
+Tool: `KZ_WIN06_WATCH=1` (`src/kz_win06_watch.cpp`, host-only, commit `6363163` plus the hooks described below). The
+host pages over `0x517748`-`0x517780` and `0x56CB40`-`0x56EF50` are read-only; a write fault saves the CONTEXT and a
+snapshot of the page, unprotects it and single-steps the store (trap flag), then re-protects and diffs. Each changed
+word is attributed from the PDB-symbolised host stack; generated functions carry the guest address in their names and
+the guest pc in their source comments, so the log gives the exact guest instruction. Cost: about 13,000 faults per
+35 s run (neighbouring data, mostly at boot) and about 500 watched changes, no visible slowdown. The same flag hooks
+`free` `0x172DD0`, `realloc` `0x173038`, the C realloc wrapper `0x173660` and the upload call `0x15A268` to validate
+their arguments (dlmalloc-style chunk header at ptr-8, size at ptr-4, heap descriptor `0x55EC20`, bounds
+`+0x448`/`+0x44C`).
+
+### Result
+
+| Batch | Result | What the failing runs showed |
+|---|---:|---|
+| `win06_watch` (watch only) | 6/10 | run 10: host-class writes to `0x517748`.. by `ps2CgWr128Slow` <- `FUN_00173038` (guest pc `0x1731B4`-`0x1731C4`) |
+| `win06_watch2` (+ registers) | 5/10 | run 08: same loop, destination `0x02517740` (host `r9`); run 07: packet builder `0x159F7C`-`0x15A100` |
+| `win06_watch3` (+ heap/upload hooks) | 8/10 | runs 02, 07: `realloc` called with `0x00000008` / `0x0D3A0C15` from ra `0x173694` |
+| `win06_watch4` (+ header checks) | 6/10 | host GS crashes and one corrupt vtable call; no realloc case in this batch |
+| `win06_iopsync` (`PS2X_IOP_THREAD=0`, no watch) | 4/10 | GS palette crash (4), missing frame size (1), missing-target (1) |
+
+- In passing runs only libkernel's timer code (`0x2B6B70` InitTimer, `0x2B6FB8` handler, list insert/remove) writes
+  the watched words. No host-side DMA, SIF, VIF or IPU write ever touched them.
+- **The writer of the timer block is the game allocator's realloc copy.** `FUN_00173038` (realloc) allocates the new
+  block (malloc `0x1727F8` returned a valid `0x01F1B3D0`), then copies `(old chunk size - 4) & ~0x3F` bytes with
+  `lq`/`sq` (`0x1731A0`-`0x1731C4`). The old pointer was garbage (`0x00000008`, `0x0D3A0C15`), so the "size" read from
+  its fake header is megabytes. The copy runs past `0x02000000`; `ps2CgWr128Slow` masks the address to RAM
+  (`Ps2FastWrite128`: `addr & PS2_RAM_MASK`), so the copy continues at `0x0` and overwrites the kernel area, the
+  runtime arena, the main stack `0x100000`-`0x140000` and libkernel's data up to `0x56xxxx`. On hardware an EE store
+  above 32 MB of physical RAM would be a bus error; here it silently wraps.
+- This explains every earlier signature: the alarm head `0x5000` and timer handlers jumping to garbage (the copied
+  bytes include MIPS code and strings such as `...dex1;right_index2;right_middle1...`), jumps into the main stack, and the
+  headless sampler showing the EE at pc `0x1731A0` ra `0x17314C` at 25-30 s in `win06_timerhead_06`.
+- The garbage pointer is the cause to chase, not the copy. `0x173660` is the C realloc wrapper (NULL -> malloc, size
+  0 -> free) with 300+ call sites (`0x2C0BE8`.., `0x41027C`-`0x513024`: container growth code), so the caller of the
+  wrapper identifies the container. Batch 4 had no realloc case, so the caller is not named yet.
+- Other failures are other consumers of corrupt heap data: an indirect call at `0x3B4978` through an object whose
+  fields hold `0x123610` (the same value as `win06_ipuoff_09`'s `0x3A40A4` call), and the upload walker `0x15A5E8`
+  passing a garbage record (address `0x7B90F5E8`, huge size) to the DMA packet builder `0x159D30`, whose write
+  pointer lives in scratchpad (`0x70003D3C`) and ran from `0x5175C0` into the timer block.
+- The host GS crash (`GSGetRGBA8AlphaMinMax` <- `GSTextureCache::AttachPaletteToSource`, reading unmapped host
+  memory) is the most common failure with or without the watch. It is consistent with a corrupt CLUT/texture
+  register from the same corruption, but it is a host crash in its own right: the GS should not read outside its
+  buffers whatever the guest sends.
+- Threaded IOP ruled out: `PS2X_IOP_THREAD=0` failed 6 of 10.
+
+### Notes on the tool
+
+- Generated functions often return through tail-jump fragments (`ps2DspTail` sets `ctx->pc = target | 1` and the
+  call site follows it), so a `replaceFunction` hook cannot read a result after calling the original; only argument
+  checks before the call are reliable. A first version that tracked malloc results recorded nothing and reported
+  every free as "never allocated".
+- dlmalloc small chunks (size < 0x51) do not clear the next chunk's in-use bit when freed, so double frees of small
+  blocks are not detected by the header check.
 
 ## Windows gameplay baseline re-verification (2026-10-19)
 

@@ -218,6 +218,13 @@
       "signature_sha256": "8de63ecb311ba2a5a93f695716dbb4f723ad340be81211f6dec28059b2691693"
     },
     {
+      "symbol": "UploadRecords",
+      "kind": "debug_hook",
+      "address": "0x0015A268",
+      "signature_size": 16,
+      "signature_sha256": "23160f15ffc1c3f606704377a3610b9eff036266accde9cc991b01a4fc54b62a"
+    },
+    {
       "symbol": "GlowPass",
       "kind": "hook",
       "address": "0x0015DFC0",
@@ -230,6 +237,27 @@
       "address": "0x0015F768",
       "signature_size": 16,
       "signature_sha256": "ed0c002f9c68ea77064bc2c082b28bc65b17580968a053fc5c2a4a53fed39e84"
+    },
+    {
+      "symbol": "HeapFree",
+      "kind": "debug_hook",
+      "address": "0x00172DD0",
+      "signature_size": 16,
+      "signature_sha256": "4475298ee3c0a9411f257a5c74e5ffe90023c934e99c1da01231e65085ef9a54"
+    },
+    {
+      "symbol": "HeapRealloc",
+      "kind": "debug_hook",
+      "address": "0x00173038",
+      "signature_size": 16,
+      "signature_sha256": "2ee5e9fc20fc9aeba6fd05f594f30de90439ced7bf817ef7afb2362460a8572d"
+    },
+    {
+      "symbol": "HeapReallocC",
+      "kind": "debug_hook",
+      "address": "0x00173660",
+      "signature_size": 16,
+      "signature_sha256": "9fcbab0c2ed33dc8d253567aad85a793cda21d441c975985bf6224082114dd90"
     },
     {
       "symbol": "TimelineWaitD1Idle",

@@ -1,6 +1,6 @@
 # WORKDONE - verified completions
 
-**Last updated:** 2026-10-19
+**Last updated:** 2026-10-20
 
 The ledger of finished work. An entry belongs here only after the acceptance commands in
 [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) pass on the machine the plan names. Open and partially evidenced
@@ -10,6 +10,55 @@ behind each item are in [`docs/findings.md`](docs/findings.md), [`docs/assetform
 
 Each entry records: commit, date, machine and toolchain, acceptance commands and results, decisions, and residual
 risk. Do not edit an entry's evidence after the fact. If a later run disagrees, add a new dated re-verification.
+
+## LEGAL-01 - Distribution and provenance disposition
+
+- **Completed:** 2026-10-20 by direct repository-owner instruction.
+- **Source baseline:** `6363163` plus the current documentation changes. No toolchain or runtime command applies;
+  the plan requires written human disposition rather than tool output.
+- **Project and copyleft obligations:** the project remains GPL-3.0. Any distributed binary must be accompanied by
+  the applicable license and notices and an offer or equivalent access to complete corresponding source. The locked
+  GPL dependencies retain their own corresponding-source and notice obligations.
+- **Dependency disposition:** `config/dependencies.lock.json` is the distribution inventory. MIT and zlib components
+  require their notices; FFmpeg requires an artifact-specific LGPL configuration, notice, relinking and source
+  review. The PCSX2 Windows dependency bundle, libdwarf, and any other `NOASSERTION` or review-required entry are
+  excluded from release artifacts until every bundled component is identified and cleared. A passing dependency
+  hash check does not replace that review.
+- **Generated and protected content:** the retail disc image, executable, extracted assets, private function map,
+  generated game-derived source, regeneration logs and private generated tree are BYOD-only and must not be
+  committed or distributed. Only non-content provenance such as hashes, counts, bounds and hook signatures may be
+  published.
+- **Trademark and naming:** Killzone remains identified as a Sony Interactive Entertainment trademark. Project
+  naming is nominative only, must retain the non-affiliation disclaimer, and must not package Sony or Guerrilla
+  logos, branding or protected assets.
+- **Proprietary SDKs:** proprietary upscaler or platform SDK binaries are not vendored or redistributed. A feature
+  that needs one remains disabled until builders acquire it under the vendor's terms and a separate redistribution
+  review approves the resulting artifact.
+- **Artifact controls:** every release candidate needs an SBOM, dependency notices, corresponding-source review,
+  secret scan, protected-content scan and package-allowlist audit. Failure or an unresolved result blocks release.
+- **Repository visibility:** `origin` remains private. LEGAL-01 completion does not authorize a visibility change;
+  publication requires a separate explicit repository-owner decision.
+- **Residual gate:** this closes the Phase 0 human-disposition dependency. It is not approval of a release artifact;
+  the per-artifact checks in the plan's release gate remain mandatory.
+
+## Re-verification: Windows regression set, 2026-10-20
+
+- **Source baseline:** `b00e576` plus this session's working-tree changes (dependency lock re-pinned to PS2Recomp
+  `b44b2dcba0fe5a247b6f42176dd41f36168b6565` with topic patch `0030`, `src/kz_main.cpp` no-disc message,
+  `tools/scripts/win06_gate.ps1`, documentation)
+- **Machine:** Windows 11 x64; checked MSVC and clang-cl presets
+
+| Command | Result |
+|---|---|
+| `python .\tools\scripts\verify_deps.py --strict` | PASS: 31 passed, 0 warnings, 0 failures; 62-path canonical patch reconstructs the locked tree (it failed on `b00e576`: the gitlink had moved without the lock) |
+| `python .\tools\scripts\verify_resume_table.py .\generated` | PASS: 132,656 dispatch entries, 100,661 resume cases, 31,995 targets |
+| `python .\tools\scripts\inventory_generated.py --check` | PASS: 47 hook signatures |
+| `tools\scripts\cmake_preset.ps1 -Preset win-msvc-tests -Action build`, then `-Preset win-msvc-rel -Action test -Label iso-free` | PASS: 12/12 |
+| `tools\scripts\cmake_preset.ps1 -Preset win-clang-tests -Action build`, then `-Preset win-clang-rel -Action test -Label iso-free` | PASS: 12/12 |
+| `git diff --check` | PASS |
+| `killzone.exe --no-launcher` with `PS2X_HEADLESS=1` and a `KZ_CONFIG` without an ISO | exit 1 with "No game disc image is selected." (previously "ELF not found: " with an empty path) |
+
+WIN-06 remains open (8/10 on its gate in all three arms measured this session); see `TODO.md`.
 
 ## Re-verification: Windows regression set, 2026-10-19
 

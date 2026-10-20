@@ -20,6 +20,8 @@
 
 #include "kz_win06_watch.h"
 
+#include "kz_hook_addresses.h"
+
 #include "ps2_runtime.h"
 #include "runtime/ee_scheduler.h"
 
@@ -705,10 +707,10 @@ void kzWin06WatchInstall(PS2Runtime &runtime)
         site(reinterpret_cast<DWORD64>(&kzWin06WatchInstall));
     }
 
-    const bool hooked = hook(runtime, 0x172DD0u, &hookFree, &g_origFree) &&
-                        hook(runtime, 0x173038u, &hookRealloc, &g_origRealloc) &&
-                        hook(runtime, 0x15A268u, &hookUpload, &g_origUpload) &&
-                        hook(runtime, 0x173660u, &hookReallocC, &g_origReallocC);
+    const bool hooked = hook(runtime, kz_hook::HeapFree, &hookFree, &g_origFree) &&
+                        hook(runtime, kz_hook::HeapRealloc, &hookRealloc, &g_origRealloc) &&
+                        hook(runtime, kz_hook::UploadRecords, &hookUpload, &g_origUpload) &&
+                        hook(runtime, kz_hook::HeapReallocC, &hookReallocC, &g_origReallocC);
     std::fprintf(stderr, "[win06] heap and upload hooks %s\n", hooked ? "installed" : "NOT installed");
 
     AddVectoredExceptionHandler(1, &onException);

@@ -6,7 +6,7 @@
 **Upstream:** [drakolordx7/KillzoneRecomp](https://github.com/drakolordx7/KillzoneRecomp)
 **Audited fork baseline:** `5f0700079f9ac4e14799d66d01747dbcdcec55f6`
 **Supported game build:** Killzone NTSC-U, SCUS-97402
-**Last revised:** 2026-10-19
+**Last revised:** 2026-10-20
 
 This plan defines *what* each work package is, what it depends on, how it is accepted, and when it must stop. It
 does not carry status. Status lives in two files:
@@ -568,4 +568,4 @@ sign-off here with the date and the person approving.
 | macOS/Metal lead | Pending Phase 0 evidence |
 | Graphics lead | Pending renderer-contract evidence |
 | Audio/input lead | Pending platform matrices |
-| Legal/distribution owner | Pending LEGAL-01 |
+| Legal/distribution owner | Approved 2026-10-20 by repository owner (LEGAL-01) |

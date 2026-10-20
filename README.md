@@ -19,6 +19,7 @@ deferred; Blender tooling is developed in a separate project. Developed with AI 
 | [`WORKDONE.md`](WORKDONE.md) | Verified completions and the evidence behind them |
 | [`HANDOFF.md`](HANDOFF.md) | Session protocol: startup, parallel-work rules, regression set, privacy rules |
 | [`docs/findings.md`](docs/findings.md) | Reverse-engineering notes and measurements, cited from source comments |
+| [`LEARNINGS.md`](LEARNINGS.md) | Short process lessons: checks that catch mistakes, fastest tools, gate usage |
 | [`docs/assetforms.md`](docs/assetforms.md) | Verified DAT, Core/CoreStream, texture swizzle, model and level format evidence |
 | [`patches/README.md`](patches/README.md) | Rationale and measurements for each PS2Recomp runtime patch |
 | [`docs/archive/upstream/`](docs/archive/upstream/) | Superseded upstream design and performance notes |
@@ -236,3 +237,9 @@ supported executable.
 
 GPL-3.0 (see `LICENSE`). The port links PCSX2 (GPL-3.0-or-later) and PS2Recomp (GPL-3.0).
 Killzone is a trademark of Sony Interactive Entertainment; this project is not affiliated with Sony or Guerrilla Games.
+
+The owner-approved distribution disposition is recorded under LEGAL-01 in [`WORKDONE.md`](WORKDONE.md). Retail and
+generated game-derived content remain BYOD-only, unresolved third-party components and proprietary SDKs are excluded
+from release artifacts, and every release candidate still requires notices, corresponding-source review, an SBOM,
+secret and protected-content scans, and a package-allowlist audit. The repository remains private unless the owner
+separately authorizes publication.
