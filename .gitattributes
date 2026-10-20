@@ -1,2 +1,4 @@
 * whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
-patches/ps2recomp/*.diff -whitespace
+patches/ps2recomp/*.diff -whitespace text eol=lf
+patches/ps2recomp/*.patch -whitespace text eol=lf
+patches/ps2recomp/experimental/*.diff -whitespace text eol=lf

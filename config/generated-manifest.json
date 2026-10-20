@@ -449,6 +449,13 @@
       "signature_sha256": "287713552a75648387eef788121c60edf4042ac77a045ac18943b40d98de74f9"
     },
     {
+      "symbol": "VectorGrowReturn",
+      "kind": "debug_hook",
+      "address": "0x002C0EA4",
+      "signature_size": 32,
+      "signature_sha256": "44935de831775ca944800cd1f500e5a9150d4642eb4253997d1b9671d3250510"
+    },
+    {
       "symbol": "MovieRead",
       "kind": "hook",
       "address": "0x002DEB98",

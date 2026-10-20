@@ -94,8 +94,12 @@ namespace
         case KzRenderer::D3D12: k.renderer = KzgsRenderer::D3D12; break;
         case KzRenderer::Vulkan: k.renderer = KzgsRenderer::Vulkan; break;
         }
-        if (const char *r = std::getenv("KZ_RENDERER")) // automation override: d3d11 | d3d12 | vulkan
-            k.renderer = _stricmp(r, "d3d12") == 0 ? KzgsRenderer::D3D12 : _stricmp(r, "vulkan") == 0 ? KzgsRenderer::Vulkan : KzgsRenderer::D3D11;
+        if (const char *r = std::getenv("KZ_RENDERER")) // automation override: d3d11 | d3d12 | vulkan | software
+            k.renderer = _stricmp(r, "d3d12") == 0    ? KzgsRenderer::D3D12
+                         : _stricmp(r, "vulkan") == 0 ? KzgsRenderer::Vulkan
+                         : _stricmp(r, "software") == 0 || _stricmp(r, "sw") == 0
+                             ? KzgsRenderer::Software
+                             : KzgsRenderer::D3D11;
         // Auto: smallest multiple of 448 lines that covers the window height.
         k.upscale = c.upscale > 0 ? c.upscale : std::clamp((std::max(windowHeight, 448) + 447) / 448, 1, 8);
         if (const char *u = std::getenv("KZ_UPSCALE")) // automation override

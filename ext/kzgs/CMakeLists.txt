@@ -23,6 +23,7 @@ set(KZGS_ISA "AVX2" CACHE STRING "Vector ISA the GS is compiled for (SSE4, AVX, 
 set_property(CACHE KZGS_ISA PROPERTY STRINGS SSE4 AVX AVX2)
 option(KZGS_BUILD_TEST "Build the kzgs_test executable" ${PROJECT_IS_TOP_LEVEL})
 option(KZGS_BUILD_TOOLS "Build kzgs debug tools (kzgs_replay)" ${PROJECT_IS_TOP_LEVEL})
+option(KZGS_ADDRESS_SANITIZER "Instrument kzgs with clang-cl AddressSanitizer" OFF)
 
 get_filename_component(KZGS_PCSX2_DIR "${KZGS_PCSX2_DIR}" ABSOLUTE)
 set(P2 "${KZGS_PCSX2_DIR}")
@@ -66,6 +67,13 @@ target_compile_options(kzgs_flags INTERFACE
 	"$<$<COMPILE_LANGUAGE:CXX>:/Zc:externConstexpr;/Zc:__cplusplus;/permissive-;/Zc:preprocessor>"
 	"$<$<COMPILE_LANGUAGE:C,CXX>:/utf-8;/Zo;/GS-;/fp:contract;/W1;/wd4005;/wd4996>"
 )
+if(KZGS_ADDRESS_SANITIZER)
+	if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+		message(FATAL_ERROR "KZGS_ADDRESS_SANITIZER requires clang-cl.")
+	endif()
+	target_compile_options(kzgs_flags INTERFACE $<$<COMPILE_LANGUAGE:C,CXX>:/fsanitize=address>)
+	target_link_options(kzgs_flags INTERFACE /fsanitize=address)
+endif()
 if(KZGS_ISA STREQUAL "AVX2")
 	target_compile_options(kzgs_flags INTERFACE $<$<COMPILE_LANGUAGE:C,CXX>:/arch:AVX2>)
 elseif(KZGS_ISA STREQUAL "AVX")
@@ -365,6 +373,10 @@ if(KZGS_BUILD_TEST)
 	target_compile_features(kzgs_test PRIVATE cxx_std_20)
 	target_compile_definitions(kzgs_test PRIVATE KZGS_TEST_OUT_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-output")
 	kzgs_stage_resources(kzgs_test)
+
+	add_executable(kzgs_palette_test "${KZGS_ROOT}/test/kzgs_palette_test.cpp")
+	target_link_libraries(kzgs_palette_test PRIVATE kzgs kzgs_flags)
+	target_compile_features(kzgs_palette_test PRIVATE cxx_std_20)
 endif()
 
 if(KZGS_BUILD_TOOLS)

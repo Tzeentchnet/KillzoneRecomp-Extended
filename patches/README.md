@@ -686,6 +686,13 @@ resulting tree to equal the pinned submodule tree.
   instructions. A truncated payload stops the packet instead of being partly copied. Identical uploads still skip
   invalidating host VU programs. Found while investigating WIN-06 (a suspicious `MSCAL 0x2CE8` XGKICK); it is a
   correctness fix with focused memory tests, not the WIN-06 root cause (the ten-run gate still failed 2/10).
+- **0031-dmac-call-overflow-vif-provenance.patch** - a third nested DMAC `CALL` now transfers its local payload and
+  terminates the chain instead of following `ADDR` with the two-entry return stack already full, matching PCSX2.
+  A focused GIF-chain regression covers the boundary. The same investigation extends `PS2X_CHAIN_VERIFY=1` with
+  flattened-buffer source/tag and `ASR` provenance for the first unknown VIF command; optional
+  `PS2X_VIF1_STOP_ON_UNKNOWN=1` stops that diagnostic packet at the first unknown command. No CALL overflow occurred
+  in the WIN-06 acceptance workload, and source-mapped failures had zero unknown VIF commands, so this is retained as
+  a correctness fix and diagnostic rather than claimed as the WIN-06 root cause.
 - **experimental/ee-di-interrupt-gate.diff** (not applied; `git apply --directory=ext/PS2Recomp`) - makes
   `EeScheduler` honour Status.EIE: while the running context is inside `di`/`ei`, pending interrupt, SIF and stream
   invocations, time-slice preemption and event-driven thread switches wait for `ei` (50 ms safety valve,

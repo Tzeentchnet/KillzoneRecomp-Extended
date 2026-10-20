@@ -43,6 +43,7 @@ namespace kz_hook
     inline constexpr uint32_t McInit = 0x002BE788u;
     inline constexpr uint32_t McGetInfo = 0x002BF180u;
     inline constexpr uint32_t McFormat = 0x002BF458u;
+    inline constexpr uint32_t VectorGrowReturn = 0x002C0EA4u;
     inline constexpr uint32_t MovieRead = 0x002DEB98u;
     inline constexpr uint32_t MovieOpen = 0x002DED00u;
     inline constexpr uint32_t MovieInputEnd = 0x002DF800u;

@@ -22,6 +22,20 @@ namespace
             std::fprintf(stderr, " (%s 0x%llx)", er->ExceptionInformation[0] == 1 ? "write" : "read",
                          static_cast<unsigned long long>(er->ExceptionInformation[1]));
         std::fprintf(stderr, "\n");
+        const CONTEXT &fault = *ep->ContextRecord;
+        std::fprintf(stderr,
+                     "[kz] regs: rax=%016llx rbx=%016llx rcx=%016llx rdx=%016llx rsi=%016llx rdi=%016llx\n"
+                     "[kz]       r8 =%016llx r9 =%016llx r10=%016llx r11=%016llx r12=%016llx r13=%016llx\n"
+                     "[kz]       r14=%016llx r15=%016llx rbp=%016llx rsp=%016llx rip=%016llx\n",
+                     static_cast<unsigned long long>(fault.Rax), static_cast<unsigned long long>(fault.Rbx),
+                     static_cast<unsigned long long>(fault.Rcx), static_cast<unsigned long long>(fault.Rdx),
+                     static_cast<unsigned long long>(fault.Rsi), static_cast<unsigned long long>(fault.Rdi),
+                     static_cast<unsigned long long>(fault.R8), static_cast<unsigned long long>(fault.R9),
+                     static_cast<unsigned long long>(fault.R10), static_cast<unsigned long long>(fault.R11),
+                     static_cast<unsigned long long>(fault.R12), static_cast<unsigned long long>(fault.R13),
+                     static_cast<unsigned long long>(fault.R14), static_cast<unsigned long long>(fault.R15),
+                     static_cast<unsigned long long>(fault.Rbp), static_cast<unsigned long long>(fault.Rsp),
+                     static_cast<unsigned long long>(fault.Rip));
 
         HANDLE process = GetCurrentProcess();
         HANDLE thread = GetCurrentThread();

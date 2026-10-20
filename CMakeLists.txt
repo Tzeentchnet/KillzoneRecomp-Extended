@@ -174,6 +174,9 @@ target_precompile_headers(killzone PRIVATE
 if(MSVC)
     target_compile_options(killzone PRIVATE /bigobj /FS)
 endif()
+if(KZGS_ADDRESS_SANITIZER)
+    target_link_options(killzone PRIVATE /fsanitize=address)
+endif()
 
 # Copy FFmpeg runtime DLLs next to killzone.exe (helper from ps2xRuntime).
 ps2x_stage_ffmpeg_runtime_dlls(killzone)
@@ -226,11 +229,13 @@ if(BUILD_TESTING)
     kz_add_iso_free_test(kz_gs_component kzgs_test
         --renderer d3d11 --warp --frames 2 --stress-uploads 64
         --out "${KZ_TEST_STATE_DIR}/kzgs/component")
+    kz_add_iso_free_test(kzgs_palette_guard kzgs_palette_test)
     set_tests_properties(
         kz_spu2_component
         kz_vu1_component
         kz_vu0_component
         kz_gs_component
+        kzgs_palette_guard
         PROPERTIES LABELS "iso-free;component")
     set_tests_properties(kz_gs_component PROPERTIES RESOURCE_LOCK kzgs_gpu)
 

@@ -1,5 +1,6 @@
 // WIN-06 diagnostic, KZ_WIN06_WATCH=1: a page-protection write watch on libkernel's Timer 2 alarm state block
-// (0x517748-0x517780) and its node pools (0x56CB40-0x56EF50) in the host copy of EE RAM.
+// (0x517748-0x517780) and its node pools (0x56CB40-0x56EF50) in the host copy of EE RAM. An additional half-open
+// guest range can be selected with KZ_WIN06_WATCH_RANGE=<start>-<end>.
 //
 // The host pages that hold those guest ranges are made read-only. A write fault on one of them saves the faulting
 // thread's CONTEXT and a snapshot of the watched bytes on that page, unprotects the page and single-steps the
@@ -32,11 +33,13 @@
 #include <dbghelp.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -51,19 +54,24 @@ namespace
     {
         uint32_t lo, hi;
     };
-    constexpr GuestRange kRanges[] = {{0x517748u, 0x517780u}, {0x56CB40u, 0x56EF50u}};
+    constexpr GuestRange kDefaultRanges[] = {{0x517748u, 0x517780u}, {0x56CB40u, 0x56EF50u}};
     constexpr uint32_t kTimerCodeLo = 0x2B6B50u, kTimerCodeHi = 0x2B7F00u;
+    constexpr uint32_t kHeapCodeLo = 0x172600u, kHeapCodeHi = 0x173800u;
     constexpr uint32_t kListHead = 0x517760u, kFreeHead = 0x51775Cu;
     constexpr uint32_t kPoolLo = 0x56CB40u, kPoolHi = 0x56EB40u, kNodeSize = 0x40u;
+    constexpr uint32_t kHeapStateAddress = 0x55EC20u;
+    constexpr size_t kHeapStateWords = 0x450u / sizeof(uint32_t);
     constexpr size_t kPageSize = 0x1000;
 
     enum WriterClass
     {
         kTimer,
+        kHeap,
         kGuest,
-        kHost
+        kHost,
+        kWriterClassCount
     };
-    const char *const kClassName[] = {"timer", "guest", "host"};
+    const char *const kClassName[] = {"timer", "heap", "guest", "host"};
 
     struct Page
     {
@@ -114,16 +122,28 @@ namespace
     Change g_ring[64];
     uint64_t g_seq = 0;
     std::atomic<DWORD> g_eeThread{0};
-    std::atomic<uint64_t> g_faults{0}, g_changes{0}, g_byClass[3];
+    std::atomic<uint64_t> g_faults{0}, g_changes{0}, g_byClass[kWriterClassCount];
     std::atomic<bool> g_invalidReported{false}, g_crashReported{false};
     uint64_t g_expectedLimit = 200;
     ULONGLONG g_startMs = 0;
+    constexpr DWORD kArmHardwareWatchException = 0xE0420606u;
+    uint32_t g_hardwareWatchAddress = 0;
+    uint32_t g_hardwareWatchLast = 0;
+    bool g_hardwareWatchArmed = false;
 
     uint32_t rd32(uint32_t address) { return *reinterpret_cast<const uint32_t *>(g_rdram + address); }
 
     uint64_t vsyncTick() { return g_runtime->memory().gs().vsyncTick.load(std::memory_order_relaxed); }
 
     double seconds() { return static_cast<double>(GetTickCount64() - g_startMs) / 1000.0; }
+
+    void armHardwareWatch()
+    {
+        if (g_hardwareWatchAddress == 0u || g_hardwareWatchArmed)
+            return;
+        g_eeThread.store(GetCurrentThreadId(), std::memory_order_relaxed);
+        RaiseException(kArmHardwareWatchException, 0, 0, nullptr);
+    }
 
     bool validNode(uint32_t p)
     {
@@ -240,7 +260,9 @@ namespace
         if (!guestAddress && isGeneratedName(name))
             guestAddress = guestAddressFromName(name);
         if (guestAddress)
-            info.cls = guestAddress >= kTimerCodeLo && guestAddress < kTimerCodeHi ? kTimer : kGuest;
+            info.cls = guestAddress >= kTimerCodeLo && guestAddress < kTimerCodeHi
+                           ? kTimer
+                           : (guestAddress >= kHeapCodeLo && guestAddress < kHeapCodeHi ? kHeap : kGuest);
         else
             info.cls = isGeneratedName(name) ? kGuest : kHost;
         return g_sites.emplace(rip, std::move(info)).first->second;
@@ -350,7 +372,8 @@ namespace
             ++g_seq;
         }
 
-        const bool log = info.cls != kTimer || classIndex < g_expectedLimit;
+        const bool expectedWriter = info.cls == kTimer || info.cls == kHeap;
+        const bool log = !expectedWriter || classIndex < g_expectedLimit;
         if (log)
         {
             std::fprintf(stderr, "[win06] %s write #%llu at %.3f s vsync %llu tid %lu:", kClassName[info.cls],
@@ -374,10 +397,10 @@ namespace
                 std::fprintf(stderr, " (not the EE thread)");
             std::fprintf(stderr, " fault 0x%llx\n", static_cast<unsigned long long>(state.faultAddress -
                                                                                     reinterpret_cast<uintptr_t>(g_rdram)));
-            if (classIndex + 1 == g_expectedLimit && info.cls == kTimer)
-                std::fprintf(stderr, "[win06] %llu timer writes logged; further ones are only counted\n",
-                             static_cast<unsigned long long>(g_expectedLimit));
-            if (info.cls != kTimer)
+            if (classIndex + 1 == g_expectedLimit && expectedWriter)
+                std::fprintf(stderr, "[win06] %llu %s writes logged; further ones are only counted\n",
+                             static_cast<unsigned long long>(g_expectedLimit), kClassName[info.cls]);
+            if (!expectedWriter)
             {
                 // The slow store path masks addresses above 32 MB onto RAM; host registers that alias the written
                 // offset show the unmasked guest address.
@@ -425,6 +448,18 @@ namespace
     {
         const EXCEPTION_RECORD *er = ep->ExceptionRecord;
         ThreadState &state = t_state;
+        if (er->ExceptionCode == kArmHardwareWatchException && g_hardwareWatchAddress != 0u)
+        {
+            ep->ContextRecord->Dr0 = reinterpret_cast<DWORD64>(g_rdram + g_hardwareWatchAddress);
+            ep->ContextRecord->Dr6 = 0;
+            ep->ContextRecord->Dr7 = 1ull | (1ull << 16) | (3ull << 18); // local, writes, four bytes
+            g_hardwareWatchLast = rd32(g_hardwareWatchAddress);
+            g_hardwareWatchArmed = true;
+            std::fprintf(stderr, "[win06] hardware watch armed on guest word 0x%08x (initial 0x%08x)\n",
+                         g_hardwareWatchAddress, g_hardwareWatchLast);
+            std::fflush(stderr);
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
         if (er->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && er->NumberParameters >= 2 &&
             er->ExceptionInformation[0] == 1)
         {
@@ -467,6 +502,31 @@ namespace
                 report(state, state.pending[i]);
             return EXCEPTION_CONTINUE_EXECUTION;
         }
+        else if (er->ExceptionCode == EXCEPTION_SINGLE_STEP && state.depth == 0 &&
+                 (ep->ContextRecord->Dr6 & 1u) != 0u && g_hardwareWatchArmed)
+        {
+            ep->ContextRecord->Dr6 = 0;
+            const uint32_t after = rd32(g_hardwareWatchAddress);
+            if (after != g_hardwareWatchLast)
+            {
+                std::lock_guard<std::mutex> lock(g_reportLock);
+                const SiteInfo &info = site(ep->ContextRecord->Rip);
+                std::fprintf(stderr,
+                             "[win06] hardware write at %.3f s vsync %llu: 0x%08x 0x%08x->0x%08x by %s",
+                             seconds(), static_cast<unsigned long long>(vsyncTick()), g_hardwareWatchAddress,
+                             g_hardwareWatchLast, after, info.symbol.c_str());
+                if (info.guestPc)
+                    std::fprintf(stderr, " [guest pc 0x%06x]", info.guestPc);
+                if (const R5900Context *ctx = g_runtime->eeScheduler().currentContext())
+                    std::fprintf(stderr, " ctx.pc 0x%08x ra 0x%08x", ctx->pc,
+                                 static_cast<uint32_t>(_mm_cvtsi128_si32(ctx->r[31])));
+                std::fprintf(stderr, "\n");
+                printStack(*ep->ContextRecord);
+                std::fflush(stderr);
+                g_hardwareWatchLast = after;
+            }
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
         if (er->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && !g_crashReported.exchange(true))
         {
             std::unique_lock<std::mutex> lock(g_reportLock, std::try_to_lock);
@@ -492,14 +552,33 @@ namespace
     // object (s1).
     using Fn = PS2Runtime::RecompiledFunction;
     Fn g_origFree = nullptr, g_origRealloc = nullptr, g_origUpload = nullptr, g_origReallocC = nullptr;
+    Fn g_origVectorGrowReturn = nullptr;
 
     struct FreeRecord
     {
         uint64_t vsync = 0;
         uint32_t ra = 0;
+        uint32_t reallocCaller = 0;
+        uint32_t pointerField = 0;
+        uint32_t requestedSize = 0;
     };
+
+    struct ReallocRecord
+    {
+        uint64_t vsync = 0;
+        uint32_t caller = 0;
+        uint32_t pointerField = 0;
+        uint32_t requestedSize = 0;
+    };
+
     std::unordered_map<uint32_t, FreeRecord> g_frees; // last free of each pointer (it may have been reused since)
+    std::unordered_map<uint32_t, ReallocRecord> g_reallocs;
     int g_badUploads = 0, g_badBlocks = 0;
+    std::array<uint32_t, kHeapStateWords> g_lastGoodHeap{};
+    uint64_t g_lastGoodHeapVsync = 0;
+    bool g_haveLastGoodHeap = false;
+    thread_local std::array<uint32_t, kHeapStateWords> t_vectorGrowHeapBefore{};
+    thread_local bool t_haveVectorGrowHeapBefore = false;
 
     uint32_t reg(const R5900Context *ctx, int r) { return static_cast<uint32_t>(_mm_cvtsi128_si32(ctx->r[r])); }
 
@@ -507,14 +586,90 @@ namespace
 
     uint32_t chunkSize(uint32_t p) { return inRam(p - 4) ? (rd32(p - 4) & 0x0FFFFFFEu) : 0; }
 
+    void snapshotHeap(std::array<uint32_t, kHeapStateWords> &snapshot)
+    {
+        std::memcpy(snapshot.data(), g_rdram + kHeapStateAddress, snapshot.size() * sizeof(snapshot[0]));
+    }
+
+    void printHeapDiff(const char *label, const std::array<uint32_t, kHeapStateWords> &before,
+                       const std::array<uint32_t, kHeapStateWords> &after)
+    {
+        std::fprintf(stderr, "[win06]   heap diff %s:", label);
+        int printed = 0, total = 0;
+        for (size_t i = 0; i < before.size(); ++i)
+        {
+            if (before[i] == after[i])
+                continue;
+            if (printed < 64)
+            {
+                std::fprintf(stderr, " +0x%03zx=%08x->%08x", i * sizeof(uint32_t), before[i], after[i]);
+                ++printed;
+            }
+            ++total;
+        }
+        if (total > printed)
+            std::fprintf(stderr, " (+%d words)", total - printed);
+        if (total == 0)
+            std::fprintf(stderr, " unchanged");
+        std::fprintf(stderr, "\n");
+    }
+
+    bool decodePointerField(const R5900Context *ctx, uint32_t callerRa, uint32_t &field)
+    {
+        if (callerRa < 8 || !inRam(callerRa - 4))
+            return false;
+        const uint32_t delay = rd32(callerRa - 4);
+        const uint32_t opcode = delay >> 26;
+        const uint32_t base = (delay >> 21) & 31u;
+        const uint32_t target = (delay >> 16) & 31u;
+        if (opcode != 0x23u || target != 4u)
+            return false;
+        field = reg(ctx, static_cast<int>(base)) + static_cast<uint32_t>(static_cast<int16_t>(delay));
+        return true;
+    }
+
+    void printPointerSource(const R5900Context *ctx, uint32_t callerRa)
+    {
+        if (callerRa < 8 || !inRam(callerRa - 4))
+            return;
+        const uint32_t delay = rd32(callerRa - 4);
+        const uint32_t opcode = delay >> 26;
+        const uint32_t base = (delay >> 21) & 31u;
+        const uint32_t target = (delay >> 16) & 31u;
+        std::fprintf(stderr, "[win06]   caller 0x%06x instruction 0x%08x, delay 0x%08x", callerRa - 8, rd32(callerRa - 8),
+                     delay);
+        if (opcode != 0x23u || target != 4u)
+        {
+            std::fprintf(stderr, " (delay slot is not lw a0, offset(base))\n");
+            return;
+        }
+        const int32_t offset = static_cast<int16_t>(delay);
+        uint32_t field = 0;
+        if (!decodePointerField(ctx, callerRa, field))
+            return;
+        std::fprintf(stderr, ": a0 loaded from r%u%+d = 0x%08x\n", base, offset, field);
+        if (!inRam(field - 0x20u, 0x50u))
+            return;
+        std::fprintf(stderr, "[win06]   pointer-field neighborhood at 0x%08x:", field);
+        for (uint32_t o = 0; o < 0x50u; o += 4u)
+            std::fprintf(stderr, " %08x", rd32(field - 0x20u + o));
+        std::fprintf(stderr, "\n");
+    }
+
     std::string lastFree(uint32_t p)
     {
         const auto it = g_frees.find(p);
         if (it == g_frees.end())
             return "never freed before";
-        char buf[96];
-        std::snprintf(buf, sizeof(buf), "last freed at vsync %llu by ra 0x%06x",
-                      static_cast<unsigned long long>(it->second.vsync), it->second.ra);
+        char buf[224];
+        if (it->second.reallocCaller)
+            std::snprintf(buf, sizeof(buf),
+                          "last freed at vsync %llu by realloc from caller 0x%06x, field 0x%08x, request 0x%x",
+                          static_cast<unsigned long long>(it->second.vsync), it->second.reallocCaller,
+                          it->second.pointerField, it->second.requestedSize);
+        else
+            std::snprintf(buf, sizeof(buf), "last freed at vsync %llu by ra 0x%06x",
+                          static_cast<unsigned long long>(it->second.vsync), it->second.ra);
         return buf;
     }
 
@@ -529,7 +684,9 @@ namespace
         const bool inUse = !fits || size < 0x51 || !inRam(p - 8 + size + 4) || (rd32(p - 8 + size + 4) & 1u);
         if (fits && inUse)
             return;
-        if (++g_badBlocks > 12)
+        const bool wrapper = std::strcmp(what, "realloc wrapper") == 0;
+        const bool innerWrapperRealloc = std::strcmp(what, "realloc") == 0 && ra == 0x173694u;
+        if (!wrapper && !innerWrapperRealloc && ++g_badBlocks > 12)
             return;
         std::lock_guard<std::mutex> lock(g_reportLock);
         std::fprintf(stderr, "[win06] BAD %s(0x%08x, 0x%08x) at vsync %llu by ra 0x%06x: chunk size 0x%x, %s; %s\n", what, p,
@@ -553,14 +710,27 @@ namespace
             std::fprintf(stderr, "\n");
         }
         std::fprintf(stderr, "[win06]   ctx gprs:");
-        for (int r : {2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23, 29, 30, 31})
+        for (int r = 0; r < 32; ++r)
             std::fprintf(stderr, " r%d=0x%08x", r, reg(ctx, r));
         std::fprintf(stderr, "\n");
+        if (wrapper)
+            printPointerSource(ctx, ra);
+        else if (innerWrapperRealloc)
+        {
+            const uint32_t sp = reg(ctx, 29);
+            if (inRam(sp))
+            {
+                const uint32_t callerRa = rd32(sp);
+                std::fprintf(stderr, "[win06]   realloc wrapper saved caller ra 0x%06x at sp 0x%08x\n", callerRa, sp);
+                printPointerSource(ctx, callerRa);
+            }
+        }
         std::fflush(stderr);
     }
 
     void hookRealloc(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
     {
+        armHardwareWatch();
         checkBlockArgument("realloc", ctx);
         g_origRealloc(rdram, ctx, rt);
     }
@@ -568,17 +738,98 @@ namespace
     // its ra is the code that holds the pointer
     void hookReallocC(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
     {
+        armHardwareWatch();
         if (reg(ctx, 5))
+        {
+            if (reg(ctx, 31) == kz_hook::VectorGrowReturn)
+            {
+                snapshotHeap(t_vectorGrowHeapBefore);
+                t_haveVectorGrowHeapBefore = true;
+            }
             checkBlockArgument("realloc wrapper", ctx);
+            if (const uint32_t p = reg(ctx, 4))
+            {
+                uint32_t field = 0;
+                decodePointerField(ctx, reg(ctx, 31), field);
+                g_reallocs[p] = ReallocRecord{vsyncTick(), reg(ctx, 31), field, reg(ctx, 5)};
+            }
+        }
         g_origReallocC(rdram, ctx, rt);
     }
 
     void hookFree(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
     {
+        armHardwareWatch();
         checkBlockArgument("free", ctx);
         if (const uint32_t p = reg(ctx, 4))
-            g_frees[p] = FreeRecord{vsyncTick(), reg(ctx, 31)};
+        {
+            FreeRecord record{vsyncTick(), reg(ctx, 31)};
+            if (record.ra == 0x173200u)
+            {
+                const auto it = g_reallocs.find(p);
+                if (it != g_reallocs.end())
+                {
+                    record.reallocCaller = it->second.caller;
+                    record.pointerField = it->second.pointerField;
+                    record.requestedSize = it->second.requestedSize;
+                }
+            }
+            g_frees[p] = record;
+        }
         g_origFree(rdram, ctx, rt);
+    }
+
+    void hookVectorGrowReturn(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
+    {
+        const uint32_t result = reg(ctx, 2), object = reg(ctx, 16);
+        const uint32_t heapLo = rd32(0x55F068u), heapHi = rd32(0x55F06Cu);
+        const bool heapReady = heapLo != 0u || heapHi != 0u;
+        const bool valid = !heapReady || (result >= heapLo && result < heapHi && (result & 7u) == 0u);
+        std::array<uint32_t, kHeapStateWords> heapNow{};
+        snapshotHeap(heapNow);
+        if (!valid)
+        {
+            std::lock_guard<std::mutex> lock(g_reportLock);
+            std::fprintf(stderr,
+                         "[win06] BAD vector grow result 0x%08x at vsync %llu: object 0x%08x, heap "
+                         "0x%08x-0x%08x, top 0x%08x\n",
+                         result, static_cast<unsigned long long>(vsyncTick()), object, heapLo, heapHi,
+                         rd32(0x55EC50u));
+            if (inRam(object, 12u))
+                std::fprintf(stderr, "[win06]   vector before result store: count 0x%08x capacity 0x%08x pointer 0x%08x\n",
+                             rd32(object), rd32(object + 4u), rd32(object + 8u));
+            if (g_haveLastGoodHeap)
+            {
+                char label[96];
+                std::snprintf(label, sizeof(label), "since last good vector grow at vsync %llu",
+                              static_cast<unsigned long long>(g_lastGoodHeapVsync));
+                printHeapDiff(label, g_lastGoodHeap, t_haveVectorGrowHeapBefore ? t_vectorGrowHeapBefore : heapNow);
+            }
+            if (t_haveVectorGrowHeapBefore)
+                printHeapDiff("inside the failing realloc", t_vectorGrowHeapBefore, heapNow);
+            std::fprintf(stderr, "[win06]   ctx gprs:");
+            for (int r = 0; r < 32; ++r)
+                std::fprintf(stderr, " r%d=0x%08x", r, reg(ctx, r));
+            std::fprintf(stderr, "\n");
+            const uint32_t sp = reg(ctx, 29);
+            if (inRam(sp, 0x100u))
+            {
+                std::fprintf(stderr, "[win06]   guest stack at sp 0x%08x:", sp);
+                for (uint32_t o = 0; o < 0x100u; o += 4u)
+                    std::fprintf(stderr, " %08x", rd32(sp + o));
+                std::fprintf(stderr, "\n");
+            }
+            printRing("before the bad vector grow result");
+            std::fflush(stderr);
+        }
+        else
+        {
+            g_lastGoodHeap = heapNow;
+            g_lastGoodHeapVsync = vsyncTick();
+            g_haveLastGoodHeap = true;
+        }
+        t_haveVectorGrowHeapBefore = false;
+        g_origVectorGrowReturn(rdram, ctx, rt);
     }
 
     void hookUpload(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
@@ -657,12 +908,14 @@ namespace
             {
                 nextSummary += 5000;
                 std::fprintf(stderr,
-                             "[win06] %.0f s: %llu faults on watched pages, %llu watched changes (timer %llu, guest %llu, host %llu)\n",
-                             seconds(), static_cast<unsigned long long>(g_faults.load()),
-                             static_cast<unsigned long long>(g_changes.load()),
-                             static_cast<unsigned long long>(g_byClass[kTimer].load()),
-                             static_cast<unsigned long long>(g_byClass[kGuest].load()),
-                             static_cast<unsigned long long>(g_byClass[kHost].load()));
+                                 "[win06] %.0f s: %llu faults on watched pages, %llu watched changes "
+                                 "(timer %llu, heap %llu, guest %llu, host %llu)\n",
+                                 seconds(), static_cast<unsigned long long>(g_faults.load()),
+                                 static_cast<unsigned long long>(g_changes.load()),
+                                 static_cast<unsigned long long>(g_byClass[kTimer].load()),
+                                 static_cast<unsigned long long>(g_byClass[kHeap].load()),
+                                 static_cast<unsigned long long>(g_byClass[kGuest].load()),
+                                 static_cast<unsigned long long>(g_byClass[kHost].load()));
                 std::fflush(stderr);
             }
         }
@@ -676,12 +929,45 @@ void kzWin06WatchInstall(PS2Runtime &runtime)
         return;
     if (const char *n = std::getenv("KZ_WIN06_WATCH_EXPECTED"))
         g_expectedLimit = std::strtoull(n, nullptr, 10);
+    if (const char *text = std::getenv("KZ_WIN06_HW_WATCH"))
+    {
+        char *end = nullptr;
+        const unsigned long address = std::strtoul(text, &end, 0);
+        if (end == text || !end || *end || address > PS2_RAM_SIZE - sizeof(uint32_t) ||
+            (address & (sizeof(uint32_t) - 1u)) != 0u)
+            std::fprintf(stderr, "[win06] invalid KZ_WIN06_HW_WATCH '%s'; expected an aligned guest word\n", text);
+        else
+            g_hardwareWatchAddress = static_cast<uint32_t>(address);
+    }
     g_runtime = &runtime;
     g_rdram = runtime.memory().getRDRAM();
     g_startMs = GetTickCount64();
     InitializeCriticalSection(&g_protectLock);
 
-    for (const GuestRange &r : kRanges)
+    std::vector<GuestRange> ranges;
+    const char *watchDefaults = std::getenv("KZ_WIN06_WATCH_DEFAULT");
+    if (!watchDefaults || !*watchDefaults || *watchDefaults != '0')
+        ranges.assign(std::begin(kDefaultRanges), std::end(kDefaultRanges));
+    if (const char *text = std::getenv("KZ_WIN06_WATCH_RANGE"))
+    {
+        char *separator = nullptr;
+        const unsigned long lo = std::strtoul(text, &separator, 0);
+        char *end = nullptr;
+        const unsigned long hi = separator && *separator == '-' ? std::strtoul(separator + 1, &end, 0) : 0;
+        if (separator == text || !separator || *separator != '-' || !end || *end || lo >= hi || hi > PS2_RAM_SIZE)
+        {
+            std::fprintf(stderr,
+                         "[win06] invalid KZ_WIN06_WATCH_RANGE '%s'; expected a half-open range such as "
+                         "0x8d1ac8-0x8d1acc\n",
+                         text);
+        }
+        else
+        {
+            ranges.push_back(GuestRange{static_cast<uint32_t>(lo), static_cast<uint32_t>(hi)});
+        }
+    }
+
+    for (const GuestRange &r : ranges)
     {
         const uintptr_t first = reinterpret_cast<uintptr_t>(g_rdram + r.lo) & ~(kPageSize - 1);
         const uintptr_t last = reinterpret_cast<uintptr_t>(g_rdram + r.hi - 1) & ~(kPageSize - 1);
@@ -710,7 +996,8 @@ void kzWin06WatchInstall(PS2Runtime &runtime)
     const bool hooked = hook(runtime, kz_hook::HeapFree, &hookFree, &g_origFree) &&
                         hook(runtime, kz_hook::HeapRealloc, &hookRealloc, &g_origRealloc) &&
                         hook(runtime, kz_hook::UploadRecords, &hookUpload, &g_origUpload) &&
-                        hook(runtime, kz_hook::HeapReallocC, &hookReallocC, &g_origReallocC);
+                        hook(runtime, kz_hook::HeapReallocC, &hookReallocC, &g_origReallocC) &&
+                        hook(runtime, kz_hook::VectorGrowReturn, &hookVectorGrowReturn, &g_origVectorGrowReturn);
     std::fprintf(stderr, "[win06] heap and upload hooks %s\n", hooked ? "installed" : "NOT installed");
 
     AddVectoredExceptionHandler(1, &onException);

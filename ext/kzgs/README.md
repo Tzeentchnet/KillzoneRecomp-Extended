@@ -46,6 +46,7 @@ CMake options:
 | `KZGS_ISA` | `AVX2` | Instruction set the GS code is compiled for: `SSE4`, `AVX` or `AVX2` (see Known gaps) |
 | `KZGS_BUILD_TEST` | on when top-level | Builds `kzgs_test` |
 | `KZGS_BUILD_TOOLS` | on when top-level | Builds `kzgs_replay`, the trace debugger (see Debugging) |
+| `KZGS_ADDRESS_SANITIZER` | off | Instruments kzgs with clang-cl AddressSanitizer; the top-level executable links the runtime |
 
 `--golden` runs the deterministic synthetic scene at 1x and 2x, compares every pixel outside a narrow
 rasterization-edge exclusion zone against the algorithmic reference, and exits before stress and renderer-switch
