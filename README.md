@@ -7,8 +7,8 @@ as libraries.
 **No game code or data is in this repository.** You need your own disc image of Killzone NTSC-U (SCUS-97402).
 
 This is **KillzoneRecomp-Extended**, a fork of [drakolordx7/KillzoneRecomp](https://github.com/drakolordx7/KillzoneRecomp)
-that works toward a reproducible, portable runtime (Windows first, then Apple Silicon macOS) and a modding foundation.
-Developed with AI assistance.
+that works toward a reproducible, portable runtime (Windows first, then Apple Silicon macOS). New mod support is
+deferred; Blender tooling is developed in a separate project. Developed with AI assistance.
 
 ## Project documents
 

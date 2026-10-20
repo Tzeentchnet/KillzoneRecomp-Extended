@@ -6,7 +6,7 @@
 **Upstream:** [drakolordx7/KillzoneRecomp](https://github.com/drakolordx7/KillzoneRecomp)
 **Audited fork baseline:** `5f0700079f9ac4e14799d66d01747dbcdcec55f6`
 **Supported game build:** Killzone NTSC-U, SCUS-97402
-**Last revised:** 2026-10-17
+**Last revised:** 2026-10-19
 
 This plan defines *what* each work package is, what it depends on, how it is accepted, and when it must stop. It
 does not carry status. Status lives in two files:
@@ -51,7 +51,8 @@ runs. These are baseline capabilities to preserve, not deliverables.
 | DMA buffers | Chains use dynamically growing pooled snapshots, not a fixed 3 MB buffer; a fixed 16 MB replacement is not a solution. Captures show asynchronous source overwrites, so unconditional zero-copy (Metal/UMA) is prohibited. |
 | macOS | ARM64, AppleClang, Metal, W^X executable memory, packaging, signing and notarization are feasibility programs, not capabilities. |
 | Temporal rendering | Depth conventions, motion vectors, dynamic-object identity, HUD classification, jitter and reactive masks do not yet form a renderer contract. Vendor upscalers wait for it. |
-| VFS, DCC, AI | Archive layouts, `.mss`/`.zone`/`.col` schemas, AI structures and pathfinding hooks are hypotheses until read-only tracing and lossless parsers prove them. |
+| Mod and Blender scope | New mod/VFS support is deferred. Blender tooling is owned by a separate project and does not gate this repository. Existing format research remains evidence, not an active importer, exporter or custom-level commitment here. |
+| AI | AI structures and pathfinding hooks are hypotheses until read-only tracing proves them. |
 | Legal | Dependency licenses, SDK redistribution, generated-code provenance, trademarks and protected-content exclusion require an explicit human-approved gate. |
 
 ### Product outcomes
@@ -61,14 +62,17 @@ Subject to the gates in this plan, the program targets:
 1. A reproducible and relocatable Windows baseline.
 2. A portable host boundary and a qualified native macOS ARM64 path.
 3. Baseline-safe LOD and culling controls.
-4. A secure deterministic VFS and evidence-based asset tooling.
-5. A backend-neutral temporal-rendering contract with native fallback.
-6. Modern display, input and accessibility behavior.
-7. Evidence-based AI and audio extension points.
-8. Signed, auditable, BYOD-only release artifacts.
+4. A backend-neutral temporal-rendering contract with native fallback.
+5. Modern display, input and accessibility behavior.
+6. Evidence-based AI and audio extension points.
+7. Signed, auditable, BYOD-only release artifacts.
 
 The release model is a native desktop application that uses a user-supplied disc image. The current host is Windows
 10/11 x64 (MSVC or clang-cl, AVX2). Apple Silicon macOS is a candidate host, subject to Phase 0.
+
+New mod support, including VFS overlays and loose-asset replacement, is deferred. The inherited texture-replacement
+path remains a baseline capability to preserve, but expanding mod behavior is not an active deliverable. Blender
+add-ons and integration are owned by a separate project; their schedule and acceptance do not gate this repository.
 
 ### Claims that are not approved
 
@@ -77,7 +81,8 @@ Do not make these claims in code, documentation, the launcher or release notes u
 - Native macOS support before Phase 0 passes.
 - Unconditional zero-copy guest or DMA memory.
 - DLSS, MetalFX, XeSS, FSR, HDR or frame generation before their contracts and licenses are qualified.
-- Custom-level authoring before format round-trip and mission-lifecycle behavior are proven.
+- New mod-loading, archive-overlay, loose-asset replacement, Blender or custom-level support; those capabilities
+  are deferred or external to this project.
 - Campaign Recast/Detour pathfinding.
 - "True HDR" when only SDR remapping is implemented.
 - Steam Deck support, unless Linux becomes an explicit target.
@@ -318,7 +323,7 @@ change Phase 0 deliverables, but each must keep the Windows regression set green
 ## 6. Post-gate implementation lanes
 
 Do not begin these before P0-EXIT, except for read-only research marked `[READ-PARALLEL]`. Within a lane, numbered
-tasks are serial. The first post-gate priority group is TEMP-01, VFS-01 and LOD-02.
+tasks are serial. The first post-gate priority group is TEMP-01 and LOD-01/LOD-02.
 
 ### LOD and culling
 
@@ -334,7 +339,14 @@ tasks are serial. The first post-gate priority group is TEMP-01, VFS-01 and LOD-
 Validation: `ctest --preset win-msvc-rel --output-on-failure -R '^kz_(post|hook_manifest)_'`;
 `ctest --preset win-msvc-rel --output-on-failure -R '^byod_lod_capture$' -L byod`
 
-### VFS and mod loading
+### Deferred: VFS and mod loading
+
+New mod support is not part of the current milestones or release gate. Do not start VFS-01 through VFS-06. The
+inherited texture-replacement path remains baseline behavior and must not regress, but it is not authorization to
+expand mod loading.
+
+If product scope later reactivates mod support, revise this plan and `TODO.md` before scheduling this deferred
+sequence:
 
 1. **VFS-01:** Trace the FilePS2 RPC state machine: service ID, function, path, counters, result, timing, callbacks,
    cancellation, thread.
@@ -346,7 +358,8 @@ Validation: `ctest --preset win-msvc-rel --output-on-failure -R '^kz_(post|hook_
    cancellation and archive fallback. Instant completion that changes observable RPC behavior is not acceptable.
 6. **VFS-06:** Traversal, symlink, case-collision, oversized-file, concurrent-read, fault-injection and soak tests.
 
-Validation: `-R '^byod_fileps2_trace$' -L byod`, `-R '^kz_archive_'`, `-R '^kz_vfs_'`, `-R '^byod_vfs_overlay$' -L byod`
+Reactivation validation (not currently active): `-R '^byod_fileps2_trace$' -L byod`, `-R '^kz_archive_'`,
+`-R '^kz_vfs_'`, `-R '^byod_vfs_overlay$' -L byod`
 
 ### Temporal rendering and upscaling
 
@@ -376,16 +389,57 @@ design is approved.
 4. Discover projection and HUD anchors at 21:9 and 32:9 before Hor+ or HUD repositioning.
 5. Qualify 16:9, 21:9 and 32:9 geometry, menus, FMV, scopes and HUD.
 
-### DCC and assets
+### Deferred assets and external Blender tooling
 
-1. One verified read-only parser and structure dumper.
-2. Versioned schemas, coordinate conventions, deterministic serialization, validation, unknown-field preservation.
-3. Unchanged parse-serialize output is byte-identical or provably canonically equivalent.
-4. Blender add-on scaffold for exact supported Blender versions; importers before exporters.
-5. `.mss`, `.zone`, `.col` export only after each format's round-trip invariants and guest limits are proven. No
-   hard-coded NvTriStrip, 540-vertex limit or V-HACD before evidence and licensing gates.
-6. Import-edit-export-VFS workflow with procedurally created, protected-content-free assets. No custom-level claim
-   until scripts, triggers, spawns and mission lifecycle work.
+Asset parser, serializer and export work whose purpose is mod support is deferred with the VFS lane. Blender add-ons,
+Blender-version support and Blender import/export integration are owned by a separate project. They are not work
+packages, milestones, acceptance criteria or release blockers here. Existing format research in
+`docs/assetforms.md` remains reference evidence for this runtime.
+
+Any future integration is limited to an explicitly versioned boundary approved after mod support is reactivated. The
+external project must not become a build or release dependency without revising this plan.
+
+#### ASSET-01 - Retail asset storage and build-pipeline research `[BYOD]` `[READ-PARALLEL]`
+
+- **Objective:** Document how the supported retail build stores, groups and consumes assets, and distinguish evidenced
+  source/authoring stages from shipped runtime formats so the external Blender project has a reliable interoperability
+  reference.
+- **Work:** Read-only disc inventory, DAT/Core/CoreStream relationship mapping, executable and runtime-consumer
+  tracing, companion-file analysis, and build/tool metadata research. Record verified facts, bounded inferences and
+  unknowns in `docs/assetforms.md`. This task does not implement parsers, exporters, VFS overlays or runtime changes.
+- **Acceptance:** `docs/assetforms.md` contains a cited storage/build-pipeline synthesis, reproducible non-content
+  metadata where practical, importer implications, and an explicit remaining-unknowns list; `git diff --check`.
+- **Stop:** Do not copy protected content into source or reports, infer source formats from runtime layouts without
+  evidence, or add runtime instrumentation under this task. Any required runtime change becomes a separately approved
+  work package and must pass the Windows regression set plus a BYOD game smoke run.
+
+#### ASSET-02 - Skinned geometry and animation decoder review `[BYOD]` `[READ-PARALLEL]`
+
+- **Objective:** Re-derive the skinned-mesh, Skeleton/BoneMap, packed-animation and pose-sampling paths from the
+  supported executable and correct the external Blender project's interoperability reference.
+- **Work:** Verify CoreStream ownership bases, nested packet directories, VIF/VU layout, strip controls, matrix
+  palette construction, name binding, packed-track boundaries, codec dispatch and interpolation. Distinguish strict
+  serialized-format validation from runtime fallback behavior and retain corpus-only claims as such.
+- **Acceptance:** `docs/assetforms.md` documents the verified decoder behavior, selector domains, bounds and remaining
+  unknowns; known timing, scatter and control-bit formulas match executable control/data flow; `git diff --check`.
+- **Stop:** Do not claim source topology or authoring semantics from runtime packets, accept unsupported codec selectors
+  as valid serialization, or change runtime code under this task. Any runtime implementation must pass the Windows
+  regression set and a BYOD animated-gameplay smoke run.
+
+#### ASSET-03 - Retail animation playback contract `[BYOD]` `[READ-PARALLEL]`
+
+- **Objective:** Define and validate the complete path required to decode retail animation clips and play them on the
+  corresponding rigged meshes in the external Blender project.
+- **Work:** Inventory animation-bearing Cores and streams from the authorized disc; resolve resource, Skeleton,
+  BoneMap and clip linkage; measure codec-selector use; decode representative and edge-case tracks; verify rest/bind
+  pose, local-to-world composition, timing, looping and interpolation; and specify Blender armature, basis, action and
+  sampling behavior. Temporary analysis may read protected content but must retain only non-content metadata.
+- **Acceptance:** `docs/assetforms.md` contains an evidence-labeled end-to-end playback contract, retail selector and
+  linkage measurements, validated codec/bounds rules, Blender conversion rules, and explicit unresolved cases;
+  `git diff --check`.
+- **Stop:** Do not commit extracted assets or decoded retail animation data, modify the external Blender project under
+  this research task, or invent missing source/DCC semantics. Any required runtime instrumentation becomes a separate
+  work package and must pass the Windows regression set plus a BYOD animated-gameplay smoke run.
 
 ### Input and accessibility
 
@@ -404,7 +458,8 @@ design is approved.
 2. Trace one reversible AI scalar and prove its isolated effect.
 3. Versioned tuning schema exposing only proven fields, units and ranges.
 4. Waypoint/cover visualization before editing; preserve unknown and mission-critical records.
-5. Recast/Detour only for explicit standalone custom levels, impossible to select for campaign levels.
+
+Recast/Detour and custom-level navigation are out of scope while mod support is deferred.
 
 Validation: `python .\tools\scripts\verify_symbol_manifest.py .\config\killzone-symbols.toml --group ai`;
 `-R '^byod_ai_scalar$' -L byod`
@@ -415,8 +470,9 @@ Validation: `python .\tools\scripts\verify_symbol_manifest.py .\config\killzone-
    transforms; keep stereo for ambiguous voices.
 2. One legally approved HRTF backend only after emitter association is demonstrated.
 3. Latency, resampling, channel, device-change and double-spatialization criteria.
-4. Loose audio replacement with validation, streaming limits, resampling and fallback.
-5. Apple head tracking only through stable public APIs with capability, privacy, disconnect and fallback tests.
+4. Apple head tracking only through stable public APIs with capability, privacy, disconnect and fallback tests.
+
+Loose audio replacement is deferred with mod support.
 
 The accepted FMV audio policy (four ADPCM banks, two proactive MPEG refills per picture, 40 ms host reserve) is a
 baseline; changing it requires a reproducible timestamped regression.
@@ -426,7 +482,7 @@ baseline; changing it requires a reproducible timestamped regression.
 Clean-machine build and installation tests; dependency notices and source-offer obligations; SBOM; protected-content
 and secret scanning; hardware and renderer matrices; frame-time percentiles, memory high-water, latency,
 shader-cache and thermal measurements; campaign, checkpoint, save/load, cutscene, FMV, shutdown and soak tests; macOS
-signing, hardened runtime, entitlements, notarization and DMG dry runs; BYOD, supported-disc, mods, safe-mode,
+signing, hardened runtime, entitlements, notarization and DMG dry runs; BYOD, supported-disc, safe-mode,
 diagnostics and uninstall documentation.
 
 ## 7. Milestones
@@ -434,12 +490,11 @@ diagnostics and uninstall documentation.
 | Milestone | Exit criteria |
 |---|---|
 | **M0 Feasibility approved** | Phase 0 passes; every speculative feature is retained, deferred or removed; legal and distribution decisions are recorded; measured estimates replace the original calendar. |
-| **M1 Portable core** | Windows x64 and native macOS ARM64 build in CI; the supported disc reaches the same approved checkpoint on both; JIT differential and W^X tests pass or the interpreter fallback is explicit; Metal golden scenes pass; typed configuration and platform defaults work; VFS is secure, deterministic and baseline-preserving; bundle, signing and notarization dry runs pass. |
+| **M1 Portable core** | Windows x64 and native macOS ARM64 build in CI; the supported disc reaches the same approved checkpoint on both; JIT differential and W^X tests pass or the interpreter fallback is explicit; Metal golden scenes pass; typed configuration and platform defaults work; bundle, signing and notarization dry runs pass. |
 | **M2 LOD controls** | Each control independently toggleable with baseline-identical defaults; RenderZone changes idempotent and bounds-checked; no guest or host overflow; missions, saves, streaming and actor lifecycle correct; memory and frame-time budgets pass on the approved hardware matrix. |
 | **M3 Modern rendering** | Color, depth, motion, mask, UI and history contracts have tests and debug views; one approved upscaler plus native fallback per platform; every temporal reset case correct; HUD stable; HDR claims match source semantics; quality, stutter, memory and percentile budgets pass; no frame generation unless separately approved. |
 | **M4 Ergonomics** | 16:9, 21:9 and 32:9 matrices pass; mouse input frame-rate independent; controllers reconnect without leaving active effects; gyro and DualSense claims match the tested matrix; accessibility settings preserve gameplay. |
-| **M5 DCC toolchain** | Supported Blender versions explicit; unchanged assets round-trip and keep unknown records; validators reject out-of-range geometry and collision; a protected-content-free sample completes import, edit, export, VFS install and launch; no custom-level claim until scripts, spawns and triggers work. |
-| **M6 AI, audio, release candidate** | AI profiles schema-validated and baseline-safe; waypoint and cover edits work in original-free content; Recast cannot run on campaign levels; spatial audio has verified emitter mapping and fallback; head tracking uses public APIs; signed artifacts, SBOM, notices, guides, campaign regression, soak and legal checks pass; no protected or unlicensed content is distributed. |
+| **M5 AI, audio, release candidate** | AI tuning is schema-validated, evidence-based and baseline-safe; spatial audio has verified emitter mapping and fallback; head tracking uses public APIs; signed artifacts, SBOM, notices, guides, campaign regression, soak and legal checks pass; no protected or unlicensed content is distributed. |
 
 ## 8. Configuration requirements
 
@@ -451,7 +506,7 @@ The existing `killzone.ini` configuration is the baseline. New settings must:
 - Be exposed only when the corresponding feature gate passes.
 - Record platform-specific defaults separately from shared behavior.
 
-Candidate groups are `Portability`, `LOD`, `Temporal`, `Display`, `Input`, `Accessibility`, `Audio` and `Mods`.
+Candidate groups are `Portability`, `LOD`, `Temporal`, `Display`, `Input`, `Accessibility` and `Audio`.
 Listing a group here does not mean its keys are implemented.
 
 ## 9. Performance and evidence requirements
@@ -484,10 +539,9 @@ pass/fail output, measured baselines and comparisons, and any stop decision or d
 | LOD memory or scheduling regression | Pool telemetry, deterministic exhaustion, independent controls, campaign regression |
 | Temporal ghosting or instability | Proven depth/motion/UI/mask contract, reset tests, debug views, native fallback |
 | macOS JIT incompatibility | Interpreter oracle, W^X lifecycle tests, cache invalidation, explicit fallback |
-| VFS traversal or semantic mismatch | Canonical paths, containment, async state-machine parity, fault injection, soak tests |
-| Asset corruption | Lossless parsing, unknown-field preservation, validators, protected-content-free round trips |
-| Campaign AI breakage | Proven symbols and schemas; Recast prohibited for campaign content |
+| Campaign AI breakage | Proven symbols and schemas; baseline-safe tuning, visualization before mutation and no custom-navigation integration |
 | License or SDK redistribution violation | Human legal gate, SBOM, notices, source obligations, artifact audit |
+| Deferred or external scope leaks into a release | Keep mod/VFS work out of the active queue and release gate; keep Blender tooling non-blocking |
 
 ## 11. Release gate
 
@@ -499,7 +553,7 @@ A release candidate requires:
 - Dependency notices, source-offer obligations and an SBOM.
 - Secret and protected-content scans.
 - macOS signing, hardened runtime, entitlements, notarization and DMG dry runs when macOS is included.
-- BYOD, supported-disc, mods, safe-mode, diagnostics and uninstall guides.
+- BYOD, supported-disc, safe-mode, diagnostics and uninstall guides.
 - Human approval of legal, trademark, provenance and distribution evidence (LEGAL-01).
 
 ## 12. Approval status
@@ -513,6 +567,5 @@ sign-off here with the date and the person approving.
 | Windows/platform lead | Pending |
 | macOS/Metal lead | Pending Phase 0 evidence |
 | Graphics lead | Pending renderer-contract evidence |
-| DCC/modding lead | Pending format evidence |
 | Audio/input lead | Pending platform matrices |
 | Legal/distribution owner | Pending LEGAL-01 |

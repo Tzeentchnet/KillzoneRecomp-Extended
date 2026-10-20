@@ -1,7 +1,7 @@
 # TODO - current milestone queue
 
 **Milestone:** M0 - Feasibility approved (Phase 0)
-**Last updated:** 2026-10-17
+**Last updated:** 2026-10-19
 
 The durable queue of open work. Definitions, dependencies, acceptance commands and stop conditions are in
 [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md); verified completions are in [`WORKDONE.md`](WORKDONE.md). A task
@@ -21,11 +21,11 @@ owns edits; `[SERIAL]` waits on dependencies or the integration owner; `[HUMAN]`
 | 3 | ARM-01 | ARM64 guest-code smoke gate | Apple Silicon | `[SUBAGENT-PARALLEL]` | not started | Mac access |
 | 4 | VU-02 | Bounded AArch64 JIT spike | Apple Silicon | `[SERIAL]` | blocked | VU-01 |
 | 5 | GS-01 | Minimal Metal parity gate | Apple Silicon | `[SERIAL]` | blocked | MAC-01 |
-| 6 | WIN-04 | Re-verify Windows gameplay baseline | Windows | `[SERIAL]` | not started | - |
+| 6 | WIN-04 | Re-verify Windows gameplay baseline | Windows | `[SERIAL]` | in progress | hands-on play-test |
 | 7 | WIN-01 | D3D11 black output on NVIDIA | Windows | `[SUBAGENT-PARALLEL]` | not started | - |
 | 8 | WIN-03 | PS2Recomp standalone test-suite failures | Windows | `[SUBAGENT-PARALLEL]` | not started | - |
-| 9 | WIN-02 | Unlock All Campaign Levels launcher option | Windows | `[SERIAL]` | in progress | regression set |
-| 10 | WIN-05 | Testing start-up options (skip intro, start in chapter, test card) | Windows | `[SERIAL]` | in progress | regression set |
+| 9 | WIN-02 | Unlock All Campaign Levels launcher option | Windows | `[SERIAL]` | in progress | hands-on check |
+| 10 | WIN-05 | Testing start-up options (skip intro, start in chapter, test card) | Windows | `[SERIAL]` | in progress | WIN-06 |
 | 11 | WIN-06 | Chapter 11 load crash after a skipped intro cinematic | Windows | `[SUBAGENT-PARALLEL]` | not started | - |
 | 12 | LEGAL-01 | Distribution and provenance disposition | Human | `[HUMAN]` | not started | - |
 | 13 | P0-EXIT | Phase 0 integration and exit review | Mac + Windows | `[SERIAL]` | blocked | 1-6, 12 |
@@ -99,11 +99,13 @@ available on the current Windows machine.
 
 ### 6. WIN-04 - re-verify the Windows gameplay baseline
 
-- **Status:** not started. Boot, FMV, memory cards and main menu were re-verified on D3D12 on 2026-10-17. Profile
-  creation, first-mission gameplay, save/load and quit-to-front-end have not been re-run since the fork regenerated
-  the function map.
-- **Next command:** `tools\scripts\run_headless.ps1` with an input script that creates a profile and enters the
-  first mission, then a hands-on D3D12 play-test.
+- **Status:** in progress. The scripted portion passed on 2026-10-19; the hands-on acceptance remains.
+- **Scripted evidence (win-clang-rel, D3D12):** a clean isolated card entered the game's create-profile flow, saved
+  `Tester`, selected `1.Trenches` on Normal and reached first-mission gameplay. The 120 Hz run exited 0 after 120 s,
+  produced 11 distinct nonblack captures through 110 s, and logged no crash signature. The start-in-chapter
+  autopilot was the scripted driver; this does not replace the hands-on baseline with testing options disabled.
+- **Next command:** hands-on D3D12 play-test with testing options disabled: create/select a profile, play the first
+  mission, save/load, quit to the front end, and check high-refresh timing and mouse aim.
 - **Why now:** a Phase 0 exit criterion, and it protects every later Windows change.
 
 ### 7. WIN-01 - D3D11 black output on NVIDIA
@@ -126,8 +128,9 @@ available on the current Windows machine.
   replaces those queries in memory and never writes the profile (`docs/findings.md` "Testing options").
 - **Evidence so far (win-clang-rel, headless):** an ordinary fresh profile opened level select on chapter 11 and
   reached chapter 11 gameplay; memory-card files hashed identical before and after four unlock-on runs; with the option
-  off no hook is installed; `--selftest` covers the INI round trip and default. Inventory PASS (48 hook signatures).
-- **Next command:** the Windows regression set in `HANDOFF.md` section 4 (both compilers), then a hands-on check.
+  off no hook is installed; `--selftest` covers the INI round trip and default. The 2026-10-19 Windows regression set
+  passed under both compilers; generated inventory PASS reports 47 hook signatures.
+- **Next command:** hands-on enabled/disabled check, including an existing save.
 
 ### 10. WIN-05 - Testing start-up options
 
@@ -135,9 +138,11 @@ available on the current Windows machine.
   6-7 s instead of about 87 s), Start in chapter 1-11 with difficulty (autopilot through the game's own menus,
   creates a `Tester` profile on an empty card), Test memory card (`testcard` folder next to `killzone.ini`).
 - **Evidence so far:** autopilot reached chapter 1 gameplay (Normal) from a populated card and chapter 3 (Hard) from an
-  empty card after creating and saving `Tester`; `SetLevelFile` confirmed `1.Trenches`, `3.Station`, `11.OTS`.
+  empty card after creating and saving `Tester`; `SetLevelFile` confirmed `1.Trenches`, `3.Station`, `11.OTS`. The
+  2026-10-19 Windows regression set passed 12/12 under both compilers; a fresh isolated card again saved `Tester` and
+  reached chapter 1 gameplay at 120 Hz on D3D12.
 - **Known issue:** WIN-06. Do not mark complete while the skip makes chapter 11 loads fail above the baseline.
-- **Next command:** the Windows regression set; a hands-on run of the Test memory card option.
+- **Next command:** a hands-on run of the Test memory card option; then resolve WIN-06.
 
 ### 11. WIN-06 - Chapter 11 load crash after a skipped intro cinematic
 
@@ -172,9 +177,11 @@ Not startable until P0-EXIT passes, except read-only research. Definitions are i
 | Priority | ID | Task | Label |
 |---|---|---|---|
 | 1 | TEMP-01 | Frame IDs, pass capture, replayable native fallback | `[SUBAGENT-PARALLEL]` |
-| 1 | VFS-01 | FilePS2 RPC state-machine trace | `[SUBAGENT-PARALLEL]` |
 | 1 | LOD-01 / LOD-02 | Pure tests for existing LOD transforms, then culling/RenderZone traces | `[SUBAGENT-PARALLEL]` |
 | 2 | HDR/display | Linear-color and SDR-parity evidence | `[READ-PARALLEL]` |
 | 3 | Input lane | INI schema versioning, `RawMouse` resolution, sensitivity-math tests | `[SUBAGENT-PARALLEL]` |
 
 Vendor upscalers, MetalFX, HDR output, dynamic motion vectors and frame generation are not early parallel tasks.
+Mod/VFS implementation is deferred and does not enter this queue. Blender implementation belongs to a separate
+project. The completed ASSET-01 through ASSET-03 research in `WORKDONE.md` and `docs/assetforms.md` is the
+interoperability evidence that project can consume.

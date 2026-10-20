@@ -11,11 +11,18 @@ counts, offsets, signatures, and format descriptions are recorded here.
 
 ## Evidence labels
 
-- **Verified**: observed across the stated sample set, bounds-checked, and
-  internally consistent.
+- **Verified**: established either by direct control/data flow in the matching
+  executable or by bounds-checked, internally consistent observations across
+  the stated sample set. Text distinguishes executable behavior from corpus
+  observations when that distinction affects validation.
 - **Strong inference**: fits every current observation and PS2 hardware
   behavior, but still needs a runtime trace or more samples.
 - **Unknown**: preserve the original bytes and reject editing until resolved.
+
+A runtime selector fallback proves how the executable behaves for that value;
+it does not by itself prove that the serializer emits the value. Strict format
+validation therefore rejects undocumented fallback aliases unless explicitly
+operating in runtime-parity mode.
 
 ## Immediate corrections
 
@@ -99,7 +106,8 @@ All integers are little-endian. The first 24 bytes of package 0 are:
 |---:|---|---|
 | `0x00` | `u32` | Metadata byte count following this 24-byte header |
 | `0x04` | `u32` | Declared file count |
-| `0x08` | `u32` | Unknown; `0x00416305` in the validated build |
+| `0x08` | `u8` | DAT volume count; 5 in the validated build |
+| `0x09` | `u8[3]` | Unknown; bytes `63 41 00` in the validated build |
 | `0x0C` | `u32` | Unknown; `0x0012F624` in the validated build |
 | `0x10` | `u32` | Reserved, zero |
 | `0x14` | `u32` | Reserved, zero |
@@ -253,6 +261,78 @@ All stream catalog offsets are 2,048-byte aligned and all stream sizes are
 multiples of 64 in this build. The payload has no proven global chunk table;
 offsets and lengths appear to be owned by serialized Core objects. Preserve
 the prefix and unreferenced bytes until those references are decoded.
+
+### 2.4 Storage, build, and runtime boundaries
+
+Do not collapse shipped containment, runtime I/O, and authoring provenance into one purported pipeline.
+
+**Verified shipped containment.** The relation established by sections 1 and 2 is:
+
+```text
+ISO-resident DAT packages
+  -> catalogued resource byte range
+  -> self-contained Core, or paired Core metadata and CoreStream bulk data
+  -> typed object and object-owned stream ranges
+```
+
+This is a containment relation, not by itself a trace of the runtime call graph.
+
+**Verified catalog volume count.** Code at VA `0x002C2EF8` reads byte `0x08` of the 24-byte `FILES.DAT` header as
+the total DAT volume count. With the validated value 5, package zero is `FILES.DAT` and the remaining package names
+are constructed as `FILES01.DAT` through `FILES04.DAT`. Bytes `0x09..0x0B` remain **unknown** and must not be
+interpreted as part of the count.
+
+**Verified runtime namespace.** Code at VA `0x001BCD20` establishes these mounts or aliases:
+
+```text
+appdir:    -> cdrom0:FILES.DAT
+cache:     -> appdir:<LocalCache>.PS2/
+source:    -> appdir:
+binaries:  -> appdir:Binaries/
+music:     -> appdir:Sound/Music/
+```
+
+The spelling and case are executable conventions; catalog lookup remains subject to the archive rules in section 1.
+
+**Verified runtime boundaries.** The host keeps the original ISO mounted, resolves ISO9660 records, and serves raw
+2,048-byte sectors (`src/kz_iso.cpp:30-119,175-219`;
+`ext/PS2Recomp/ps2xIOP/src/emulator/imports/iop_cdvd.cpp:606-809`). Physical `PFILE_R.IRX` executes in the emulated
+IOP rather than being replaced by a semantic host asset layer
+(`ext/PS2Recomp/ps2xIOP/src/iop_subsystem.cpp:568-607`). Generic EE File and asynchronous-stream wrappers exist
+(`generated/entry_0014d1f4_0x14d1f4.cpp`; `generated/FUN_004963b8_0x4963b8.cpp`). At the opposite end of the
+pipeline, the host GS receives GIF command and image bytes rather than Core objects, resource tokens, or authoring
+semantics (`src/kz_gs.cpp:404-427`).
+
+**Unknown.** No current trace proves the consumer joins from `PFILE_R.IRX` through `FILES.DAT` range resolution to a
+particular Core/CoreStream loader. The physical I/O module, EE wrappers, DAT parser, Core loaders, and GS traffic are
+independently evidenced, but must not yet be presented as one instruction-complete call chain.
+
+**Strong inference.** Versioned `Core<1.79><PSX2>` and `CoreTex<1.05ctx>` strings, the incompatible-Core
+reconversion diagnostic, and the platform-specific XBOX/`.PC`/`.PS2` cache conventions are consistent with an
+offline, multi-target conversion/cache stage. WAV, VAG, and MSS labels establish additional format vocabulary.
+They do not identify the producer, its command line, or its source formats.
+
+The minimum defensible build model is therefore:
+
+```text
+unknown authoring source
+  -> inferred platform cook/serialization
+  -> verified Core[/CoreStream] resource
+  -> verified DAT packaging
+  -> disc image
+```
+
+Only the resource and packaging containment is verified; the chronological converter and packer stages remain
+untraced.
+
+**Unknown.** The original DCC or editor, cooker identity, source-project layout, pre-strip mesh topology, pre-swizzle
+texture representation, and exact build-stage ordering remain unproven. Mission scripts provide the only currently
+documented source-path-plus-compiled-payload example; it must not be generalized to other asset classes.
+
+**Importer rule.** Reconstruct the shipped object graph without presenting it as the recovered original authoring
+project. Preserve source bytes, physical definitions, Core-local identities, wrapper/occurrence distinctions, and
+unknown records. Keep Blender conversion as an explicit layer and native export disabled until the unresolved data
+round-trips safely.
 
 ## 3. Textures and PS2 swizzling
 
@@ -1290,6 +1370,11 @@ ELF class registration supplies runtime instance sizes of `0x38` for
 `0x24` for `RegularSkinnedMeshResource`. These are allocation/reflection
 sizes, not on-disc structure sizes.
 
+In particular, the serialized `RegularSkinnedMeshResource` Skeleton token at
+object-relative `+0x24` must not be interpreted as an in-memory field inside
+the registered `0x24`-byte runtime instance. The serialized property block and
+the registered runtime allocation describe different layouts.
+
 ### 4.2 Generic typed-section framing
 
 A Core body is a sequence of typed schema sections plus occasional opaque or
@@ -1359,16 +1444,29 @@ Each 32-byte streamed-resource object-directory entry is:
 | `0x00` | `u32` | Serialized object-blob size |
 | `0x04` | `u32` | Object ID/reference token |
 | `0x08` | `u32[4]` | Stable identity/GUID-like words; exact algorithm unknown |
-| `0x18` | `u32` | Absolute offset in the paired CoreStream |
+| `0x18` | `u32` | Offset from the start of the complete paired CoreStream entry, including its 64-byte header |
 | `0x1C` | `u32` | Owned CoreStream byte size |
 
 Require the zero word at `S + data_offset`. Object blobs begin at
 `S + data_offset + 4` and are concatenated using their declared sizes. The
-stream offset is relative to the start of the complete CoreStream entry,
-including its 64-byte header. Objects without stream data normally carry size
-zero and an offset at the end of the CoreStream. Treat an entry's
-`[stream_offset, stream_offset + stream_size)` as its ownership bound; do not
-infer ownership from the next DMA-looking signature.
+stream offset is not relative to the Core section, serialized object blob, or
+first payload byte. Resolve the absolute ownership span with checked
+arithmetic:
+
+```text
+object_stream_base =
+    checked_add(complete_CoreStream_entry_start,
+                directory_entry.stream_offset)
+object_stream_end =
+    checked_add(object_stream_base,
+                directory_entry.stream_size)
+```
+
+Require `object_stream_end` not to exceed the complete CoreStream entry.
+Objects without stream data normally carry size zero and an offset at the end
+of that entry. Treat `[object_stream_base, object_stream_end)` as the sole
+ownership bound; do not infer ownership from the next DMA-looking signature.
+
 
 A strict inventory of 102 retail Core files whose string tables advertise a
 regular mesh schema found:
@@ -1679,24 +1777,26 @@ evaluating parity. There is no separate index array in this validated subset.
 Each V2-16 or V4-16 coordinate lane pair is signed 4.12 fixed point:
 
 ```python
+q_gs = per_vertex_perspective_q
 u = signed16_x / 4096.0
 v = signed16_y / 4096.0
-GS_ST = (u * Q, v * Q, Q, Q)
+GS_ST = (u * q_gs, v * q_gs, q_gs, q_gs)
 ```
 
 For V4-16, XY supplies UV0 and ZW supplies UV1. The target SDDocking mesh has
 UV0 ranges `U=-1.326904..1.073975`, `V=-3.712646..3.794434`; UV1 stays near
 the unit square at `U=0.000488..0.918701`,
 `V=0.001953..0.996094`. The large UV0 range and captured repeat/repeat
-addressing establish intentional tiling.
+addressing establish intentional tiling. Here `q_gs` names the per-vertex GS
+perspective-Q value, not an aligned vertex count.
 
-STQ0 applies `ITOF12` to XY and multiplies by Q. STQ1 routes ZW to XY,
-applies `ITOF12`, and multiplies by Q. Neither direct path negates V. GS
+STQ0 applies `ITOF12` to XY and multiplies by `q_gs`. STQ1 routes ZW to XY,
+applies `ITOF12`, and multiplies by `q_gs`. Neither direct path negates V. GS
 normalized coordinates are:
 
 ```text
-U = (S/Q) * texture_width
-V = (T/Q) * texture_height
+U = (S/q_gs) * texture_width
+V = (T/q_gs) * texture_height
 ```
 
 Linear filtering selects neighbors from `floor(U-0.5)` and
@@ -1849,9 +1949,34 @@ Across all 1,244 objects:
 
 ### 4.11 Skinned CoreStream directory and palette
 
-For a record with `P` packets, seek to
-`record.directory_offset_and_flags >> 16` within the object's owned
-CoreStream range:
+Resolve every nested address from its stated base, using checked additions,
+multiplications, cumulative sums, and alignments:
+
+```text
+record_directory =
+    checked_add(object_stream_base,
+                record.directory_offset_and_flags >> 16)
+auxiliary =
+    checked_add(object_stream_base, auxiliary_offset)
+chunk_start[i] =
+    checked_add(object_stream_base,
+                checked_sum(chunk_size[0:i]))
+packet[i] =
+    checked_add(chunk_start[packet_chunk_index[i]],
+                packet_chunk_offset[i])
+```
+
+The record-directory and auxiliary offsets are object-stream-relative.
+`packet_chunk_offset` is instead relative to the selected chunk.
+
+EE `0x400C6C..0x400C74` skips records whose packet count `P` is zero, whereas
+the renderer from `0x400FF8` assumes packet zero exists. Treat `P == 0` as an
+empty, non-renderable record: do not dereference its nested directory, do not
+evaluate `P - 1` in unsigned arithmetic, and do not submit it to that renderer.
+This runtime behavior does not prove that a serialized zero-count record is
+itself malformed.
+
+For a nonempty record, the directory is:
 
 ```text
 u32 packet_key[P]             # semantics unknown
@@ -1860,16 +1985,51 @@ u8  packet_chunk_index[P]
 align 4
 u8  packet_metadata_a[P]      # semantics unknown
 align 4
-u8  packet_metadata_b[P - 1]  # semantics unknown
+u8  packet_metadata_b[max(P - 1, 0)]  # semantics unknown
 align 4
 zero padding to the next record directory or auxiliary area
 ```
+
+Its checked extent is:
+
+```text
+d   = record_directory
+e1  = checked_add(d,  checked_mul(4, P))
+e2  = checked_add(e1, checked_mul(4, P))
+e3  = checked_add(e2, P)
+a1  = checked_align_up(e3, 4)
+e4  = checked_add(a1, P)
+a2  = checked_align_up(e4, 4)
+e5  = checked_add(a2, max(P - 1, 0))
+end = checked_align_up(e5, 4)
+```
+
+Require `d >= object_stream_base`. Require `end` not to exceed
+`object_stream_end`, the auxiliary address, or the next greater validated
+nonempty record-directory address, whichever comes first. Apply the same
+ownership bound to the auxiliary transform table and palette rather than
+locating their end from signatures.
 
 `packet_chunk_index` is proven: adding the selected chunk's cumulative start
 to `packet_chunk_offset` lands on the corresponding DMA `RET` packet for all
 29,680 entries. Packet offsets are 16-byte aligned, may reset to zero in a
 later chunk, and must be bounded by that chunk rather than by directory order
-alone.
+alone. Require:
+
+```text
+checked_sum(chunk_size[0:chunk_count]) == directory_entry.stream_size
+packet_chunk_index[i] < chunk_count
+packet_chunk_offset[i] % 16 == 0
+packet_chunk_offset[i] + 16 <= chunk_size[packet_chunk_index[i]]
+
+qwc = u32le(packet[i]) & 0xFFFF
+dma_extent = checked_mul(checked_add(qwc, 1), 16)
+packet_chunk_offset[i] + dma_extent <=
+    chunk_size[packet_chunk_index[i]]
+```
+
+The initial 16-byte check must precede reading `QWC`; the final check bounds
+the DMA tag plus its declared qwords within the selected chunk.
 
 The auxiliary area begins with the count from the high byte of
 `packed_resource_flags`:
@@ -1955,7 +2115,7 @@ Define:
 N = output strip-target count
 G = transform-group count
 P = sum(group_size[0:G])       # logical position/normal pairs
-Q = align_up(N, 4)
+N_aligned = align_up(N, 4)
 C = packet has a V4-8u color/prelight tail
 ```
 
@@ -1965,14 +2125,14 @@ All 29,680 retail packet headers satisfy:
 header_a = {
     N,
     3 * N,
-    3 * Q,
+    3 * N_aligned,
     G,
 }
 
 header_b = {
     v3_start       = 0x0B5 + 6 * G,
-    normal_scratch = 0x0B5 + Q,
-    tail_base      = max(0x0B5 + 2 * Q, v3_start + 2 * P),
+    normal_scratch = 0x0B5 + N_aligned,
+    tail_base      = max(0x0B5 + 2 * N_aligned, v3_start + 2 * P),
     uv_base        = tail_base + (N if C else 0),
 }
 ```
@@ -2029,11 +2189,18 @@ The second vector's rounded length is 126 through 129 for all 1,374,527
 pairs; the first has no such invariant. For either control:
 
 ```python
-qword_offset = control & 0x7FFF
+raw_control = control & 0xFFFF
+qword_offset = raw_control & 0x7FFF
 assert qword_offset % 3 == 0
 target = qword_offset // 3
-adc = control >> 15
+assert 0 <= target < N
+adc = (raw_control & 0x8000) != 0
 ```
+
+Treat the control as a raw 16-bit word even when the VIF lane was decoded to a
+signed host integer. An arithmetic right shift of a negative signed value
+yields `-1`, not Boolean `1`; masking also avoids host-language shift
+differences. The target bound must be checked before indexing strip output.
 
 Every target `0..N-1` belongs to exactly one logical pair and transform group.
 There are 1,087,490 same-target pairs and 287,037 different-target pairs:
@@ -2131,8 +2298,11 @@ data:
 ```python
 u = signed16_x / 4096.0
 v = signed16_y / 4096.0
-GS_ST = (u * Q, v * Q, Q, Q)
+GS_ST = (u * q_gs, v * q_gs, q_gs, q_gs)
 ```
+
+Here `q_gs` is the per-vertex perspective-Q value; it is unrelated to
+`N_aligned` in the packet-memory equations.
 
 Treating `V4-16.zw` and later packs as additional texture-coordinate pairs is
 a strong inference from the complete zero-through-four-pair schema;
@@ -2564,13 +2734,37 @@ patched_0x18 =
 ```
 
 It then frees the temporary array. The 18,037 references contain 2,499
-byte-distinct matrices. Their finite, nonsingular, overwhelmingly
-scaled-orthogonal shape strongly supports row-vector global inverse-bind
-transforms, but scale/counterexample cases still block calling that semantics
-verified. Critically, the active skinned-palette path does not read the
-patched bone `+0x18` transform-pool index, dereference the global pool, or
-perform a post-hierarchy inverse-bind multiply. These interned transforms are
-not part of the selector lookup.
+byte-distinct matrices. Form a row-vector affine matrix from one serialized
+record and transpose it to obtain the column-vector matrix used below:
+
+```text
+InverseBindGlobal[i] =
+    transpose(row_affine(temporary_transform[i]))
+
+RestGlobal[i] = inverse(InverseBindGlobal[i])
+```
+
+The software skinning path independently proves the interpretation by using:
+
+```text
+skin_matrix[i] = G_animated[i] * InverseBindGlobal[i]
+```
+
+for vertices stored in bind/model space. The hardware path instead uploads
+`G_animated` directly because its decoded skinned vertices are already in
+bone-local space:
+
+```text
+bind_vertex  = RestGlobal[i] * bone_local_vertex
+posed_vertex = G_animated[i] * bone_local_vertex
+```
+
+The active hardware selector path therefore does not perform a missing
+inverse-bind multiply: packet palette bytes resolve through transform records
+to source-order Skeleton bones, and the selected matrix is already the
+corresponding `G_animated[i]`. The transform-pool index remains absent from
+that direct selector lookup, but the software path establishes the serialized
+temporary transform's inverse-bind semantics.
 
 Each retained six-float record has ordered finite triples:
 
@@ -2659,9 +2853,18 @@ records arrive category-major. The runtime walks the category-order table and
 scatters each local matrix to its original source-bone slot:
 
 ```text
-i = category_order[k]
-scratch[i] = L[i]
+k = 0
+for c in 0..2:
+    for j in 0..category_count[c] - 1:
+        i = category_order[k]
+        k += 1
+        scratch[i] = make_local(category_pose[c][j], bone[i], c)
 ```
+
+The category pose source is consumed sequentially with `j`; `i` is only the
+original-order destination and the source-bone index used for defaults.
+Indexing the category-major pose source with `i` is incorrect. `scratch` is
+the original-order local-palette array denoted by `L` below.
 
 The category-order table is the stable sort of source indices by
 `(category, source_index)`; the serialized `bytes_b` and `bytes_d` arrays are
@@ -2669,9 +2872,9 @@ identical copies of that permutation. Local-matrix inputs are:
 
 | Category | Quaternion | Translation | Scale |
 |---:|---|---|---|
-| 0 | pose record `+0x00` | bone record `+0x00` | unit |
-| 1 | pose record `+0x00` | pose record `+0x10` | unit |
-| 2 | pose record `+0x00` | pose record `+0x10` | pose record `+0x20` |
+| 0 | `category_pose[0][j] + 0x00` | `bone[i] + 0x00` | unit |
+| 1 | `category_pose[1][j] + 0x00` | `category_pose[1][j] + 0x10` | unit |
+| 2 | `category_pose[2][j] + 0x00` | `category_pose[2][j] + 0x10` | `category_pose[2][j] + 0x20` |
 
 The scatter is visible at EE `0x3AC468..0x3AC52C`. The hierarchy loop at
 `0x3AC5E4..0x3AC67C` then walks the original-order parent array and overwrites
@@ -2776,20 +2979,34 @@ byte 1:
   bits 6..7  S: scale codec
 ```
 
-The sample count and initial payload cursor are:
+A strict decoder accepts `T = 0..8`, `R = 0..9`, `P = 0..6`, and
+`S = 0..3`. The executable's zero-payload fallbacks for `R = 10..15` and
+`P = 7` may be retained in an explicit runtime-parity mode, but are not
+evidence that those values are valid serialized codecs. `T = 9..15` must
+always be rejected because the time sampler reaches its default path without
+initializing the bracket outputs.
+
+Bound the control and count reads against the declared packed block:
 
 ```text
+remaining = packed_block_end - record
+require remaining >= 2
+
 if T == 0:
     N = 1
     cursor = record + 2
 else:
+    require remaining >= 3
     first = record[2]
     if (first & 0x80) == 0:
         N = first
         cursor = record + 3
     else:
+        require remaining >= 4
         N = (first & 0x7F) | (record[3] << 7)
         cursor = record + 4
+
+require 1 <= N <= 0x7FFF
 ```
 
 Payloads always follow in this order:
@@ -2799,8 +3016,14 @@ time, rotation, translation, scale
 ```
 
 The boundary walker advances through those four payloads using the sizes
-below. This is enough to split a packed animation block into records without
-understanding every quaternion reconstruction formula.
+below. Records are tightly concatenated: there is no per-record alignment or
+sentinel, and outer inline/stream padding is not part of a record. Before each
+descriptor, metadata, fixed sample, or bit-window read, compute its size with
+checked arithmetic and require the resulting cursor not to exceed
+`packed_block_end`. After `track_count` records, require the cursor to equal
+`packed_tracks + packed_byte_size`. This is enough to split a packed animation
+block into records without understanding every quaternion reconstruction
+formula.
 
 ##### Time codecs
 
@@ -2812,9 +3035,20 @@ understanding every quaternion reconstruction formula.
 | 3 | `0` | Implicit uniform keys at 6 Hz |
 | 4 | `0` | Implicit uniform keys at 12 Hz |
 | 5 | `0` | Implicit uniform keys at 24 Hz |
-| 6 | `cursor[0]` | Bit-packed variable deltas at a 6 Hz base rate |
-| 7 | `cursor[0]` | Bit-packed variable deltas at a 12 Hz base rate |
-| 8 | `cursor[0]` | Bit-packed variable deltas at a 24 Hz base rate |
+| 6 | `L = cursor[0]` | Bit-packed variable deltas at a 12 Hz base rate |
+| 7 | `L = cursor[0]` | Bit-packed variable deltas at a 24 Hz base rate |
+| 8 | `L = cursor[0]` | Bit-packed variable deltas at a 6 Hz base rate |
+
+The time jump table at guest `0x556730` routes `T == 6` to `0x3BE418`
+(12 Hz), `T == 7` to `0x3BE448` (24 Hz), and `T == 8` to `0x3BE3E8`
+(6 Hz). `T == 1..8` are implemented; `T == 9..15` reach `0x3BE470`
+without initialized bracket outputs.
+
+For `T == 1`, require checked size `4 + 2*N` before reading the duration or
+keys. For `T == 2`, require `N` bytes. For `T == 6..8`, first require one
+byte, then require `1 <= L <= remaining_time_bytes`; `L` includes its own
+length byte. Bound every one of the `N - 1` delta decodes to the
+`8*(L - 1)` available bitstream bits.
 
 For `T == 1`, the duration is a native little-endian float, but each
 normalized key time is assembled as a big-endian `u16`. A key value `k`
@@ -2854,6 +3088,15 @@ reused by all channels in that track.
 | 7 | adaptive | Adaptive reconstructed-component quaternion |
 | 8 | adaptive | Adaptive three-angle quaternion |
 | 9 | adaptive | Fixed-axis, adaptive-angle quaternion |
+
+The rotation sampler and size tables at guest `0x556750` and `0x5567A0`
+dispatch `R == 1..9`. `R == 0` and `R == 10..15` return identity and consume
+zero payload at runtime. Only `R == 0..9` belong to the strict documented
+domain; the higher values are executable fallbacks, not proven serialized
+aliases. For every fixed or adaptive codec, require the computed payload
+within the packed block before sampling it. In particular, require two
+descriptor bytes before reading `h0`/`h1` for `R == 7/8`, one before `h0` for
+`R == 9`, and bounds-check every conditional metadata word and bit payload.
 
 The constant `R == 1` path expands four little-endian `u16` components using:
 
@@ -2955,6 +3198,10 @@ if (h0 & 1) and sample_sign_bit:
 q = (x, y, z, w)
 ```
 
+Retail `R == 7` results are finite but are not guaranteed to be unit
+quaternions. Preserve the decoded components and the retail interpolation
+result without inserting a host normalization step.
+
 `R == 8` instead treats the three dequantized values as normalized angles,
 multiplies each by `pi`, and converts them to a quaternion. If the resulting
 angles are `x`, `y`, and `z`, the composition is
@@ -2971,10 +3218,13 @@ q.z = cx*cy*sz - sx*sy*cz
 q.w = cx*cy*cz + sx*sy*sz
 ```
 
-Unlike the shared size routine, both `R == 8` sample decoders omit `h0 & 1`
-from their sample stride and never read a sign bit. Valid `R == 8` streams
-are therefore expected to clear descriptor bit 0; real payloads are needed
-to confirm that encoder invariant. `R == 7` and `R == 8` both pass their
+The shared size routine at `0x3DAD38..0x3DAD54` includes `h0 & 1`, but both
+`R == 8` sample decoders at `0x3DAE28` and `0x3DB058` omit that bit from their
+sample stride and never read it. A decoder that remains synchronized with
+both executable paths must therefore require `(h0 & 1) == 0` for `R == 8`
+and reject a set bit rather than choosing one of the disagreeing strides.
+All 6,223 retail `R == 8` records clear the bit, confirming the serializer
+invariant for the validated corpus. `R == 7` and `R == 8` both pass their
 decoded endpoint quaternions to VU0 `0x520`.
 
 For `R == 9`, with `h0 = cursor[0]`:
@@ -3161,7 +3411,15 @@ differ between VU implementations because of FMAC-pipeline rounding.
 | 4 | `4` | One fixed-range 10:10:10 vector |
 | 5 | adaptive | Adaptive per-axis bit-packed vectors |
 | 6 | `2` | One sparse single-lane vector |
-| 7 | `0` | Not handled by the observed sampler |
+| 7 | `0` | Runtime zero-translation fallback for xyz |
+
+The translation sampler and size tables at guest `0x556780` and `0x5567D0`
+dispatch `P == 1..6`. `P == 0` and `P == 7` both consume zero payload and
+return default zero xyz at runtime. Strict format validation accepts
+`P == 0..6`; runtime-parity decoding may preserve the `P == 7` fallback but
+must not present it as a proven serialized codec. Guard all fixed payload
+sizes, checked `N` multiplications, adaptive metadata, and sample bits before
+decoding.
 
 The eight-byte vector used by `P == 1`, `P == 2`, and the scale channel is a
 64-bit concatenation of truncated float32 bit patterns, not three
@@ -3222,17 +3480,48 @@ The full `P == 5` payload size is:
 1 + metadata_bytes + ceil((wx + wy + wz) * N / 8)
 ```
 
-For `P == 6`, bits `0..1` select one of the four float lanes in the 16-byte
-translation slot and bits `2..15` form a signed 14-bit value:
+Although the metadata fields can encode larger values, the runtime mantissa
+construction at `0x3DB9FC..0x3DBA5C` requires each of `wx`, `wy`, and `wz`
+to be at most 23. Let `W = wx + wy + wz`. The runtime reader at
+`0x3DA4A4..0x3DA4D4` extracts each sample from one 64-bit window, so require:
 
 ```text
+0 <= wx, wy, wz <= 23
+for every i in 0..N-1:
+    ((i * W) & 7) + W <= 64
+```
+
+The validated retail corpus is narrower than those runtime bounds: every
+`P == 5` axis width is at most 16 and the largest observed bit-window width is
+54. A strict retail-profile validator may enforce those observed maxima;
+runtime-parity mode may admit the wider executable domain while retaining the
+64-bit-window check.
+
+Compute the metadata length, `W*N`, and `ceil(W*N/8)` with checked arithmetic,
+and require the complete logical payload inside the packed block. A safe
+implementation should extract from the bounded byte sequence, or a
+zero-extended local window, rather than reproduce an unchecked native
+64-bit load. Dequantization remains `q / 2^w`, not `q / (2^w - 1)`.
+
+For `P == 6`, require two payload bytes and assemble them big-endian as at
+`0x3BE71C..0x3BE734`. Bits `0..1` select one of the four float lanes in the
+16-byte translation slot and bits `2..15` form a signed 14-bit value:
+
+```text
+packed = u16be(payload)
 lane  = packed & 3
 value = sign_extend_16(packed) >> 2
 output[lane] = value / 1024
 ```
 
-The xyz lanes are initialized to zero first. Keyed translations are
-interpolated component by component in CPU code.
+Only the xyz lanes are initialized to zero first. Lane 3 writes the fourth
+float at slot `+0x0C`, as shown by `0x3BE098..0x3BE0EC`; it is neither an
+alias for Z nor an out-of-bounds write. The `P == 0` and `P == 7` fallbacks
+guarantee zero xyz only and must not be documented as initializing that
+fourth lane. No validated retail `P == 6` record selects lane 3. Strict
+retail-profile validation may reject it; runtime-parity decoding should
+preserve the fourth lane without presenting it as an xyz translation.
+Keyed translations are interpolated component by component in CPU code.
 
 ##### Scale codecs
 
@@ -3275,36 +3564,452 @@ at `0x3AC468..0x3AC52C`.
 
 Runtime mapping compares BoneMap track names with Skeleton bone names and
 emits per-track bone mappings with `0xFF` sentinels; track order is BoneMap
-order, not Skeleton order. Shared animation-bank Cores often contain no
-Skeleton, so never bind by local object order.
+order, not Skeleton order. For each BoneMap track, the loop at
+`0x3B1500..0x3B157C` scans Skeleton records forward and compares through
+`0x173C18 -> 0x2B9090`, which is `strcasecmp`. The first case-insensitive
+Skeleton-name match wins. If that first duplicate has an incompatible
+category, the runtime does not continue to a later same-name bone. Shared
+animation-bank Cores often contain no Skeleton, so never bind by local object
+order.
 
-### 4.22 Remaining model work
+### 4.22 Retail animation playback contract
+
+This section joins the serialized corpus, runtime playback, Skeleton palette,
+inverse-bind, and Blender requirements into one importer contract. It applies
+to the validated variant-5 retail corpus; separately encoded variant-1
+frontend objects remain outside these totals and require their own validation.
+
+#### Corpus, identity, and Skeleton linkage
+
+The validated animation corpus spans 398 variant-5 Cores:
+
+| Measurement | Value |
+|---|---:|
+| `SkeletonAnimationResource` clips | 17,586 |
+| Packed tracks | 1,589,420 |
+| Packed track bytes | 14,014,155 |
+| Streamed / inline clips | 16,863 / 723 |
+| Tracks per clip | 1 through 120 |
+
+Every record boundary is valid, every packed walk ends at its declared byte
+count, all outer alignment bytes are zero, and every decoded numeric value is
+finite. There are 582 variant-5 BoneMaps and 584 when the two separately
+scoped variant-1 maps are included.
+
+For every variant-5 clip:
+
+1. `SkeletonAnimationResource +0x38` resolves uniquely to a same-Core
+   `SkeletonAnimationBoneMap`;
+2. packed track count equals the BoneMap line count; and
+3. the clip itself contains no Skeleton or cross-Core path token.
+
+BoneMap names establish compatibility, not Skeleton identity. The 656
+`SimpleAnimatingSkinnedMeshInstance` graphs provide explicit same-Core
+resource, default-animation, and Skeleton edges and are the strongest
+serialized Skeleton-selection evidence. Shared banks and clips without such
+an owning graph require a caller-selected Skeleton; never choose one merely
+because it is co-resident or name-compatible.
+
+Tokens, strings, and display names are not global identities. Persist:
+
+```text
+CoreIdentity   = validated Core path and digest
+ObjectIdentity = CoreIdentity + typed-section occurrence + directory ordinal
+BoneIdentity   = Skeleton ObjectIdentity + source-order bone index
+TrackIdentity  = clip ObjectIdentity + BoneMap ObjectIdentity + line index
+```
+
+Keep the bare Core-local token as a reference, not as the primary key. Legal
+same-Core duplicate animation-token entries must remain distinguishable by
+directory identity even when their bytes are equal.
+
+#### Serialized clip fields
+
+The variant-5 property block is:
+
+| Offset | Type | Meaning |
+|---:|---|---|
+| `+0x00` | `u32` | Generic flags: `0` streamed, `0x100` inline |
+| `+0x04` | `u32` | Core string index for the resource type, not a clip label |
+| `+0x08` | `u32` | Parent token, always zero |
+| `+0x0C` | `u32` | Linear-storage candidate, always zero |
+| `+0x10` | `u32` | Playback mode |
+| `+0x14` | `u32` | Nullable `AnimationEventResource` token |
+| `+0x18` | `f32` | Translation threshold, always `0.001` |
+| `+0x1C` | `f32` | Rotation-axis threshold, always `0.01` |
+| `+0x20` | `f32` | Rotation-angle threshold, always `0.01` |
+| `+0x24` | `f32` | Authoritative duration `D`, in seconds |
+| `+0x28` | `bool` | Serialized Compensate Root value |
+| `+0x2C` | `f32[3]` | Total Distance |
+| `+0x38` | `u32` | BoneMap token |
+| `+0x3C` | `u32` | Zero |
+| `+0x40` | bytes | Inline packed header when flags select inline storage |
+
+All 125 nonzero event tokens resolve uniquely in the same Core. The
+serialized field name `Actions` refers to runtime animation events and must
+not be confused with a Blender Action.
+
+#### Runtime clock, modes, duration, root trajectory, and events
+
+Let:
+
+```text
+D     = serialized clip duration
+r     = playback rate
+Deff  = D / abs(r)
+u     = instance timeline in real seconds
+tau   = u * abs(r)       # clip-domain sampling time
+```
+
+Changing rate preserves phase. Nonnegative playback starts at zero; negative
+playback starts at `Deff`.
+
+The corpus and executable establish:
+
+| Mode | Corpus count | Behavior |
+|---:|---:|---|
+| 1 | 826 | Repeat with proper modulo into `[0, Deff)` |
+| 2 | 16,760 | One-shot; crossing either end finishes and holds the boundary |
+
+Mode 0 performs a stop/reset on crossing but is not serialized in the
+validated corpus. Mode 2 uses strict crossing comparisons, so landing exactly
+at zero or `Deff` remains active for that update; the next crossing enters the
+finished state.
+
+`D`, not maximum track key time, controls repeat, finish, root phase, and
+event segmentation. The relationship is:
+
+| Duration relationship | Clips |
+|---|---:|
+| `D == maxKeyTime` | 9,245 |
+| `D > maxKeyTime` | 8,082 |
+| `D < maxKeyTime` | 259 |
+
+Thus 8,341 clips differ from their maximum key time. Each track clamps
+independently to its own first or last sample. Preserve serialized keys after
+`D`; they are unreachable during ordinary playback but remain part of the
+asset. Do not replace `D` with a computed key range.
+
+When the runtime instance compensation control is false and source bone zero
+has writable translation, trajectory reconstruction occurs before hierarchy
+accumulation:
+
+```text
+phase = tau / D
+root_translation += TotalDistance * phase
+```
+
+Q-only roots skip the addition. A held one-shot endpoint uses phase one; a
+repeating clip resets this contribution at wrap. The direct bridge from the
+serialized `+0x28` Boolean to every raw-instance control path remains
+unresolved, so preserve both the field and the effective import policy rather
+than silently assuming they are identical in every graph.
+
+Simple events are dispatched over duration-sized traversed segments. Normal
+updates test a half-open interval; a finishing crossing includes the terminal
+endpoint:
+
+```text
+normal:    low <= event_time <  high
+finishing: low <= event_time <= high
+```
+
+Repeating updates are segmented at each wrap, including updates that cross
+multiple cycles. Complex predicate-bearing event entries and their rate
+interaction remain outside the proven simple-event contract.
+
+#### Strict packed-codec validation
+
+The retail selector histograms are:
+
+```text
+T: 0=1420131 1=354 2=3759 3=82912 4=56576 5=7541
+   6=7472 7=7163 8=3512
+R: 0=564035 1=1876 2=611 3=0 4=6430 5=882140
+   6=0 7=102342 8=6223 9=25763
+P: 0=1267376 1=17183 2=669 3=1145 4=233374 5=24846
+   6=44827
+S: 0=1588421 1=202 2=3 3=794
+```
+
+A strict decoder therefore accepts only `T=0..8`, `R=0..9`, `P=0..6`, and
+`S=0..3`; executable fallbacks are runtime-parity behavior, not additional
+serialized codecs. Additional retail invariants are:
+
+- variable-time `T=6/7/8` use 12/24/6 Hz respectively;
+- all 6,223 `R=8` descriptors clear bit zero;
+- `R=7` samples may be non-unit and must not be normalized by the host;
+- observed `R=9` widths are 1 through 12;
+- `P=5` widths are at most 16 and the largest observed bit window is 54;
+- `P=6` is big-endian and never selects the W lane; and
+- every payload, reconstructed endpoint, key time, and sampled component is
+  finite.
+
+Reject a whole clip atomically on an unknown selector, malformed count,
+out-of-bounds metadata/bit window, nonfinite result, nonzero padding, or final
+cursor mismatch. Report the Core/object identity, track index, record offset,
+and `(T,R,P,S)` tuple; retain the raw bytes instead of substituting an
+identity track.
+
+#### Direct animated locals and hierarchy
+
+Pose buffers reset to:
+
+```text
+Q = (0, 0, 0, 1)
+T = (0, 0, 0)
+S = (1, 1, 1)
+```
+
+Unmatched BoneMap names are skipped and leave those defaults. For matched
+tracks, Q/T/S are direct animated parent-local components, not deltas
+multiplied onto rest. Quaternion memory order is `(x,y,z,w)`. The exact
+right-hand-rule matrix is:
+
+```text
+Q(q) =
+  [1-2(y*y+z*z)  2(x*y-z*w)    2(x*z+y*w)]
+  [2(x*y+z*w)    1-2(x*x+z*z)  2(y*z-x*w)]
+  [2(x*z-y*w)    2(y*z+x*w)    1-2(x*x+y*y)]
+```
+
+Local matrices are:
+
+```text
+category 0: L[i] = [Q(q[i]),                    bone[i].static_translation]
+category 1: L[i] = [Q(q[i]),                    sampled_translation[i]]
+category 2: L[i] = [Q(q[i]) * diag(scale[i]),   sampled_translation[i]]
+```
+
+Category zero ignores any serialized translation payload. Category two
+scales the three rotation columns independently. Scatter category-major pose
+records to source-bone order before hierarchy accumulation:
+
+```text
+G[i] = L[i]                         if parent[i] == 0xFF
+G[i] = G[parent[i]] * L[i]          otherwise
+```
+
+Do not substitute `local * parent`, treat frame zero as bind pose, or insert a
+hidden `rest * animation_delta` multiplication.
+
+#### Palette, inverse bind, and deformation
+
+The hardware selector chain is exact:
+
+```text
+packet palette byte
+  -> object-local transform record
+  -> transform_record.selector
+  -> source-order Skeleton bone
+  -> G_animated[source_bone]
+```
+
+There is no mesh-local bone remap and each decoded vertex has one implicit
+weight of `1.0`. Let:
+
+```text
+I[i] = InverseBindGlobal[i]
+R[i] = RestGlobal[i] = inverse(I[i])
+```
+
+Then:
+
+```text
+x_bind = R[i] * x_bone_local
+
+hardware:
+    x_pose = G[i] * x_bone_local
+
+software:
+    x_pose = (G[i] * I[i]) * x_bind
+```
+
+These are equivalent. Uploading `G` directly in the hardware path is not
+evidence that inverse bind is absent; it follows from the bone-local vertex
+representation.
+
+#### Basis and Blender conversion
+
+Geometry, quaternion, determinant, and camera evidence strongly supports a
+right-handed model space with `+X` right and `+Z` up. `+Y` forward and
+approximately one native unit per metre are strong inferences rather than
+explicit serialized declarations. The camera conversion
+`H(x,y,z)=(x,-z,y)` is clip/camera-side and must not be reused as a model
+import basis.
+
+Use exactly one homogeneous source-to-Blender basis:
+
+```text
+C = diag(s*A, 1)
+```
+
+The safest data-faithful choice is `A=I`, `s=1`. An optional proper
+`RotZ(pi)` display basis maps inferred native `+Y` forward to Blender `-Y`
+without reflection or winding reversal. Convert every model-space matrix by:
+
+```text
+M_blender = C * M_native * inverse(C)
+```
+
+and do not combine this with a second scene-root conversion.
+
+For source bone `i`, let:
+
+```text
+R[i] = RestGlobal native matrix
+G[i] = animated global native matrix
+E[i] = actual Blender edit-bone rest matrix in armature space
+```
+
+Store the rigid bind vertex as:
+
+```text
+x_bind_blender = C * R[i] * x_bone_local
+```
+
+The Blender armature-space target pose matrix is:
+
+```text
+P[i] = C * G[i] * inverse(R[i]) * inverse(C) * E[i]
+```
+
+which guarantees:
+
+```text
+P[i] * inverse(E[i]) * x_bind_blender
+    = C * G[i] * x_bone_local
+```
+
+Convert target global poses to Blender `matrix_basis` with:
+
+```text
+D[i] = inverse(E[i]) * P[i]                              # root
+D[i] = inverse(E[i]) * E[parent] * inverse(P[parent])
+       * P[i]                                            # child
+```
+
+If edit-bone rests exactly equal converted native rests, this reduces after
+one basis conversion to:
+
+```text
+matrix_basis[i] = inverse(rest_local[i]) * L_animated[i]
+```
+
+Blender quaternion constructors and channels require `(w,x,y,z)`, while
+source data remains `(x,y,z,w)`. When representable matrices are decomposed,
+choose each quaternion hemisphere so consecutive baked keys have nonnegative
+dot product. Do not normalize native `R=7` or retail interpolation results
+before constructing the native local matrix.
+
+Blender edit bones cannot represent arbitrary shear. Recompose every
+decomposed `D[i]` and require a declared residual tolerance. If it fails,
+reject ordinary Action generation or use a full-matrix proxy/custom
+deformation path; never silently discard shear.
+
+#### Blender Action and playback policy
+
+For Blender 5.2 and later slotted Actions:
+
+1. Keep one immutable source clip per serialized clip identity.
+2. Generate one binding Action per
+   `(clip, Skeleton, basis, rest fingerprint, bake rate, root policy)`.
+3. Use one `OBJECT`-target slot for the Armature object; pose-bone data paths
+   must use the actual Blender names reached from source bone indices.
+4. Preserve duration, mode, event identity, BoneMap identity, basis, root
+   policy, and decoder status as Action metadata.
+5. Map seconds to frames as:
+
+   ```text
+   frame = action_start + seconds * scene_fps / scene_fps_base
+   ```
+
+   Twenty-four fps is a convenient default, not a universal clip property.
+6. In native-evaluator mode, sample the packed tracks at the requested
+   subframe and apply the matrix contract above.
+7. In baked mode, sample every declared output frame plus the exact one-shot
+   endpoint. Linear host interpolation is guaranteed only at baked samples;
+   sparse Blender quaternion curves do not reproduce VU0 `0x520`.
+8. Implement mode 1 as `[0,D)` repetition and mode 2 as a one-shot held at
+   `D`. Do not infer loops from endpoint similarity.
+9. Keep sampled/reconstructed root motion on source bone zero by default.
+   Extraction to object motion is optional and must remove the same transform
+   from the root so it is not applied twice.
+10. Preserve events as duration-relative metadata or explicit dispatch
+    records; do not conflate them with Blender Action identity.
+
+#### Current external-project conformance
+
+The reviewed `Killzone_Blender` 0.10.3 project already has bounded packed
+track parsing, all channel decoders, retail VU0 interpolation helpers,
+Skeleton parsing, rigid skinned-mesh import, source-order bone properties,
+vertex groups, and an Armature modifier. Its current gaps against this
+contract are:
+
+- no complete `SkeletonAnimationResource` or BoneMap object loader;
+- no explicit shared-bank Skeleton resolver;
+- no direct-local pose builder, hierarchy-to-Blender conversion, or Action
+  writer;
+- variable-time `T=6/7/8` currently mapped as 6/12/24 Hz instead of
+  12/24/6 Hz;
+- `P=6` currently read little-endian instead of big-endian;
+- strict parsing currently admits the `P=7` runtime fallback;
+- no enforcement of the retail `R=8` bit-zero or `P=5` width/window
+  invariants;
+- the temporary transform is still labelled diagnostic rather than consumed
+  as `InverseBindGlobal`;
+- no authoritative-duration, playback-mode, root-trajectory, event, Action
+  slot, or loop policy; and
+- animation tests are synthetic and do not yet assert the retail corpus
+  totals and selector histograms above.
+
+Until these are corrected, an external importer may expose diagnostic
+animation preview but must not label it retail-conformant.
+
+#### Remaining animation unknowns
+
+The remaining animation-specific unknowns are:
+
+- the external owner/state path selecting a Skeleton for shared banks without
+  an explicit instance graph;
+- the complete serialized Compensate Root to runtime-instance-control bridge;
+- complex event predicates and simple-event timestamp behavior at nonunit
+  playback rates;
+- graph-level crossfade scheduling, partial-body masks, additive quaternion
+  multiplication order, and reference-removal quaternion order;
+- whether all clips lacking a local Skeleton candidate are exercised;
+- the exact source intent of the few rest corrections that are not
+  scaled-orthogonal and therefore cannot become ordinary Blender channels;
+- explicit confirmation of inferred `+Y` forward and metre units; and
+- animation encoding and edited-object serialization.
+
+### 4.23 Remaining model work
 
 The generic framing, stream ownership, regular-mesh material bindings,
 embedded static meshes, skinned packet directory, transform palette, and
 static/skinned geometry decoding, placement instances, and Multi/LOD wrapper
 graphs are now bounded. Skeleton packing, indexed hierarchy, collision hulls,
-attachments, bone sets, BoneMaps, and animation-track boundaries are also
-bounded. Remaining model work includes:
+attachments, bone sets, BoneMaps, animation-track decoding, playback modes,
+direct-local pose construction, inverse-bind semantics, and hardware/software
+palette equations are also bounded. Remaining model work includes:
 
 - material roles for signed coordinate pairs beyond proven UV0/UV1 and
   material-specific color/alpha continuations;
-- the semantic role of the serialized global transform pool, meanings of the
-  bone XYZ, retained six-float bounds, categories/word tables, and attachment
-  transform locality;
-- animation case-comparison behavior and the external resource path that
-  selects a Skeleton for shared animation banks;
-- real packed animation payloads are not present in this workspace, so codec
-  frequencies, `R == 8` descriptor-bit and `R == 9` valid-code invariants,
-  and decoded-pose comparisons against the retail runtime have not yet been
-  measured;
+- the exact runtime consumer of the retained six-float bounds, remaining
+  category/word-table flags, and attachment transform locality;
+- the external resource path that selects a Skeleton for shared animation
+  banks;
+- graph-level animation blending, complex event predicates, exceptional
+  nonrepresentable Blender rest corrections, and edited animation encoding;
 - proximity-parent transform composition, blend-shape/linked-static behavior,
   conservative skinned bounds, and collision/render-mesh relationships;
-- the caller-supplied value for the final static VIF unpack and the exact
-  static VU program;
+- the caller-supplied value for the final static VIF unpack, the exact static
+  VU program, and the exact dynamically uploaded skinned VU1 instructions
+  that consume the control/ADC fields;
 - the scene path that selects LightZones and populates the six cubic-light
   coefficient qwords;
-- native handedness, up axis, front-face convention, and unit scale.
+- native front-face convention and explicit confirmation of inferred `+Y`
+  forward and metre units.
 
 Keep source-space values, transform selectors, packet groups, and strip state
 available and make Blender conversion an explicit layer. A GS capture remains
@@ -3317,8 +4022,9 @@ identify the value supplied to VU address `0x1EE`; separately, the generic
 state-upload descriptor between the completed camera cache and VU1
 `TOP+0x1E4` can close the last non-selector matrix-upload edge.
 
-Native export remains blocked until the remaining animation/transform
-semantics, quaternion codecs, and all edited stream layouts round-trip safely.
+Native export remains blocked until animation encoding, unknown fields,
+event/graph resources, exceptional transforms, and all edited stream layouts
+round-trip safely.
 
 The public
 [`io_scene_killzone2`](https://github.com/0ther1/io_scene_killzone2/blob/e022e23cd9f570c6f29e316e9ebc3404dcd67a0a/README.md)
@@ -4309,8 +5015,16 @@ SkeletonDecoder
   hierarchy, transform indices, hulls, attachments, and bone sets
 
 AnimationDecoder
-  BoneMaps and base-animation linkage
-  exact opaque track-boundary walk
+  serialized clip fields, BoneMaps, and explicit/default linkage
+  exact packed-track boundary walk, decode, and corpus validation
+  authoritative duration, rate, playback modes, root trajectory, and events
+  direct-local category sampling and source-order hierarchy construction
+
+BlenderAnimationAdapter
+  persistent Core/object/Skeleton/bone/track identities
+  one explicit native-to-Blender basis conversion
+  inverse-bind/rest and matrix-basis conversion
+  slotted Action binding, native evaluation, bounded baking, and loop policy
 
 LevelDecoder
   compact zones, portals, visibility tables, and area volumes
@@ -4455,12 +5169,31 @@ objects from the same compound lump.
   records; require both packed-size formulae, hierarchy/name agreement,
   category permutations, hull-slot mappings, and sentinels.
 - Resolve all 584 BoneMaps and 17,586 base-animation links, and require the
-  ELF-derived boundary walk to consume all 1,589,420 opaque track records
-  exactly.
+  ELF-derived boundary walk to consume all 1,589,420 track records and
+  14,014,155 packed bytes exactly.
+- Reproduce the exact `T`, `R`, `P`, and `S` selector histograms in section
+  4.22; require `T=6/7/8` rates 12/24/6 Hz, all 6,223 `R=8` bit-zero
+  descriptors, `P=5` maximum width/window 16/54, big-endian `P=6`, and no
+  emitted W lane.
+- Parse and preserve every clip's playback mode, event token, duration,
+  Compensate Root field, Total Distance, and BoneMap token. Require 826
+  repeating and 16,760 one-shot/held clips, and preserve the 8,341 clips whose
+  duration differs from maximum key time.
+- Reproduce category reset defaults, case-insensitive first-match BoneMap
+  binding, direct Q/QT/QTS locals, category-zero static translation,
+  category-two column scale, and `parent_global * local` accumulation.
+- Interpret each serialized temporary transform as `InverseBindGlobal`,
+  require `RestGlobal=inverse(InverseBindGlobal)`, and match both hardware
+  `G_animated * bone_local` and software
+  `(G_animated * InverseBindGlobal) * bind_vertex` deformation.
+- Validate Blender conversion with one explicit basis, the documented
+  `P[i]` and `matrix_basis[i]` equations, quaternion XYZW-to-WXYZ ordering,
+  sign-continuous baked keys, authoritative duration, and a decomposition
+  residual gate.
 - Validate strip winding and restart/degenerate handling. Require direct
   STQ0/STQ1 to preserve V, model GS linear neighbors from `U-0.5/V-0.5`, and
   apply exactly one host V conversion. Validate Skeleton
-  hierarchy/transform-pool semantics, source-order palette composition, LOD
+  hierarchy/inverse-bind semantics, source-order palette composition, LOD
   metric, and host coordinate conversion independently.
 
 ### Level

@@ -1763,3 +1763,14 @@ Chapter 11 (`11.OTS`) loads, win-clang-rel, headless, 2048x1792 frames:
   ends at about 84 s), so the Logos screen also sets state that PlayGameIntro uses.
 - Not yet examined: which MPEG/IPU, audio or allocator state the played cinematic leaves behind, and the faulting host
   stack (`KZ_CRASH_TRACE=1`).
+
+## Windows gameplay baseline re-verification (2026-10-19)
+
+The scripted portion of WIN-04 used `win-clang-rel`, D3D12 and an isolated empty memory card. The front-end autopilot
+created and saved `Tester`, selected `1.Trenches` on Normal and reached first-mission gameplay. The guest reported a
+120 Hz vblank/frame rate; the host exited 0 at the 120-second headless limit with no crash signature.
+
+The run produced 11 captures at 10-second intervals through 110 seconds. All 11 SHA-256 hashes were distinct, sampled
+nonblack coverage ranged from 81% to 99%, and the later frames visibly contain first-person gameplay, HUD, world
+geometry and animation. This proves the scripted gameplay portion only. WIN-04 remains open for a hands-on run with
+testing options disabled that covers save/load, quit to the front end, high-refresh behavior and mouse aim.
