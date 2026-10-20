@@ -5,6 +5,9 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
+
+inline constexpr char KzDefaultProfileName[] = "Shooterman";
 
 enum class KzWindowMode
 {
@@ -76,13 +79,16 @@ struct KzConfig
     int startLevel = 0;           // 0 = front end as usual; 1..11 = drive the menus into that campaign chapter
     int startDifficulty = 0;      // with startLevel: 0 Easy, 1 Normal, 2 Hard
     bool testMemoryCard = false;  // use the memory card folder "testcard" next to killzone.ini instead of the real one
+    std::string defaultProfile = KzDefaultProfileName; // empty isolated-card profile created by the test autopilot
 
     bool showLauncher = true; // show the options launcher before booting
 };
 
+bool kzIsValidProfileName(std::string_view name);
 std::filesystem::path kzConfigPath();
 KzConfig kzLoadConfig(const std::filesystem::path &path);
 bool kzSaveConfig(const std::filesystem::path &path, const KzConfig &cfg);
+int kzConfigSelfTest();
 
 // Process-wide settings (loaded once in main; the launcher may replace them before boot).
 KzConfig &kzConfig();

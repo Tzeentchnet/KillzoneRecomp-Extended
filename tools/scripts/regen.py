@@ -223,13 +223,16 @@ def find_missing_tail_entries(generated: Path, elf: Path) -> set[int]:
     }
     tail_addresses = set()
     pattern = re.compile(r"ps2DspTail\(ctx,\s*0x([0-9A-Fa-f]+)u\)")
+    legacy_pattern = re.compile(r"ctx->pc = 0x([0-9A-Fa-f]+)u;\s*return;")
+    legacy_dispatch_pattern = re.compile(r"dispatchGuestBranch\(rdram,\s*ctx,\s*0x([0-9A-Fa-f]+)u")
     for source in generated.glob("*.cpp"):
         if source.name == "register_functions.cpp":
             continue
-        tail_addresses.update(
-            int(address, 16)
-            for address in pattern.findall(source.read_text(encoding="utf-8", errors="replace"))
-        )
+        text = source.read_text(encoding="utf-8", errors="replace")
+        tail_addresses.update(int(address, 16) for address in pattern.findall(text))
+        if os.environ.get("PS2X_CODEGEN_DSP", "1") == "0":
+            tail_addresses.update(int(address, 16) for address in legacy_pattern.findall(text))
+            tail_addresses.update(int(address, 16) for address in legacy_dispatch_pattern.findall(text))
 
     elf_data = elf.read_bytes()
     text_address, _, text_size = next(
@@ -253,13 +256,14 @@ def find_missing_resume_entries(generated: Path) -> set[int]:
     }
     resume_addresses = set()
     pattern = re.compile(r"case 0x([0-9A-Fa-f]+)u:\s*goto label_")
+    return_pattern = re.compile(r"// 0x([0-9A-Fa-f]+):[^\n]*\bjr\s+\$ra\b")
     for source in generated.glob("*.cpp"):
         if source.name == "register_functions.cpp":
             continue
-        resume_addresses.update(
-            int(address, 16)
-            for address in pattern.findall(source.read_text(encoding="utf-8", errors="replace"))
-        )
+        text = source.read_text(encoding="utf-8", errors="replace")
+        resume_addresses.update(int(address, 16) for address in pattern.findall(text))
+        if os.environ.get("PS2X_CODEGEN_DSP", "1") == "0":
+            resume_addresses.update(int(address, 16) for address in return_pattern.findall(text))
 
     return {
         address

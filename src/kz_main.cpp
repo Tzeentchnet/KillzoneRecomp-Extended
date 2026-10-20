@@ -129,36 +129,10 @@ namespace
 
     int runSelfTest()
     {
-        int failures = 0;
-        // config round-trip through a temp file
-        KzConfig a;
-        a.windowMode = KzWindowMode::Fullscreen;
-        a.fpsLimit = 144;
-        a.upscale = 4;
-        a.aspect = KzAspect::Classic4x3;
-        a.mouseSensitivity = 2.5f;
-        a.invertY = true;
-        a.isoPath = "C:/games/Killzone (USA).iso";
-        a.unlockAllLevels = true;
-        a.skipIntro = true;
-        a.startLevel = 7;
-        a.startDifficulty = 2;
-        a.testMemoryCard = true;
-        const auto tmp = std::filesystem::temp_directory_path() / "kz_selftest.ini";
-        if (!kzSaveConfig(tmp, a)) { std::cerr << "[selftest] FAIL: save config" << std::endl; ++failures; }
-        const KzConfig b = kzLoadConfig(tmp);
-        if (b.windowMode != a.windowMode || b.fpsLimit != 144 || b.upscale != 4 || b.aspect != a.aspect ||
-            b.mouseSensitivity != 2.5f || !b.invertY || b.isoPath != a.isoPath || !b.unlockAllLevels || !b.skipIntro ||
-            b.startLevel != 7 || b.startDifficulty != 2 || !b.testMemoryCard)
-        {
-            std::cerr << "[selftest] FAIL: config round-trip" << std::endl;
-            ++failures;
-        }
-        std::filesystem::remove(tmp);
-        const KzConfig d = kzLoadConfig(std::filesystem::temp_directory_path() / "kz_missing.ini");
-        if (d.windowMode != KzWindowMode::Borderless || d.fpsLimit != 0 || d.unlockAllLevels || d.skipIntro || d.startLevel != 0 || d.startDifficulty != 0 || d.testMemoryCard) { std::cerr << "[selftest] FAIL: defaults" << std::endl; ++failures; }
+        int failures = kzConfigSelfTest();
         kzInputInit(std::filesystem::temp_directory_path() / "kz_missing.ini");
         failures += kzInputSelfTest();
+        failures += kzTestingSelfTest();
         // disc check against the user's image when present (not required for the test to pass)
         const KzConfig saved = kzLoadConfig(kzConfigPath());
         if (!saved.isoPath.empty())
@@ -364,7 +338,6 @@ int main(int argc, char *argv[])
         kzAimInstall(runtime);
         kzTimeFixInstall(runtime);
         kzPostInstall(runtime);
-        kzTestingInstall(runtime);
         kzWin06WatchInstall(runtime); // KZ_WIN06_WATCH=1 only
         // Tests: a separate (e.g. empty) memory card folder. After loadELF, which resets the roots to the ELF folder.
         // [Testing] TestMemoryCard=1 does the same with "testcard" next to killzone.ini; KZ_MC_ROOT wins.
@@ -376,14 +349,23 @@ int main(int argc, char *argv[])
             mcRoot = kzConfigPath().parent_path() / "testcard";
             std::error_code ec;
             std::filesystem::create_directories(mcRoot, ec);
+            if (ec)
+            {
+                std::cerr << "[kz] could not create isolated memory card root " << mcRoot.string() << ": "
+                          << ec.message() << std::endl;
+                return 1;
+            }
         }
         if (!mcRoot.empty())
         {
             PS2Runtime::IoPaths mcPaths = PS2Runtime::getIoPaths();
             mcPaths.mcRoot = mcRoot;
             PS2Runtime::setIoPaths(mcPaths);
-            std::cout << "[kz] memory card root: " << mcPaths.mcRoot.string() << std::endl;
         }
+        const PS2Runtime::IoPaths selectedPaths = PS2Runtime::getIoPaths();
+        std::cout << "[kz] memory card root: " << selectedPaths.mcRoot.string()
+                  << (mcRoot.empty() ? " (normal card)" : " (isolated testing card)") << std::endl;
+        kzTestingInstall(runtime, !mcRoot.empty());
 
         // Guest vblank rate = target frame rate (kz_timing.h). Automation can force it with KZ_FPS.
         int displayHz = 60;

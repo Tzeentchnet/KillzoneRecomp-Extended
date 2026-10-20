@@ -34,7 +34,8 @@ for ($i = 1; $i -le $Runs; ++$i) {
     $runCard = Get-KzWorkDirectory $wd "${runName}_card"
     Remove-Item -Recurse -Force $runCard, "${runCard}_slot1" -ErrorAction SilentlyContinue
     Copy-Item -Recurse -LiteralPath $cardPath -Destination $runCard
-    $envs = @("KZ_START_LEVEL=11", "KZ_MC_ROOT=$runCard") + ($EnvSet -split '[|]' | Where-Object { $_ })
+    $envs = @("KZ_START_LEVEL=11", "KZ_MC_ROOT=$runCard", "KZ_RENDERER=d3d12") +
+        ($EnvSet -split '[|]' | Where-Object { $_ })
     $result = & "$PSScriptRoot\run_headless.ps1" -Name $runName -Seconds $Seconds -Interval 5 -ExeDir $ExeDir `
         -EnvSet ($envs -join '|') -Root $wd -Iso $Iso -Elf $Elf
     foreach ($kv in $envs) { Remove-Item "env:$(($kv -split '=', 2)[0])" -ErrorAction SilentlyContinue }

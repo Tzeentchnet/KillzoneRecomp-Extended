@@ -423,9 +423,17 @@ namespace
                     ImGui::TextDisabled("To change keys, edit the [Bindings] section of killzone.ini.");
                     if (ImGui::Button("Open killzone.ini"))
                     {
-                        kzSaveConfig(kzConfigPath(), cfg);
-                        const std::string url = "file:///" + kzConfigPath().generic_string();
-                        SDL_OpenURL(url.c_str());
+                        if (kzSaveConfig(kzConfigPath(), cfg))
+                        {
+                            const std::string url = "file:///" + kzConfigPath().generic_string();
+                            SDL_OpenURL(url.c_str());
+                        }
+                        else
+                        {
+                            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Killzone",
+                                                     "Could not save killzone.ini. See killzone.log for details.",
+                                                     window);
+                        }
                     }
                 }
                 ImGui::EndChild();
@@ -465,8 +473,9 @@ namespace
                                   "chapter afterwards sometimes crashes (being investigated).",
                                   cfg.skipIntro,
                                   "On (straight to menu)", "Off (logos and intro)");
-                        row("Start in", "Clicks through the menus into this chapter with the first profile on the memory card "
-                                        "(creates a profile named Tester if there is none). Skips the intro and unlocks all levels.");
+                        row("Start in", "Clicks through the menus into this chapter with the first profile on the memory "
+                                        "card. On an empty isolated test card, the configured test profile is created "
+                                        "through the game's front end. Skips the intro and unlocks all levels.");
                         const std::string startLabel = cfg.startLevel == 0 ? "Main menu (normal start)" : "Chapter " + std::to_string(cfg.startLevel);
                         if (ImGui::BeginCombo("##startlevel", startLabel.c_str()))
                         {
@@ -491,6 +500,10 @@ namespace
                                   "Uses a separate memory card (the testcard folder next to killzone.ini), so testing never "
                                   "touches your profiles. Recommended with Start in.",
                                   cfg.testMemoryCard, "On (test card)", "Off (your memory card)");
+                        row("Empty-card profile",
+                            "Used only when Start in reaches Create Profile on an empty isolated test card. Override with "
+                            "[Testing] DefaultProfile or KZ_DEFAULT_PROFILE.");
+                        ImGui::TextUnformatted(cfg.defaultProfile.c_str());
                         ImGui::EndTable();
                     }
                     ImGui::Spacing();
@@ -606,7 +619,13 @@ bool kzRunLauncher(KzConfig &cfg)
         renderFrame(st, s);
         SDL_RenderPresent(s.renderer);
     }
-    kzSaveConfig(kzConfigPath(), cfg);
+    if (!kzSaveConfig(kzConfigPath(), cfg))
+    {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Killzone",
+                                 "Could not save killzone.ini. See killzone.log for details.", s.window);
+        closeSession(s);
+        return false;
+    }
     closeSession(s);
     return st.play;
 }

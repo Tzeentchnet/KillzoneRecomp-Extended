@@ -11,6 +11,74 @@ behind each item are in [`docs/findings.md`](docs/findings.md), [`docs/assetform
 Each entry records: commit, date, machine and toolchain, acceptance commands and results, decisions, and residual
 risk. Do not edit an entry's evidence after the fact. If a later run disagrees, add a new dated re-verification.
 
+## PROFILE-01 - Default `Shooterman` isolated test profile
+
+- **Completed:** 2026-10-20 in the current working tree; commit pending.
+- **Machine:** Windows 11 x64; clang-cl D3D12 BYOD runs on NVIDIA GeForce RTX 5070; MSVC and clang-cl ISO-free presets.
+- **Implementation:** `[Testing] DefaultProfile` defaults to exact case-sensitive `Shooterman`; valid
+  `KZ_DEFAULT_PROFILE` values override it for automation. The value is consumed only when Start in reaches the game's
+  Create Profile screen with an explicit isolated card root. Populated cards receive no typed name, normal-card
+  automation retains its previous `Tester` behavior, and card-root/profile actions are logged.
+- **Synthetic acceptance:** `kz_product_selftest` covers config validation and round trips, exact default typing,
+  valid and invalid overrides, normal-card isolation, explicit native-query mode and populated-card no-type behavior.
+- **BYOD empty-card acceptance:** an explicitly authorized empty isolated card entered Create Profile at guest time
+  16.1 s, typed exact `Shooterman` through the native front end, saved three card files totaling 60,304 bytes with one
+  exact ASCII name occurrence, reached `1.Trenches` on Normal, exited 0 and produced 11 captures.
+- **Native-query and isolation acceptance:** a second run on that populated card used `KZ_UNLOCK_ALL=0`; the log
+  contained the native-query marker and zero unlock-hook installation markers, selected `11.OTS` on requested
+  difficulty 2, exited 0 and produced 11 captures. This runtime evidence covers native level/difficulty access and is
+  combined with the previously verified native `Shooterman` special cases in all three profile methods, including
+  animatics. The populated test-card aggregate SHA-256 stayed
+  `f221f592efe92aaf9a95d3b297beeb5985700d33d6bb9f231d4874cd39cf2cf0`; the normal card remained an empty tree with
+  SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+- **Acceptance results:**
+
+| Command | Result |
+|---|---|
+| `python .\tools\scripts\verify_deps.py --strict` | PASS: 31 passed, 0 warnings, 0 failures |
+| `python .\tools\scripts\verify_resume_table.py .\generated` | PASS: 132,656 dispatch entries, 100,661 resume cases, 31,995 generated targets |
+| `python .\tools\scripts\inventory_generated.py --check` | PASS: 52 hook signatures, 101,715 recompiler-resumable entries |
+| `tools\scripts\cmake_preset.ps1 -Preset win-msvc-tests -Action build`, then `-Preset win-msvc-rel -Action test -Label iso-free` | PASS: 13/13 |
+| `tools\scripts\cmake_preset.ps1 -Preset win-clang-tests -Action build`, then `-Preset win-clang-rel -Action test -Label iso-free` | PASS: 13/13 |
+| Empty isolated-card headless run, explicit BYOD ISO/ELF, `KZ_START_LEVEL=1` | PASS: exact profile created and saved; chapter 1 reached; exit 0 |
+| Populated isolated-card headless run, `KZ_START_LEVEL=11`, `KZ_START_DIFFICULTY=2`, `KZ_UNLOCK_ALL=0` | PASS: no unlock hooks; chapter 11 reached; both card hashes unchanged; exit 0 |
+| `git diff --check` | PASS |
+
+- **Protected-content disposition:** the generated card and captures remain untracked under `work/` for local repeat
+  testing. No save, card image, retail path, screenshot or decoded content is committed or distributed.
+
+## CFG-01 - Versioned `killzone.ini` schema
+
+- **Completed:** 2026-10-20 in the current working tree; commit pending.
+- **Machine:** Windows 11 x64; MSVC and clang-cl presets.
+- **Contract:** launcher-managed files now write `[Config] Version=1`, independently of `[Bindings] Version=3`.
+  Missing versions load as legacy schema 0 and retain the historical FXAA/sharpen migration. A newer schema can be
+  read with an explicit error but cannot be overwritten by this build.
+- **Parsing and preservation:** booleans, integers, finite floats and enums reject malformed text with a diagnostic
+  that includes the section, key and rejected value. Existing numeric range clamps remain, now with warnings.
+  Duplicate keys warn and retain the prior last-value-wins behavior. Unknown settings, the ISO path and duplicate
+  binding entries survive launcher saves.
+- **Synthetic acceptance:** `kz_product_selftest` covers the recorded baseline, launcher-edited round trips, missing
+  and partial files, version-0 migration, unknown settings, duplicate keys, malformed bool/int/float/enum values,
+  range clamps, and future-version save refusal. The fixtures contain no retail paths or content.
+- **Acceptance results:**
+
+| Command | Result |
+|---|---|
+| `python .\tools\scripts\verify_deps.py --strict` | PASS: 31 passed, 0 warnings, 0 failures |
+| `python .\tools\scripts\verify_resume_table.py .\generated` | PASS: 132,656 dispatch entries, 100,661 resume cases, 31,995 generated targets |
+| `python .\tools\scripts\inventory_generated.py --check` | PASS: 52 hook signatures, 101,715 recompiler-resumable entries |
+| `tools\scripts\cmake_preset.ps1 -Preset win-msvc-tests -Action build`, then `-Preset win-msvc-rel -Action test -Label iso-free` | PASS: 13/13 |
+| `tools\scripts\cmake_preset.ps1 -Preset win-clang-tests -Action build`, then `-Preset win-clang-rel -Action test -Label iso-free` | PASS: 13/13 |
+| `git diff --check` | PASS |
+
+- **Gate repair:** `kzgs_palette_guard` had been registered with CTest without adding its executable to the MSVC and
+  clang-cl test build presets. Both presets now include `kzgs_palette_test`, so the documented clean-build sequence
+  builds every registered ISO-free test.
+- **Residual behavior:** launcher saves canonicalize managed sections and do not preserve comment placement or key
+  ordering. Unknown key/value pairs are preserved. Schema diagnostics are written to the console or `killzone.log`;
+  launcher save failures also display an error dialog.
+
 ## LEGAL-01 - Distribution and provenance disposition
 
 - **Completed:** 2026-10-20 by direct repository-owner instruction.

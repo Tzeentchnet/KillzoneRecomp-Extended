@@ -38,16 +38,24 @@ few lines with a pointer to the evidence.
   as a known deviation; the experimental gate is `patches/ps2recomp/experimental/ee-di-interrupt-gate.diff`.
 - **`sceMpegDelete` is guest code, not an HLE stub** (the bound libmpeg entries are listed in the ignored
   `work/killzone.merged.toml`), so runtime state keyed on "movie deleted" never fires for Killzone.
-- **Prefer A/B switches over theories.** `KZ_IPU=off` removes every movie (all opens fail, the same path the intro
-  skip takes) and settled in one batch that WIN-06 is not caused by the movie/MPEG HLE path.
+- **Prefer A/B switches over theories.** `KZ_IPU=off` removes every movie and showed that WIN-06 is not caused by
+  MPEG/IPU decoding. Native skips after 2 or 30 seconds also failed, but a full-intro run later reproduced the same
+  fault, so startup lifecycle was correlation rather than the common cause.
+- **Baseline claims need the same ten-run gate as a fix.** Six clean full-intro runs were not enough to establish a
+  zero-failure baseline; the next measured full-intro run failed after reaching chapter 11.
 
 - **Page-protection watch for "who wrote this guest word":** `KZ_WIN06_WATCH=1` (`src/kz_win06_watch.cpp`) shows
   the pattern: read-only host pages, a vectored handler that snapshots the page and single-steps the store, a diff on
   the trap, and PDB symbols. Generated function names carry the guest address and their source comments the guest
-  pc, so the log names the guest instruction. Retarget `kRanges` for another word; no regeneration needed.
+  pc, so the log names the guest instruction. Add `KZ_WIN06_WATCH_RANGE=<start>-<end>` for one half-open guest range;
+  no source edit or regeneration is needed.
 - **A write attributed to `ps2CgWr*Slow` is a guest store above 32 MB that wrapped.** The slow path masks the address
   with `PS2_RAM_MASK`, so an out-of-range guest pointer silently overwrites low RAM. Check the host registers for
   the unmasked address (the watch prints those that alias the written offset).
+- **Print native crash registers before guessing from a renderer stack.** In the GS palette crash, `r8d` at
+  `GSGetRGBA8AlphaMinMax` was `0xFFFFFFC7` in both captured failures: an inverted byte-index range had wrapped to a
+  roughly 4 GiB width. The pointer was not the bad argument. Keep the conservative range guard covered by
+  `kzgs_palette_guard`.
 - **`replaceFunction` hooks can check arguments, not results.** Generated functions often return through tail-jump
   fragments (`ctx->pc = target | 1`, followed by the call site), so `v0` is not final when the original returns to
   the hook.
@@ -55,9 +63,12 @@ few lines with a pointer to the evidence.
 ## Gates and automation
 
 - **WIN-06 gate:** `tools\scripts\win06_gate.ps1 -Runs 10 -Name <name> -Card work\win04_20261019_card -Iso <image>
-  -Elf game\SCUS_974.02 [-EnvSet "A=1|B=2"]`. Each run gets a fresh copy of the card; a run fails on a non-zero exit,
-  a guest `missing-target`, a host exception, a missing chapter 11 level file, or mixed capture sizes. A run takes
-  about 1.8 minutes, so ten runs take about 18 minutes; run batches sequentially (parallel runs change timing).
+  -Elf game\SCUS_974.02 [-EnvSet "A=1|B=2"]`. It pins D3D12 and gives each skipped-intro run a fresh card; a run fails
+  on a non-zero exit, a guest `missing-target`, a host exception, a missing chapter 11 level file, or mixed capture
+  sizes. The default is 35 seconds; run batches sequentially because parallel runs change timing.
+- **Alternative code generators need their own dispatch closure.** For `PS2X_CODEGEN_DSP=0`, collect literal legacy
+  tail targets, direct-dispatch targets, and `jr $ra` resume PCs; scanning only DSP tail helpers and switch labels
+  leaves deterministic boot-time missing targets.
 - **Run gate scripts with absolute paths.** The PowerShell tool's working directory can drift into a submodule after
   a `cd` in another command; `tools\scripts\win06_gate.ps1` then fails with "module 'tools' could not be loaded".
 - **A one-in-five failure needs ten runs per arm.** Three-run batches (as in the original WIN-06 table) cannot

@@ -7,8 +7,9 @@ as libraries.
 **No game code or data is in this repository.** You need your own disc image of Killzone NTSC-U (SCUS-97402).
 
 This is **KillzoneRecomp-Extended**, a fork of [drakolordx7/KillzoneRecomp](https://github.com/drakolordx7/KillzoneRecomp)
-that works toward a reproducible, portable runtime (Windows first, then Apple Silicon macOS). New mod support is
-deferred; Blender tooling is developed in a separate project. Developed with AI assistance.
+focused on Windows graphical improvements and configurable gameplay tuning. Earlier Apple Silicon portability work is
+retained but deferred; new mod support is also deferred, and Blender tooling is developed in a separate project.
+Developed with AI assistance.
 
 ## Project documents
 
@@ -26,7 +27,7 @@ deferred; Blender tooling is developed in a separate project. Developed with AI 
 
 ## Status
 
-Test build, currently in Phase 0 (feasibility and reproducibility); see [`TODO.md`](TODO.md).
+Test build, currently in M0 (Windows enhancement baseline); see [`TODO.md`](TODO.md).
 
 - **Verified on this fork (2026-10-17, D3D12):** boot, host memory cards, the opening movies with audio at their
   29.97 fps source cadence, the main menu and the attract reel. Profile creation and first-mission gameplay were
@@ -43,8 +44,13 @@ Test build, currently in Phase 0 (feasibility and reproducibility); see [`TODO.m
 - **Launcher:** display, graphics, controls and audio settings; checks the disc image is the supported version.
 - **Testing options (launcher Testing tab, all off by default):** unlock all campaign levels without changing saves,
   skip the logos and intro movie, start directly in a chosen chapter and difficulty, and use a separate test memory
-  card. Known issue: after a skipped intro, loading chapter 11 sometimes crashes (WIN-06). Automation equivalents:
-  `KZ_UNLOCK_ALL=1`, `KZ_SKIP_INTRO=1`, `KZ_START_LEVEL=1..11`, `KZ_START_DIFFICULTY=0..2`, `KZ_FRONTEND_LOG=1`.
+  card. On an empty isolated card, Start in creates the configured profile through the game's front end; the default
+  is exact `Shooterman`. Known issue: repeated chapter 11 loads can intermittently crash or corrupt textures even
+  after the full intro; the shortcut is not the common cause (WIN-06). Automation equivalents:
+  `KZ_UNLOCK_ALL=1`, `KZ_SKIP_INTRO=1`, `KZ_START_LEVEL=1..11`, `KZ_START_DIFFICULTY=0..2`,
+  `KZ_DEFAULT_PROFILE=<name>`, `KZ_FRONTEND_LOG=1`.
+  When testing native `Shooterman` behavior, explicit `KZ_UNLOCK_ALL=0` keeps Start in from installing the convenience
+  unlock hooks.
 - **Not included:** Killzone Online (LOADER.ELF and the network modules); its servers are long gone.
 
 ## Default controls
@@ -62,6 +68,26 @@ Test build, currently in Phase 0 (feasibility and reproducibility); see [`TODO.m
 
 The profile name can be typed directly on the game's on-screen keyboard. Bindings live in `killzone.ini` under
 `[Bindings]`.
+
+## Configuration compatibility
+
+Launcher-managed `killzone.ini` files use a file schema version independent of the bindings version:
+
+```ini
+[Config]
+Version=1
+```
+
+Files without `[Config] Version` are treated as legacy version 0 and migrate deterministically on the next launcher
+save. Booleans, integers, floats and enums are parsed strictly; rejected values, range clamps, duplicate keys and
+unknown settings are reported in `killzone.log` with their section and key. The last duplicate value is effective.
+Unknown settings are preserved, and launcher saves retain the disc path and all `[Bindings]` entries. A build refuses
+to overwrite a file whose schema version is newer than it supports.
+
+`[Testing] DefaultProfile=Shooterman` controls only the profile typed by Start in when the selected testing card is
+isolated and empty. It never renames an existing profile and is ignored for the normal memory card. Automation may
+override it with `KZ_DEFAULT_PROFILE`; supported names are 1-32 characters using letters, digits, spaces, `-`, `_`
+and `.`. Prebuilt saves or memory-card images are not distributed.
 
 ## Building
 
@@ -170,11 +196,12 @@ native-handle extraction, drawable metrics, event delivery, and teardown; `kz_ho
 and closes an SDL playback stream after observing its callback. Windows automation uses SDL's dummy audio driver;
 the macOS acceptance run uses the default CoreAudio device.
 
-### macOS (Apple Silicon) Phase 0 preset
+### Deferred macOS (Apple Silicon) Phase 0 preset
 
 The checked `macos-arm64` preset is an isolated Phase 0 configuration. It builds the locked SDL 3.4.16 source, the
 renderer-free host smokes, and the portable VU interpreter, and excludes game-derived code, renderers, PCSX2 microVU,
-and the x86 emitter. It does not build the game. On an Apple Silicon Mac:
+and the x86 emitter. It does not build the game and does not block the active Windows milestones. On an Apple Silicon
+Mac:
 
 ```sh
 cmake --preset macos-arm64
@@ -185,8 +212,8 @@ ctest --preset macos-arm64 --output-on-failure -R '^kz_host_(window|audio)_smoke
 
 The portable VU corpus and all three host tests pass under MSVC and clang-cl on Windows, but that is not a substitute
 for the native AppleClang ARM64 run. The native runs (VU-01, MAC-01), the ARM64 guest-code gate (ARM-01, whose
-`macos-arm64-guest-smoke` workflow preset does not exist yet), and the work that depends on them are queued in
-[`TODO.md`](TODO.md).
+`macos-arm64-guest-smoke` workflow preset does not exist yet), and the work that depends on them are paused under the
+superseded portability roadmap in [`TODO.md`](TODO.md).
 
 ### Tests
 

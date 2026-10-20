@@ -9,10 +9,12 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
 
 // Testing options (docs/findings.md "Testing options"). Each one is off by default and installs no hook while off.
@@ -88,6 +90,11 @@ namespace
     std::atomic<int> g_screen{static_cast<int>(Screen::Other)};
     std::atomic<uint32_t> g_screenChanges{0}; // bumped by the EE thread on every SwitchToMenu
     std::atomic<int> g_chosenChapter{0};      // from SetLevelFile
+    std::string g_profileName = "Tester";
+    std::string g_profileTyping = "Tester\r";
+    bool g_isolatedProfileCreation = false;
+    bool g_profileCreationReported = false;
+    bool g_existingProfileReported = false;
 
     bool inRam(uint32_t a) { return a >= 0x00100000u && a < 0x02000000u; }
 
@@ -222,6 +229,17 @@ namespace
         return value < lo ? lo : (value > hi ? hi : value);
     }
 
+    bool envExplicitlyDisabled(const char *name)
+    {
+        const char *value = std::getenv(name);
+        return value && *value && std::atoi(value) == 0;
+    }
+
+    bool installUnlockHooks(bool unlockRequested, int startLevel, bool explicitlyDisabled)
+    {
+        return unlockRequested || (startLevel > 0 && !explicitlyDisabled);
+    }
+
     // One step of the autopilot. Menus only take the D-pad and the face buttons (docs/findings.md "Play-test fixes").
     enum class Op
     {
@@ -243,7 +261,7 @@ namespace
     constexpr uint64_t kGapMs = 450;     // between presses: the game must see the button released
     constexpr uint64_t kRetryMs = 5000;  // a Cross-only screen that is still up this long after its press is pressed again
     constexpr uint64_t kTextWaitMs = 5000;
-    constexpr char kDefaultProfile[] = "Tester\r"; // name typed when the memory card has no profile, then Enter
+    constexpr char kLegacyProfileName[] = "Tester";
 
     std::vector<Step> stepsFor(Screen screen)
     {
@@ -252,11 +270,24 @@ namespace
         {
         case Screen::MainMenu:        // GAME is highlighted
         case Screen::Game:            // Campaign is highlighted
-        case Screen::SelectProfile:   // the first profile, or Create in the "no profiles" dialog
         case Screen::CharacterSelect: // the level's default character
             return {cross};
+        case Screen::SelectProfile: // the first profile, or Create in the "no profiles" dialog
+            if (g_isolatedProfileCreation && !g_existingProfileReported)
+            {
+                std::printf("[kz] testing: choosing the first profile-screen entry; existing profiles are not renamed "
+                            "or overwritten\n");
+                g_existingProfileReported = true;
+            }
+            return {cross};
         case Screen::CreateProfile:   // Edit -> type the name -> down to "Create profile" -> create -> "save to the card?" Yes
-            return {cross, {Op::WaitTextOpen}, {Op::Type, 0, kDefaultProfile}, {Op::WaitTextClosed},
+            if (g_isolatedProfileCreation && !g_profileCreationReported)
+            {
+                std::printf("[kz] testing: creating empty-card profile '%s' through the front end\n",
+                            g_profileName.c_str());
+                g_profileCreationReported = true;
+            }
+            return {cross, {Op::WaitTextOpen}, {Op::Type, 0, g_profileTyping.c_str()}, {Op::WaitTextClosed},
                     {Op::Press, KZ_PAD_DOWN}, cross, {Op::Wait}, cross};
         case Screen::MapSelect:
         {
@@ -295,6 +326,21 @@ namespace
         bool reported = false;
     };
     Autopilot g_pilot;
+
+    std::string selectProfileName(bool isolatedMemoryCard, const std::string &configured, const char *overrideName,
+                                  bool reportInvalid)
+    {
+        if (!isolatedMemoryCard)
+            return kLegacyProfileName;
+        if (overrideName && *overrideName)
+        {
+            if (kzIsValidProfileName(overrideName))
+                return overrideName;
+            if (reportInvalid)
+                std::fprintf(stderr, "[kz] testing: invalid KZ_DEFAULT_PROFILE; using Testing.DefaultProfile\n");
+        }
+        return kzIsValidProfileName(configured) ? configured : KzDefaultProfileName;
+    }
 }
 
 void kzTestingPoll()
@@ -382,20 +428,31 @@ void kzTestingPoll()
     p.stepStarted = 0;
 }
 
-void kzTestingInstall(PS2Runtime &runtime)
+void kzTestingInstall(PS2Runtime &runtime, bool isolatedMemoryCard)
 {
     const KzConfig &cfg = kzConfig();
     g_startLevel = envInt("KZ_START_LEVEL", cfg.startLevel, 0, kChapters);
     g_startDifficulty = envInt("KZ_START_DIFFICULTY", cfg.startDifficulty, 0, 2);
+    g_isolatedProfileCreation = isolatedMemoryCard && g_startLevel > 0;
+    g_profileName =
+        selectProfileName(g_isolatedProfileCreation, cfg.defaultProfile, std::getenv("KZ_DEFAULT_PROFILE"), true);
+    g_profileTyping = g_profileName;
+    g_profileTyping.push_back('\r');
+    g_profileCreationReported = false;
+    g_existingProfileReported = false;
     // The autopilot counts chapters from the carousel's start, which is the last chapter only when all are unlocked;
     // the intro is skipped too, since the point is to get into the level.
-    if (envFlag("KZ_UNLOCK_ALL", cfg.unlockAllLevels) || g_startLevel > 0)
+    const bool unlockRequested = envFlag("KZ_UNLOCK_ALL", cfg.unlockAllLevels);
+    const bool unlockExplicitlyDisabled = envExplicitlyDisabled("KZ_UNLOCK_ALL");
+    if (installUnlockHooks(unlockRequested, g_startLevel, unlockExplicitlyDisabled))
     {
         const bool ok = hook(runtime, kz_hook::ProfileLevelUnlocked, &levelUnlocked, nullptr) &&
                         hook(runtime, kz_hook::ProfileMaxDifficulty, &maxDifficulty, nullptr) &&
                         hook(runtime, kz_hook::ProfileAnimaticUnlocked, &animaticUnlocked, nullptr);
         std::printf("[kz] testing: all campaign levels unlocked (%s)\n", ok ? "hooks installed" : "HOOK FAILED");
     }
+    else if (g_startLevel > 0 && unlockExplicitlyDisabled)
+        std::printf("[kz] testing: native profile unlock queries requested (KZ_UNLOCK_ALL=0)\n");
     g_skipIntro = envFlag("KZ_SKIP_INTRO", cfg.skipIntro) || g_startLevel > 0;
     g_logFrontEnd = std::getenv("KZ_FRONTEND_LOG") != nullptr;
     g_skipMask = envInt("KZ_SKIP_INTRO_MASK", 3, 0, 3);
@@ -409,4 +466,42 @@ void kzTestingInstall(PS2Runtime &runtime)
         std::printf("[kz] testing: skip intro\n");
     if (g_startLevel > 0)
         std::printf("[kz] testing: start in chapter %d, difficulty %d\n", g_startLevel, g_startDifficulty);
+}
+
+int kzTestingSelfTest()
+{
+    int failures = 0;
+    auto check = [&](bool ok, const char *what) {
+        if (!ok)
+        {
+            std::fprintf(stderr, "[kz-testing selftest] FAIL: %s\n", what);
+            ++failures;
+        }
+    };
+
+    check(selectProfileName(false, KzDefaultProfileName, "Automation_1", false) == kLegacyProfileName,
+          "normal card ignores test profile configuration");
+    check(selectProfileName(true, KzDefaultProfileName, nullptr, false) == KzDefaultProfileName,
+          "isolated card uses Shooterman default");
+    check(selectProfileName(true, KzDefaultProfileName, "Automation_1", false) == "Automation_1",
+          "isolated card accepts automation override");
+    check(selectProfileName(true, KzDefaultProfileName, "bad/name", false) == KzDefaultProfileName,
+          "invalid automation override falls back visibly");
+    check(installUnlockHooks(false, 1, false), "start-level automation enables unlock hooks by default");
+    check(!installUnlockHooks(false, 1, true), "explicit unlock disable preserves native profile queries");
+    check(installUnlockHooks(true, 0, false), "explicit unlock request installs hooks");
+
+    g_isolatedProfileCreation = true;
+    g_profileName = KzDefaultProfileName;
+    g_profileTyping = g_profileName + '\r';
+    g_profileCreationReported = true;
+    g_existingProfileReported = true;
+    const std::vector<Step> create = stepsFor(Screen::CreateProfile);
+    const auto typed = std::find_if(create.begin(), create.end(), [](const Step &step) { return step.op == Op::Type; });
+    check(typed != create.end() && typed->text && std::strcmp(typed->text, "Shooterman\r") == 0,
+          "create-profile screen types exact Shooterman name");
+    const std::vector<Step> populated = stepsFor(Screen::SelectProfile);
+    check(std::none_of(populated.begin(), populated.end(), [](const Step &step) { return step.op == Op::Type; }),
+          "populated-card selection never types or renames a profile");
+    return failures;
 }

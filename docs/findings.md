@@ -1689,7 +1689,7 @@ violation; only the focused MPEG regression is represented as passing.
 ## Testing options (2026-10-17)
 
 Launcher Testing tab (`[Testing]` in `killzone.ini`, all off by default; nothing is hooked while off): unlock all
-campaign levels (WIN-02), skip intro, start in a chapter, and a separate test memory card (WIN-05). Code:
+campaign levels (WIN-02), start in a chapter, and a separate test memory card (WIN-05). Code:
 `src/kz_testing.cpp`. Hook addresses are in the GEN-01 manifest (`SwitchToMenu`, `SetLevelFile`,
 `ProfileMaxDifficulty`, `ProfileLevelUnlocked`, `ProfileAnimaticUnlocked`; `MovieOpen` was already there).
 
@@ -1731,20 +1731,33 @@ campaign levels (WIN-02), skip intro, start in a chapter, and a separate test me
 
 ### Implementation choices
 
-- Skip intro keeps the Intro script running: the "Logos" switch is pointed at the script's own "MemoryCardTest" name
-  (found within 16 KB of "Logos"; 0x3F0 bytes before it in every run), and the cinematic's open fails, the path every
-  movie takes without the IPU. Main menu at 5.4-7.2 s instead of about 87 s.
+- The original intro shortcut kept the Intro script running but pointed its "Logos" switch at "MemoryCardTest"
+  (found within 16 KB of "Logos"; 0x3F0 bytes before it) and failed the cinematic open. It reached the main menu at
+  5.4-7.2 s instead of about 87 s, but skipped required game initialization and was removed on 2026-10-20.
 - Skipping the whole Intro set (`OpenMenu(0)` returns at once) also reached the menu, but skips MemoryCardTest; an
   empty card then goes straight to Create Profile without the "No profiles found" dialog. Rejected (see below).
-- Start in a chapter drives the menus with pad pulses keyed on `SwitchToMenu` (settle 1.2 s, 150 ms press, 450 ms gap),
-  creates `Tester` through the on-screen keyboard when the card is empty (then answers Yes to "save this profile to the
-  memory card"), and checks the chapter with `SetLevelFile`. It turns on the unlock (the carousel count assumes chapter
-  11 is the start) and the intro skip.
+- Start in a chapter drives the menus with pad pulses keyed on `SwitchToMenu` (settle 1.2 s, 150 ms press, 450 ms gap)
+  and checks the chapter with `SetLevelFile`. On an empty explicitly isolated card, Create Profile types
+  `[Testing] DefaultProfile` (exact `Shooterman` by default, `KZ_DEFAULT_PROFILE` for automation) through the on-screen
+  keyboard, then answers Yes to save. Normal-card automation retains the legacy `Tester` name; populated cards only
+  take the existing first profile-screen entry and are never renamed or overwritten. It turns on the unlock (the
+  carousel count assumes chapter 11 is the start) but now waits for the full Intro menu set before automating the front
+  end. Explicit `KZ_UNLOCK_ALL=0` suppresses that convenience hook during Start in so a populated `Shooterman` card can
+  exercise the native profile queries. ISO-free self-tests cover selection, exact typing, overrides, invalid values,
+  hook suppression and populated-card no-type behavior.
+- PROFILE-01 BYOD acceptance (2026-10-20): an empty isolated card entered Create Profile at guest time 16.1 s, typed
+  exact `Shooterman`, saved three files totaling 60,304 bytes with one exact ASCII-name occurrence, reached
+  `1.Trenches` on Normal, exited 0 and produced 11 captures. A populated-card rerun with `KZ_UNLOCK_ALL=0` logged native
+  profile queries, installed no unlock hooks, reached `11.OTS` on requested difficulty 2, exited 0 and produced 11
+  captures. The populated test-card aggregate SHA-256 was unchanged at
+  `f221f592efe92aaf9a95d3b297beeb5985700d33d6bb9f231d4874cd39cf2cf0`; the normal card remained an empty tree with
+  SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. The local card and captures remain ignored
+  under `work/`.
 - A research call logger that wrapped about 30 front-end functions made the game thread jump to 0 during the chapter
   11 load (2 of 2 runs); the shipped hooks either replace a whole leaf query or only inspect arguments before calling
   the original.
 
-### Known issue: chapter 11 load after a skipped cinematic (WIN-06, parked)
+### Failure evidence: chapter 11 load after shortened startup (WIN-06)
 
 Chapter 11 (`11.OTS`) loads, win-clang-rel, headless, 2048x1792 frames:
 
@@ -1761,10 +1774,8 @@ Chapter 11 (`11.OTS`) loads, win-clang-rel, headless, 2048x1792 frames:
   time since boot; the common factor is that the intro cinematic was never played.
 - Skipping only the logos (`KZ_SKIP_INTRO_MASK=1`) left the cinematic playing past 160 s in 3 of 3 runs (normally it
   ends at about 84 s), so the Logos screen also sets state that PlayGameIntro uses.
-- Not yet examined: which MPEG/IPU, audio or allocator state the played cinematic leaves behind, and the faulting host
-  stack (`KZ_CRASH_TRACE=1`).
-- Superseded in part by "WIN-06: timer-alarm list, interrupt masking and movie A/B (2026-10-20)" below: the movie
-  path is not required for the failure.
+- Later sections trace the downstream corruption and reject MPEG/IPU decoding as the cause. The decisive distinction
+  is that the supported path completes startup; the movie decoder itself is not the faulty component.
 
 ## WIN-06: timer-alarm list, interrupt masking and movie A/B (2026-10-20)
 
@@ -1883,6 +1894,101 @@ their arguments (dlmalloc-style chunk header at ptr-8, size at ptr-4, heap descr
   every free as "never allocated".
 - dlmalloc small chunks (size < 0x51) do not clear the next chunk's in-use bit when freed, so double frees of small
   blocks are not detected by the header check.
+
+## WIN-06: renderer guards expose the remaining guest corruption (2026-10-20)
+
+Two more unguarded ten-run batches reproduced the same 8/10 rate:
+
+- `win06_watch5`: run 2 returned through a corrupt object to missing target `0x3`; run 4 reached the allocator with
+  stale or reused high-heap pointers and rendered a wrong-sized frame. Neither run reached the bad realloc-wrapper
+  path. A later range-only batch names that caller below.
+- `win06_regs`: both failures were the host GS palette crash. The captured x64 arguments proved that the palette
+  pointer was valid but the requested width was `0xFFFFFFC7`: `GetAlphaMinMax(min, max)` had received an inverted
+  byte range, and `max - min + 1` wrapped to a roughly 4 GiB scan in release builds. The prior assertion was compiled
+  out.
+
+The PCSX2 dependency now returns the cached full-palette alpha range when the requested subrange is inverted or
+outside the 16/256-entry palette. This is conservative for alpha-test optimization and prevents an out-of-bounds
+read. A second guard skips the depth-alpha optimization when no depth target exists (the other observed host crash
+was a null `ds` dereference when frame and depth shared a base pointer). `kzgs_palette_guard` covers valid, inverted
+and out-of-range palette queries.
+
+The guards remove the host exceptions but are not the WIN-06 root fix:
+
+| Batch | Result | Remaining failure |
+|---|---:|---|
+| `win06_gsguard` | 8/10 | run 5: severe texture/CLUT corruption by 25 s and a `1280x896` frame at 30 s; run 6: EE `pc=ra=0x50`, packet-like words at `sp=0x13F810`, and a `1704x1792` frame |
+| `win06_guardwatch` | 10/10 | no bad allocator/upload report; the page-protection watch changes timing enough to mask this batch |
+| `win06_software` | 9/10 | the software GS still failed during D3D12 output-resource destruction, so the hardware texture cache is not the common origin |
+| `win06_callfix` | 9/10 | the PCSX2-parity DMAC CALL-stack-overflow fix did not trigger; run 2 still corrupted the GS local-memory read |
+| `win06_vifmap` | 8/10 | one GS crash and the recurring `0x2E67DC` bad callback; both had `unknown=0`, so invalid VIF commands are a later amplifier, not the origin in these runs |
+| `win06_recordwatch` | 8/10 | one corrupt frame and one bad realloc/missing-target run; the low-overhead range watch captured the realloc caller and overwrite |
+
+An additional half-open guest range can now be selected without rebuilding:
+`KZ_WIN06_WATCH_RANGE=<start>-<end>`; `KZ_WIN06_WATCH_DEFAULT=0` omits the timer ranges to reduce timing impact.
+The realloc diagnostics decode a caller's `lw a0, offset(base)` delay slot, retain the pointer-field address and
+request size when realloc frees the old block, and print all guest GPRs on a bad argument.
+
+`win06_recordwatch_08` names the `0x00000008` path:
+
+- Caller `0x2C0E9C` grows a four-byte-element vector and loads its old pointer from `[s0+8]`.
+- `s0` was the caller's zero-initialized stack object at `0x13FBE0`. Immediately before the bad call its words were
+  `{count=4, capacity=3, pointer=8}`; request size was `0x18`.
+- The stack chain is `0x2C0E9C` <- `0x2C0EF4` <- `0x2C1184` <- `0x3A6730`.
+  `FUN_003A66D0` explicitly clears the three vector words, then passes it to `FUN_002CF430`, a scratchpad-backed
+  query, before iterating and appending the returned values.
+- The bad realloc's copy begins wrapping above 32 MiB at vsync 1466 and writes the watched callback record at
+  `0x8D1AC8` from unmasked destinations `0x028D1AC0`, `0x048D1AC0`, and later aliases. Thus the recurring
+  `0x2E67DC` callback target is downstream of this realloc in that run, not the original corrupt field.
+
+A debug hook at the vector grow return (`0x2C0EA4`) checks `v0` before it is stored at `[s0+8]`.
+`win06_vectorgrow2` (30 runs, shortened to 28 s) failed 2/30. Run 26 captured the first bad state before the store:
+the vector was `{count=1, capacity=0, pointer=0}`, the locked heap bounds were still the valid
+`0x00591410-0x01FFFFF0`, and the allocator returned `v0=8`. Within the next eleven vblanks, many independent stack
+vectors also received `8`, then the bad realloc wrapped and destroyed the timer state. The source is therefore
+allocator metadata/control flow before the vector store, not `FUN_002CF430` overwriting an earlier valid vector
+pointer.
+
+A heap-descriptor-only page watch retained the last 64 writes, but page protection perturbed the timing enough to
+mask the bad result. A temporary direct trace in the otherwise unhooked generated allocator then reached guest
+`pc=0x172D8C` with `t1=0` and returned `8`; the temporary generated-source edit was removed and the normal generated
+tree rebuilt. This confirms the allocator result without treating a watched 10/10 batch as acceptance evidence.
+
+## WIN-06: startup shortcut and broader runtime A/B results (2026-10-20)
+
+The allocator trace above identified how an invalid result becomes broad low-RAM corruption, but did not find an
+emulation correction. Startup timing was initially correlated with failures, but a measured full-intro run disproved
+it as the common cause:
+
+| Startup path | Result | Evidence |
+|---|---:|---|
+| Logos retained, native Cross after 2 seconds (`win06_native_accept`) | 8/10 | same missing targets and visible corruption |
+| Logos retained, native Cross after 30 seconds, D3D12 | failed on run 1 | `2048x1792` and `1280x896` frames plus a missing target |
+| Full Intro menu set and movie (`win06_fullintro_timing_01`) | failed | `MainMenu` at 218.3 s, `11.OTS` at 225.7 s, missing target by 240 s |
+
+The shortcut therefore remains useful for reproducing the fault but is not its root cause. Additional A/B arms also
+retained failures:
+
+| Arm | Result |
+|---|---:|
+| locals with classic checkpoints | 8/10 |
+| synchronous/legacy VIF, GIF, scratchpad, dispatch, timer and RPC paths | failed 2/4 before the arm was stopped |
+| audited PS2Recomp `cc1fc7d` | failed on run 1 |
+| patch 0025 frame pipeline reversed | failed on run 5 |
+| closure-complete `PS2X_CODEGEN_DSP=0` | failed on run 1 with a wrong-size frame |
+| unmapped high-memory stores routed to the runtime null path | 8/10 |
+
+The stronger ownership diagnostics captured two earlier states than pointer `8`:
+
+- A four-byte vector at stack object `0x13FBE0` grew in place with valid `{count, capacity}` transitions
+  `{7,6}`, `{10,9}`, `{14,13}`, `{18,17}`. Realloc then encountered an already-corrupt adjacent chunk size; the
+  vector itself and its recorded previous allocation were consistent.
+- Another run reached cleanup `0x2E7B38 -> 0x2E7440 -> 0x2E8170` with list node `0x01F101C0` already shaped like a
+  free chunk before its first observed call to `free`. The later allocator return, wrapped copy, timer overwrite and
+  renderer crashes are downstream of this stale ownership transition.
+
+Do not turn these observations into allocator guards or ignored frees. WIN-06 remains open at the `0x2E7xxx` list
+ownership boundary.
 
 ## Windows gameplay baseline re-verification (2026-10-19)
 

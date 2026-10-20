@@ -129,7 +129,9 @@ namespace
     constexpr DWORD kArmHardwareWatchException = 0xE0420606u;
     uint32_t g_hardwareWatchAddress = 0;
     uint32_t g_hardwareWatchLast = 0;
+    uint64_t g_hardwareWatchAfterVsync = 0;
     bool g_hardwareWatchArmed = false;
+    bool g_vectorNextHeaderWatch = false;
 
     uint32_t rd32(uint32_t address) { return *reinterpret_cast<const uint32_t *>(g_rdram + address); }
 
@@ -139,7 +141,7 @@ namespace
 
     void armHardwareWatch()
     {
-        if (g_hardwareWatchAddress == 0u || g_hardwareWatchArmed)
+        if (g_hardwareWatchAddress == 0u || g_hardwareWatchArmed || vsyncTick() < g_hardwareWatchAfterVsync)
             return;
         g_eeThread.store(GetCurrentThreadId(), std::memory_order_relaxed);
         RaiseException(kArmHardwareWatchException, 0, 0, nullptr);
@@ -561,6 +563,8 @@ namespace
         uint32_t reallocCaller = 0;
         uint32_t pointerField = 0;
         uint32_t requestedSize = 0;
+        uint32_t sp = 0;
+        std::array<uint32_t, 12> stackWords{};
     };
 
     struct ReallocRecord
@@ -573,6 +577,17 @@ namespace
 
     std::unordered_map<uint32_t, FreeRecord> g_frees; // last free of each pointer (it may have been reused since)
     std::unordered_map<uint32_t, ReallocRecord> g_reallocs;
+    struct VectorOwner
+    {
+        uint32_t pointer = 0;
+        uint64_t vsync = 0;
+        uint32_t object = 0;
+        uint32_t capacity = 0;
+        uint32_t stack = 0;
+        std::array<uint32_t, 6> returnWords{};
+    };
+    std::array<VectorOwner, 1024> g_vectorOwners{};
+    size_t g_vectorOwnerNext = 0;
     int g_badUploads = 0, g_badBlocks = 0;
     std::array<uint32_t, kHeapStateWords> g_lastGoodHeap{};
     uint64_t g_lastGoodHeapVsync = 0;
@@ -693,11 +708,25 @@ namespace
                      reg(ctx, 5), static_cast<unsigned long long>(vsyncTick()), ra, size,
                      !fits ? "header does not fit the heap" : "already free (double free or use after free)",
                      lastFree(p).c_str());
+        if (const auto previous = g_frees.find(p); previous != g_frees.end() && previous->second.sp != 0u)
+        {
+            std::fprintf(stderr, "[win06]   previous free stack at sp 0x%08x:", previous->second.sp);
+            for (const uint32_t word : previous->second.stackWords)
+                std::fprintf(stderr, " %08x", word);
+            std::fprintf(stderr, "\n");
+        }
         if (inRam(p - 0x10, 0x30))
         {
             std::fprintf(stderr, "[win06]   words at ptr-0x10:");
             for (uint32_t o = 0; o < 0x30; o += 4)
                 std::fprintf(stderr, " %08x", rd32(p - 0x10 + o));
+            std::fprintf(stderr, "\n");
+        }
+        if (inRam(p - 0x40u, 0x70u))
+        {
+            std::fprintf(stderr, "[win06]   realloc split neighborhood at ptr-0x40:");
+            for (uint32_t o = 0; o < 0x70u; o += 4u)
+                std::fprintf(stderr, " %08x", rd32(p - 0x40u + o));
             std::fprintf(stderr, "\n");
         }
         const uint32_t sp = reg(ctx, 29);
@@ -713,6 +742,54 @@ namespace
         for (int r = 0; r < 32; ++r)
             std::fprintf(stderr, " r%d=0x%08x", r, reg(ctx, r));
         std::fprintf(stderr, "\n");
+        if (ra == 0x435F58u && inRam(reg(ctx, 17), 12u))
+        {
+            const uint32_t object = reg(ctx, 17);
+            std::fprintf(stderr,
+                         "[win06]   vector destructor object 0x%08x: count 0x%08x capacity 0x%08x pointer 0x%08x\n",
+                         object, rd32(object), rd32(object + 4u), rd32(object + 8u));
+        }
+        if (ra == 0x17327Cu && inRam(reg(ctx, 23), 12u))
+        {
+            const uint32_t object = reg(ctx, 23);
+            std::fprintf(stderr,
+                         "[win06]   realloc vector object 0x%08x: count 0x%08x capacity 0x%08x pointer 0x%08x\n",
+                         object, rd32(object), rd32(object + 4u), rd32(object + 8u));
+        }
+        if (ra == 0x17327Cu)
+        {
+            for (const auto [label, pointer] :
+                 {std::pair{"old", reg(ctx, 20)}, std::pair{"adjacent", reg(ctx, 16) + 8u}})
+            {
+                const VectorOwner *owner = nullptr;
+                const size_t available = std::min(g_vectorOwnerNext, g_vectorOwners.size());
+                for (size_t i = 0; i < available; ++i)
+                {
+                    const VectorOwner &candidate =
+                        g_vectorOwners[(g_vectorOwnerNext - 1u - i) % g_vectorOwners.size()];
+                    if (candidate.pointer == pointer)
+                    {
+                        owner = &candidate;
+                        break;
+                    }
+                }
+                if (!owner)
+                {
+                    std::fprintf(stderr, "[win06]   %s vector pointer 0x%08x has no recorded high-heap owner\n", label,
+                                 pointer);
+                    continue;
+                }
+                const VectorOwner &record = *owner;
+                std::fprintf(stderr,
+                             "[win06]   %s vector pointer 0x%08x last grew at vsync %llu: object 0x%08x "
+                             "capacity %u sp 0x%08x return words",
+                             label, pointer, static_cast<unsigned long long>(record.vsync), record.object,
+                             record.capacity, record.stack);
+                for (const uint32_t word : record.returnWords)
+                    std::fprintf(stderr, " 0x%08x", word);
+                std::fprintf(stderr, "\n");
+            }
+        }
         if (wrapper)
             printPointerSource(ctx, ra);
         else if (innerWrapperRealloc)
@@ -774,6 +851,12 @@ namespace
                     record.requestedSize = it->second.requestedSize;
                 }
             }
+            if (p >= 0x01E00000u && inRam(reg(ctx, 29), record.stackWords.size() * sizeof(uint32_t)))
+            {
+                record.sp = reg(ctx, 29);
+                for (size_t i = 0; i < record.stackWords.size(); ++i)
+                    record.stackWords[i] = rd32(record.sp + static_cast<uint32_t>(i * sizeof(uint32_t)));
+            }
             g_frees[p] = record;
         }
         g_origFree(rdram, ctx, rt);
@@ -784,16 +867,19 @@ namespace
         const uint32_t result = reg(ctx, 2), object = reg(ctx, 16);
         const uint32_t heapLo = rd32(0x55F068u), heapHi = rd32(0x55F06Cu);
         const bool heapReady = heapLo != 0u || heapHi != 0u;
-        const bool valid = !heapReady || (result >= heapLo && result < heapHi && (result & 7u) == 0u);
+        const uint32_t size = chunkSize(result);
+        const bool valid = !heapReady ||
+                           (result >= heapLo && result < heapHi && (result & 7u) == 0u && size >= 0x10u &&
+                            result - 8u + size <= heapHi + 0x10u);
         std::array<uint32_t, kHeapStateWords> heapNow{};
         snapshotHeap(heapNow);
         if (!valid)
         {
             std::lock_guard<std::mutex> lock(g_reportLock);
             std::fprintf(stderr,
-                         "[win06] BAD vector grow result 0x%08x at vsync %llu: object 0x%08x, heap "
-                         "0x%08x-0x%08x, top 0x%08x\n",
-                         result, static_cast<unsigned long long>(vsyncTick()), object, heapLo, heapHi,
+                         "[win06] BAD vector grow result 0x%08x at vsync %llu: object 0x%08x, chunk size 0x%x, "
+                         "heap 0x%08x-0x%08x, top 0x%08x\n",
+                         result, static_cast<unsigned long long>(vsyncTick()), object, size, heapLo, heapHi,
                          rd32(0x55EC50u));
             if (inRam(object, 12u))
                 std::fprintf(stderr, "[win06]   vector before result store: count 0x%08x capacity 0x%08x pointer 0x%08x\n",
@@ -827,6 +913,31 @@ namespace
             g_lastGoodHeap = heapNow;
             g_lastGoodHeapVsync = vsyncTick();
             g_haveLastGoodHeap = true;
+        }
+        if (valid && result >= 0x01E00000u)
+        {
+            VectorOwner record;
+            record.pointer = result;
+            record.vsync = vsyncTick();
+            record.object = object;
+            record.capacity = reg(ctx, 17);
+            record.stack = reg(ctx, 29);
+            for (size_t i = 0; i < record.returnWords.size(); ++i)
+            {
+                const uint32_t address = record.stack + 0x10u + static_cast<uint32_t>(i) * 0x10u;
+                if (inRam(address))
+                    record.returnWords[i] = rd32(address);
+            }
+            g_vectorOwners[g_vectorOwnerNext++ % g_vectorOwners.size()] = record;
+            if (g_vectorNextHeaderWatch && object == 0x0013FBE0u && !g_hardwareWatchArmed)
+            {
+                const uint32_t nextHeader = result - 8u + size + 4u;
+                if (inRam(nextHeader))
+                {
+                    g_hardwareWatchAddress = nextHeader;
+                    armHardwareWatch();
+                }
+            }
         }
         t_haveVectorGrowHeapBefore = false;
         g_origVectorGrowReturn(rdram, ctx, rt);
@@ -939,6 +1050,10 @@ void kzWin06WatchInstall(PS2Runtime &runtime)
         else
             g_hardwareWatchAddress = static_cast<uint32_t>(address);
     }
+    if (const char *text = std::getenv("KZ_WIN06_HW_WATCH_AFTER"))
+        g_hardwareWatchAfterVsync = std::strtoull(text, nullptr, 0);
+    if (const char *text = std::getenv("KZ_WIN06_VECTOR_NEXT_WATCH"))
+        g_vectorNextHeaderWatch = *text && *text != '0';
     g_runtime = &runtime;
     g_rdram = runtime.memory().getRDRAM();
     g_startMs = GetTickCount64();
