@@ -1835,6 +1835,39 @@ first baseline, 2x render distance changed 91.828% / 12.5122 and 4x LOD changed 
 do not remove front-end, loading and tutorial progression variance, so no image delta below or near that repeat
 variance is attributed to a control.
 
+Gameplay-relative automation now provides a narrower live measurement clock. `KZ_INPUT_SCRIPT=g<t>:...` schedules
+input from the first validated local-player controller update, and `KZ_SHOT_GUEST_FROM=g<n>` schedules captures `n`
+guest vblanks from the same origin. Capture metadata records `gameplay_offset_vsync`, which image comparison prefers
+when both arms provide it. At offset 150, a cloned-card same-arm repeat fell to 56.513% changed / 0.9629 mean absolute
+RGB, much lower than the boot-clock repeat but still not pixel deterministic. A paused six-frame repeat measured
+23.189% / 0.2070 mean; most of that is low-amplitude pause-filter noise.
+
+The replacement LOD investigation is deliberately narrower than the withdrawn shared-context mutation, but its first
+iteration was still too broad. Gating point-to-AABB helper `0x2C8178` only by helper return `0x3F4F84` admitted both
+outer callers of the blended selector. The 90,000-call / 39,626-change (44.03%) result is therefore withdrawn: its
+slots were filled by the `+0x2C` static-resource path (`0x3EF81C`), not character resources.
+
+The corrected diagnostic accepts only the `+0x30` skinned-resource paths: simple selector return `0x3F4EA0` with
+saved outer return `0x3FF3FC`, and blended selector return `0x3F4F84` with saved outer return `0x3FF4F0`. At 1x it
+executes the original guest helper; above 1x it divides squared distance by scale squared. Static resources,
+RenderZone state and scratchpad `renderContext+0x1AC` remain untouched. `KZ_CHARACTER_LOD_RESOURCE_LOG=<offset>`
+records runtime resource bounds and thresholds, while `KZ_CHARACTER_LOD_PROBE_CENTER=x,y,z,radius` limits mutation
+to one world-space group.
+
+At gameplay offset 180 the visible corpse resolves to three simple skinned parts with center approximately
+`(-461.80, 113.65, 34.96)` and authored threshold 3.0. Unzoomed metric `4.424` selects level 1; rifle zoom changes the
+same parts to metric `2.072`, selecting level 0 without any probe. A radius-1 unzoomed 4x arm changes the target to
+metric `1.106` and changed 495 of the first 10,000 skinned selections; the 90-second run exited normally.
+
+The targeted visual result is still not acceptable. At offset 180, corpse/tight-ROI same-arm means were
+3.3385/3.7678. The targeted probe measured 3.7330/4.3641 against one baseline and 6.5207/7.4372 against the other.
+Although both cross-run comparisons are higher, the margin against one repeat is small. More importantly, a
+same-process 180..300 targeted window produced a corpse activation-edge mean of 4.4227 while adjacent baseline
+temporal change was 8.8006; the deactivation edge was 3.4884 versus 2.9091 post-window temporal change. No clean,
+reversible mesh delta appears above scene motion. The diagnostic remains useful for attribution, but character LOD
+is a no-go for this milestone: no launcher setting replaces `LodScale`, the product clamp stays 1x, and hands-on or
+campaign/high-water probe gates are not justified.
+
 Deterministic GS replay isolates renderer-only controls. On the first active-gameplay trace:
 
 - anisotropy 0x versus 16x is 4/4 byte-identical;
@@ -1852,8 +1885,9 @@ PCSX2 enables anisotropy only for triangle primitives which do not use its shade
 manual trilinear LOD. Paletted textures, render-target textures, complex clamp/depth cases, sprites and manual-mipmap
 draws bypass it. The launcher now describes that eligibility instead of promising every ground/wall texture will
 change. The identical trace arm is still scene-specific, not proof that the eligible path is globally ineffective.
-GFX-03 remains open for a deterministic textured-angle scene, campaign/checkpoint coverage and safe elevated
-distance/LOD ranges.
+GFX-03 remains open for a deterministic textured-angle scene, render-distance campaign/checkpoint coverage and
+safe elevated distance ranges. Character LOD is rejected for this milestone unless offline mesh evidence justifies
+reopening it.
 
 ## Testing options (2026-10-17)
 

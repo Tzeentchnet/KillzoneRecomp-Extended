@@ -330,8 +330,11 @@ parallel after BASE-01, CFG-01 and TEST-01.
 - **Status (2026-10-20):** In progress. Baseline distance/LOD installs no hooks; independent 2x/4x arms transform
   real far/fog values and Escape exits cleanly. The final LOD setter hook changes the selector scale actually consumed
   by static/skinned resources, but interactive Escape still freezes at 4x even when render distance is 1x; elevated
-  LOD is therefore unavailable and clamped to 1x. Schema 2 exposes measured PS2/base-only mipmap modes.
-  Deterministic character-LOD replacement, campaign and high-water qualification remain open.
+  LOD is therefore unavailable and clamped to 1x. The corrected diagnostic probe gates only `+0x30` skinned-resource
+  callers; the earlier 44% selection figure included static callers and is withdrawn. Exact attribution found the
+  corpse's threshold-3 level transition, but a radius-1 targeted arm did not clear same-process temporal variance, so
+  the replacement is rejected for this milestone and is not exposed. Schema 2 exposes measured PS2/base-only mipmap
+  modes. Render-distance, texture-detail campaign and high-water qualification remain open.
 
 #### GFX-04 - Temporal input feasibility contract
 

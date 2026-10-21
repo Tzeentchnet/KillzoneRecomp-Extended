@@ -111,3 +111,13 @@ few lines with a pointer to the evidence.
 - **Equal guest-vsync IDs do not guarantee equal gameplay scenes.** Cloned-card GFX-03 baseline repeats at identical
   frame IDs still changed 80.377% of pixels because front-end/loading/tutorial progress is host-timing-sensitive.
   Measure same-arm variance and use a deterministic state/trace before attributing live pixel deltas to a setting.
+- **Anchor live comparisons to gameplay, not boot.** Prefix scripted input and guest capture starts with `g` and
+  record `gameplay_offset_vsync`; the final GFX-03 pair aligned at relative delta zero despite an 18-vblank boot-clock
+  difference. The anchor reduced mean repeat error from 13.2611 to 0.9629, but did not make the scene pixel exact.
+- **A helper return address does not identify the resource class.** Point-to-AABB helper return `0x3F4F84` is shared
+  by `+0x2C` static and `+0x30` skinned outer callers. The first character-probe count was mostly static resources.
+  Inspect the selector's saved outer return: skinned paths are `0x3FF3FC` (simple) and `0x3FF4F0` (blended).
+- **A close-up can hide an LOD effect by selecting level zero at baseline.** Rifle zoom made the corpse large and
+  stationary but moved its metric from 4.424 to 2.072 across the authored threshold 3.0, selecting level zero before
+  the probe. Attribute runtime bounds and thresholds first; then test unzoomed and require a reversible same-process
+  delta above temporal noise.

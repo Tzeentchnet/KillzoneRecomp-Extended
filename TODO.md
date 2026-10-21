@@ -31,8 +31,8 @@ GFX-01, GFX-02, PROFILE-01, WIN-01 and WIN-03 are complete in
 
 ### GFX-03 - Qualify render distance, LOD and texture clarity
 
-- **Status:** in progress in safety checkpoint `9007d9a`. Mipmap controls are implemented; elevated model LOD was
-  withdrawn after the hands-on safety failure.
+- **Status:** in progress. Safety checkpoint `9007d9a` remains the product baseline: mipmap controls are implemented
+  and elevated model LOD is withdrawn. A character-only selector probe is diagnostic and not exposed.
 - **Evidence so far:** baseline 1x/1x installs no detail hooks; render-distance 2x logs `70 -> 140` far and
   `-10..70 -> -20..140` fog with no LOD calls. The original LOD entry wrapper restored its temporary value before
   the generated continuation consumed it; the final setter hook now logs `1.436 -> 5.742` at 4x. Escape passes with
@@ -41,14 +41,27 @@ GFX-01, GFX-02, PROFILE-01, WIN-01 and WIN-03 are complete in
   repeats; another elevated pair reached a guest missing-target. LOD 4x then froze again in hands-on testing even at
   view distance 1x despite passing the headless gate. `LodScale` is therefore clamped to 1x and labeled unavailable;
   elevated render/fog distance remains independently selectable.
-- **Measurement limit:** a same-arm live repeat changed 80.377% of pixels (mean absolute RGB 13.2611), so live image
-  deltas are not accepted without a deterministic scene/state.
+- **Character probe:** `KZ_CHARACTER_LOD_PROBE=4` changes only the point-to-AABB distance returned to the skinned LOD
+  selectors. The earlier 90,000-call / 44.03% result is withdrawn: gating only helper return `0x3F4F84` also admitted
+  the `+0x2C` static-resource caller. The corrected filter requires the `+0x30` skinned outer returns (`0x3FF3FC`
+  simple, `0x3FF4F0` blended), so static meshes and the shared camera context are untouched.
+- **Exact resource:** the visible corpse is three skinned parts centered near `(-461.80, 113.65, 34.96)`, authored
+  threshold 3.0. Unzoomed baseline metric `4.424` selects level 1; rifle zoom metric `2.072` selects level 0. A
+  radius-1 targeted 4x run changed 495 of the first 10,000 skinned selections and exited normally. Cross-run corpse
+  ROI means were repeat 3.3385 versus probe 3.7330/6.5207, but the same-process activation edge (4.4227) stayed below
+  baseline temporal variance (8.8006). The visual effect is not robust enough for exposure or safety qualification.
+- **Measurement limit:** gameplay-relative input/capture (`g` time prefix) reduced a same-arm live repeat from mean
+  absolute RGB 13.2611 to 0.9629, but 56.513% of pixels still changed. A relative-offset-150 baseline/probe pair
+  measured 1.7778 / 65.260%; paused repeats and probe arms overlapped at 0.207 versus 0.243-0.302 mean. These deltas
+  do not yet justify a product control.
 - **Mipmaps:** the first-mission trace has 130 `TEX1` writes and no mip-enabled state (`MXL=0`). The docking trace has
   148 mip-enabled states (`MXL=3`, K -2.8125..0); base-only versus PS2 mode changed one of 25 dense captures
   (2.87% of that frame, aggregate mean 0.115%). Config schema 2 and the launcher expose `PS2 transitions` versus
   `Highest detail (base mip only)`.
-- **Next step:** investigate character resource/streaming LOD with a deterministic in-game state before proposing a
-  replacement control. Continue independent render-distance and texture-detail campaign qualification.
+- **Next step:** retain character LOD as a documented no-go for this milestone unless offline mesh comparison finds
+  a materially different authored pair and a live same-process transition clears temporal variance. Continue
+  render-distance, mipmap and texture-detail campaign qualification; do not run character-probe hands-on/campaign
+  gates or expose a replacement control.
 
 ### AUDIO-01 - Combat audio clipping
 
