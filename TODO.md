@@ -31,7 +31,7 @@ GFX-01, GFX-02, PROFILE-01, WIN-01 and WIN-03 are complete in
 
 ### GFX-03 - Qualify render distance, LOD and texture clarity
 
-- **Status:** in progress beyond checkpoint `fdd5ba0`. Mipmap controls are implemented; elevated model LOD was
+- **Status:** in progress in safety checkpoint `9007d9a`. Mipmap controls are implemented; elevated model LOD was
   withdrawn after the hands-on safety failure.
 - **Evidence so far:** baseline 1x/1x installs no detail hooks; render-distance 2x logs `70 -> 140` far and
   `-10..70 -> -20..140` fog with no LOD calls. The original LOD entry wrapper restored its temporary value before
