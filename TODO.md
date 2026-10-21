@@ -31,7 +31,8 @@ GFX-01, GFX-02, PROFILE-01, WIN-01 and WIN-03 are complete in
 
 ### GFX-03 - Qualify render distance, LOD and texture clarity
 
-- **Status:** in progress. Inventory, hook correction and independent first-mission arms complete.
+- **Status:** in progress in checkpoint `fdd5ba0`. Inventory, hook correction and independent first-mission arms
+  complete.
 - **Evidence so far:** baseline 1x/1x installs no detail hooks; render-distance 2x logs `70 -> 140` far and
   `-10..70 -> -20..140` fog with no LOD calls; LOD 4x logs `1.000 -> 4.000` with no far/fog calls. All arms exited 0
   with exact guest-clock captures and matching input-event counts. The manifest validates 55 hook signatures.
