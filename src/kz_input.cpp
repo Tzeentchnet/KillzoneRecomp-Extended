@@ -2,6 +2,7 @@
 
 #include "kz_config.h"
 #include "kz_gs.h"
+#include "kz_timing.h"
 
 #include <SDL3/SDL.h>
 
@@ -130,20 +131,32 @@ namespace
 
     // KZ_INPUT_SCRIPT="t:button[:dur];..." for automated runs: presses `button` (a pad button name, or
     // lx/ly/rx/ry with =value e.g. ly=-1) at t seconds after the first pad read, for dur seconds (default 0.15).
-    // mx/my=counts inject one raw mouse motion (after sensitivity) at t, e.g. "70:mx=400".
+    // Prefix t with `g` to count from the first gameplay frame or `v` to count from the first text-entry Enter.
+    // mx/my=counts inject one raw mouse motion (after sensitivity) at t, e.g. "g0.5:mx=400".
     struct ScriptEvent
     {
-        double t, dur; // t: seconds; "v<t>" items count from the first text-entry Enter instead (see g_textEnteredAt)
+        double t, dur;
         uint16_t mask;
         int axis; // 0 none, 1 lx, 2 ly, 3 rx, 4 ry, 5 mouse x, 6 mouse y, 7 text
         float value;
         bool fired = false;
         std::string text; // axis 7: keys queued as text entry
         bool afterText = false;
+        bool afterGameplay = false;
         bool beforeText = false; // "b<t>": absolute time, dropped once the text entry Enter was handed over
     };
 
     double g_textEnteredAt = -1.0; // script clock when the first queued Enter was handed to the game
+    double g_gameplayStartedAt = -1.0;
+
+    void markGameplayStarted()
+    {
+        if (g_gameplayStartedAt >= 0.0)
+            return;
+        g_gameplayStartedAt = g_scriptClock ? g_scriptClock() : SDL_GetTicks() / 1000.0;
+        kzGsSetGameplayCaptureOrigin(
+            static_cast<uint64_t>(std::llround(g_gameplayStartedAt * kzTimingRate())));
+    }
 
     std::vector<ScriptEvent> &script()
     {
@@ -163,9 +176,17 @@ namespace
                 if (c1 == std::string::npos)
                     continue;
                 const bool afterText = item[0] == 'v' || item[0] == 'V';
+                const bool afterGameplay = item[0] == 'g' || item[0] == 'G';
                 const bool beforeText = item[0] == 'b' || item[0] == 'B';
-                ScriptEvent ev{std::atof(item.c_str() + (afterText || beforeText ? 1 : 0)), 0.15, 0, 0, 0.0f};
+                ScriptEvent ev{
+                    std::atof(item.c_str() + (afterText || afterGameplay || beforeText ? 1 : 0)),
+                    0.15,
+                    0,
+                    0,
+                    0.0f,
+                };
                 ev.afterText = afterText;
+                ev.afterGameplay = afterGameplay;
                 ev.beforeText = beforeText;
                 std::string what = item.substr(c1 + 1);
                 if (const size_t c2 = what.find(':'); c2 != std::string::npos)
@@ -206,6 +227,15 @@ namespace
         return events;
     }
 
+    double scriptEventStart(const ScriptEvent &event)
+    {
+        if (event.afterText)
+            return g_textEnteredAt < 0.0 ? 1e30 : g_textEnteredAt + event.t;
+        if (event.afterGameplay)
+            return g_gameplayStartedAt < 0.0 ? 1e30 : g_gameplayStartedAt + event.t;
+        return event.t;
+    }
+
     void applyScript(uint16_t &pressed, float &lx, float &ly, float &rx, float &ry)
     {
         auto &events = script();
@@ -214,7 +244,7 @@ namespace
         const double t = g_scriptClock ? g_scriptClock() : SDL_GetTicks() / 1000.0;
         for (const ScriptEvent &e : events)
         {
-            const double start = e.afterText ? (g_textEnteredAt < 0.0 ? 1e30 : g_textEnteredAt + e.t) : e.t;
+            const double start = scriptEventStart(e);
             if (t < start || t >= start + e.dur || e.axis > 4 || (e.beforeText && g_textEnteredAt >= 0.0))
                 continue;
             pressed |= e.mask;
@@ -535,7 +565,7 @@ bool kzInputTakeTextKey(uint16_t &key)
     {
         const double t = g_scriptClock ? g_scriptClock() : SDL_GetTicks() / 1000.0;
         for (ScriptEvent &e : script())
-            if (e.axis == 7 && !e.fired && t >= e.t)
+            if (e.axis == 7 && !e.fired && t >= scriptEventStart(e))
             {
                 e.fired = true;
                 for (char c : e.text)
@@ -557,7 +587,17 @@ void kzInputSetAimPatchActive(bool active)
     std::lock_guard<std::mutex> lock(s.mutex);
     s.aimPatchActive = active;
     if (active)
+    {
+        markGameplayStarted();
         s.gameplayUntil = SDL_GetTicks() + 250; // called every gameplay frame by the aim patch
+    }
+}
+
+void kzInputMarkGameplayStarted()
+{
+    State &s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    markGameplayStarted();
 }
 
 bool kzInputZoomHeld()
@@ -572,8 +612,11 @@ bool kzInputZoomHeld()
     {
         const double t = g_scriptClock ? g_scriptClock() : SDL_GetTicks() / 1000.0;
         for (const ScriptEvent &e : script())
-            if (e.axis == 8 && t >= e.t && t < e.t + e.dur)
+        {
+            const double start = scriptEventStart(e);
+            if (e.axis == 8 && t >= start && t < start + e.dur)
                 return true;
+        }
     }
     return false;
 }
@@ -726,7 +769,7 @@ KzMouseDelta kzInputTakeMouseDelta()
         const KzConfig &cfg = kzConfig();
         const double t = g_scriptClock ? g_scriptClock() : SDL_GetTicks() / 1000.0;
         for (ScriptEvent &e : script())
-            if ((e.axis == 5 || e.axis == 6) && !e.fired && t >= e.t)
+            if ((e.axis == 5 || e.axis == 6) && !e.fired && t >= scriptEventStart(e))
             {
                 e.fired = true;
                 (e.axis == 5 ? d.dx : d.dy) += e.value * cfg.mouseSensitivity * (e.axis == 6 && cfg.invertY ? -1.0f : 1.0f);
@@ -789,6 +832,12 @@ int kzInputSelfTest()
     s.consumed[SDL_SCANCODE_UP] = true;
     compose(s, d, 300);
     check((static_cast<uint16_t>(~(d[2] | (d[3] << 8))) & KZ_PAD_UP) == 0, "key consumed by text entry is not a pad button");
+    const double savedGameplayStartedAt = g_gameplayStartedAt;
+    g_gameplayStartedAt = 12.0;
+    ScriptEvent gameplayEvent{2.5, 0.15, KZ_PAD_START, 0, 0.0f};
+    gameplayEvent.afterGameplay = true;
+    check(scriptEventStart(gameplayEvent) == 14.5, "gameplay-relative script event");
+    g_gameplayStartedAt = savedGameplayStartedAt;
     s.consumed.fill(false);
     s.keys.fill(false);
     s.wheelUpUntil = 0;

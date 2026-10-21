@@ -138,8 +138,11 @@ python .\tools\scripts\verify_capture_metadata.py .\work\run1 --compare .\work\r
 The summary is protected-content-safe: configuration, frame/event counts, dimensions and image hashes only.
 
 For deterministic graphics arms, set `KZ_SHOT_GUEST_INTERVAL=<vblanks>` (and optionally
-`KZ_SHOT_GUEST_FROM=<first-vblank>`) to schedule captures on the guest clock instead of wall time. Compare arms whose
-filenames differ by pairing their metadata:
+`KZ_SHOT_GUEST_FROM=<first-vblank>`) to schedule captures on the guest clock instead of wall time. Prefix the start
+with `g` (for example `KZ_SHOT_GUEST_FROM=g60`) to count from the first gameplay frame instead of boot. Scripted input
+uses the same gameplay-relative prefix (for example `KZ_INPUT_SCRIPT=g0.5:Start`). Compare arms whose filenames differ
+by pairing their metadata; frame records include `gameplay_offset_vsync`, and the comparison tool prefers it when
+both arms provide it:
 
 ```powershell
 python .\tools\scripts\image_compare.py .\work\baseline .\work\variant --glob "gs_*.png" --align-metadata

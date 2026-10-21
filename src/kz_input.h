@@ -61,6 +61,8 @@ void kzInputPulseButton(uint16_t padMask, uint32_t milliseconds);
 
 // When the engine aim patch is active, mouse motion goes there; otherwise it is mapped onto the right stick.
 void kzInputSetAimPatchActive(bool active);
+// Records the first validated local-player controller update for gameplay-relative automation.
+void kzInputMarkGameplayStarted();
 
 // Text entry (the game's on-screen keyboard, e.g. the profile name). The game thread calls kzInputSetTextEntryActive()
 // every frame the keyboard screen is open; while it is, typing keys are queued as text instead of driving pad buttons.
@@ -79,7 +81,8 @@ bool kzInputTextEntryOpen();
 void kzInputQueueText(const std::string &text);
 // KZ_INPUT_SCRIPT "t:type=abc" queues text at t (automated tests of text entry; "\n" is not available, use t:enter).
 
-// Clock for KZ_INPUT_SCRIPT event times (seconds). Default: wall time.
+// Clock for KZ_INPUT_SCRIPT event times (seconds). Default: wall time. Prefix an event time with `g` to count from
+// the first gameplay frame, or `v` to count from the first text-entry Enter.
 void kzInputSetScriptClock(double (*clock)());
 
 // Raw Key=Target pairs from killzone.ini [Bindings], or the defaults when the section is missing.

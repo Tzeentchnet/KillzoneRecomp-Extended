@@ -470,6 +470,13 @@
       "signature_sha256": "44935de831775ca944800cd1f500e5a9150d4642eb4253997d1b9671d3250510"
     },
     {
+      "symbol": "AabbDistance",
+      "kind": "debug_hook",
+      "address": "0x002C8178",
+      "signature_size": 16,
+      "signature_sha256": "3da78021dc7192ccd03f0a0f41514d55d324ebbd66d4d373f034f6e24c8e09e0"
+    },
+    {
       "symbol": "MovieRead",
       "kind": "hook",
       "address": "0x002DEB98",

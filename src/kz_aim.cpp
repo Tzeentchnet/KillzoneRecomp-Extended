@@ -144,6 +144,8 @@ namespace
         const uint32_t ra = getRegU32(ctx, 31);
         const uint32_t ctrl = getRegU32(ctx, 4);
         const bool local = ctx->pc == kCtrlUpdate && rd32(rdram, ctrl + 0x1C) == 0u;
+        if (local)
+            kzInputMarkGameplayStarted();
         g_origCtrlUpdate(rdram, ctx, rt);
         if (!local || ctx->pc != ra)
             return; // not player 0, or the update yielded (it finishes later in guest code)

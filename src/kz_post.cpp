@@ -1,11 +1,13 @@
 #include "kz_post.h"
 
 #include "kz_config.h"
+#include "kz_gs.h"
 #include "kz_hook_addresses.h"
 
 #include "ps2_runtime.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <cmath>
@@ -46,6 +48,11 @@ namespace
     constexpr uint32_t kFarPlaneApply = kz_hook::FarPlaneApply;
     constexpr uint32_t kFogParams = kz_hook::FogParams;
     constexpr uint32_t kLodScaleApply = kz_hook::LodScaleApply;
+    constexpr uint32_t kAabbDistance = kz_hook::AabbDistance;
+    constexpr uint32_t kSimpleLodDistanceReturn = 0x003F4EA0u;
+    constexpr uint32_t kBlendedLodDistanceReturn = 0x003F4F84u;
+    constexpr uint32_t kSkinnedSimpleCallerReturn = 0x003FF3FCu;
+    constexpr uint32_t kSkinnedBlendedCallerReturn = 0x003FF4F0u;
     constexpr uint32_t kRamMask = 0x01FFFFFFu;
     constexpr uint32_t kRamSize = 0x02000000u;
     constexpr float kRenderDistanceMin = 1.0f;
@@ -66,10 +73,27 @@ namespace
     PS2Runtime::RecompiledFunction g_origFarPlaneApply = nullptr;
     PS2Runtime::RecompiledFunction g_origFogParams = nullptr;
     PS2Runtime::RecompiledFunction g_origLodScaleApply = nullptr;
+    PS2Runtime::RecompiledFunction g_origAabbDistance = nullptr;
     float g_renderDistance = 1.0f;
     float g_lodScale = 1.0f;
+    float g_characterLodProbeScale = 1.0f;
+    uint64_t g_characterLodProbeFrom = 0;
+    uint64_t g_characterLodProbeTo = 0;
+    uint64_t g_characterLodResourceLogAt = 0;
+    bool g_characterLodTargetEnabled = false;
+    std::array<float, 3> g_characterLodTargetCenter{};
+    float g_characterLodTargetRadius = 0.0f;
     std::atomic<int> g_farPlaneCalls{0}, g_fogCalls{0}, g_lodCalls{0};
     std::atomic<int> g_invalidZoneValues{0}, g_invalidLodValues{0};
+    int g_characterLodCalls = 0;
+    int g_characterLodChanges = 0;
+    int g_invalidCharacterLodValues = 0;
+    std::array<int, 4> g_characterLodBaselineLevels{};
+    std::array<int, 4> g_characterLodProbeLevels{};
+    std::array<uint32_t, 16> g_loggedCharacterLodTables{};
+    size_t g_loggedCharacterLodTableCount = 0;
+    std::array<uint32_t, 32> g_loggedCharacterLodResources{};
+    size_t g_loggedCharacterLodResourceCount = 0;
 
     std::atomic<int> g_glowCalls{0}, g_blendCalls{0}, g_lensCalls{0};
     std::atomic<int> g_glowSkipped{0}, g_blendSkipped{0}, g_lensSkipped{0};
@@ -136,6 +160,293 @@ namespace
         return v;
     }
     void wrF(uint8_t *rdram, uint32_t a, float v) { std::memcpy(rdram + (a & kRamMask), &v, 4); }
+    uint32_t rdU32(const uint8_t *rdram, uint32_t a)
+    {
+        uint32_t v;
+        std::memcpy(&v, rdram + (a & kRamMask), 4);
+        return v;
+    }
+
+    bool inRamRange(uint32_t address, uint32_t size)
+    {
+        return address >= 0x00100000u && size <= kRamSize && address <= kRamSize - size;
+    }
+
+    bool aabbPointDistanceSquared(const uint8_t *rdram, uint32_t bounds, uint32_t point, float &distanceSquared)
+    {
+        if (!inRamRange(bounds, 24u) || !inRamRange(point, 12u))
+            return false;
+        float sum = 0.0f;
+        for (uint32_t axis = 0; axis < 3; ++axis)
+        {
+            const float minimum = rdF(rdram, bounds + axis * 4u);
+            const float maximum = rdF(rdram, bounds + 12u + axis * 4u);
+            const float coordinate = rdF(rdram, point + axis * 4u);
+            if (!std::isfinite(minimum) || !std::isfinite(maximum) || !std::isfinite(coordinate) ||
+                minimum > maximum)
+                return false;
+            float separation = 0.0f;
+            if (coordinate < minimum)
+                separation = minimum - coordinate;
+            else if (maximum < coordinate)
+                separation = coordinate - maximum;
+            const float squared = separation * separation;
+            sum += squared;
+        }
+        if (!std::isfinite(sum))
+            return false;
+        distanceSquared = sum;
+        return true;
+    }
+
+    int selectedLodLevel(const uint8_t *rdram, uint32_t table, float metric, std::array<float, 4> &thresholds,
+                         uint32_t &count)
+    {
+        count = 0;
+        if (!std::isfinite(metric) || !inRamRange(table, 12u))
+            return -1;
+        count = rdU32(rdram, table);
+        const uint32_t values = rdU32(rdram, table + 8u);
+        if (count == 0u || count > thresholds.size() || !inRamRange(values, count * 4u))
+            return -1;
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            thresholds[i] = rdF(rdram, values + i * 4u);
+            if (!std::isfinite(thresholds[i]) || (i > 0u && thresholds[i] < thresholds[i - 1u]))
+                return -1;
+        }
+        for (uint32_t i = 1; i < count; ++i)
+            if (metric <= thresholds[i])
+                return static_cast<int>(i - 1u);
+        return static_cast<int>(count - 1u);
+    }
+
+    bool firstCharacterLodTable(uint32_t table)
+    {
+        for (size_t i = 0; i < g_loggedCharacterLodTableCount; ++i)
+            if (g_loggedCharacterLodTables[i] == table)
+                return false;
+        if (g_loggedCharacterLodTableCount == g_loggedCharacterLodTables.size())
+            return false;
+        g_loggedCharacterLodTables[g_loggedCharacterLodTableCount++] = table;
+        return true;
+    }
+
+    float scheduledCharacterLodScale(float scale, uint64_t from, uint64_t to, uint64_t offset)
+    {
+        if ((from > 0 && offset < from) || (to > 0 && offset >= to))
+            return 1.0f;
+        return scale;
+    }
+
+    bool isSkinnedSelectorCall(bool simpleSelector, uint32_t callerReturn)
+    {
+        return (simpleSelector && callerReturn == kSkinnedSimpleCallerReturn) ||
+               (!simpleSelector && callerReturn == kSkinnedBlendedCallerReturn);
+    }
+
+    bool withinCharacterLodTarget(
+        float minX, float minY, float minZ, float maxX, float maxY, float maxZ,
+        const std::array<float, 3> &target, float radius)
+    {
+        const float dx = (minX + maxX) * 0.5f - target[0];
+        const float dy = (minY + maxY) * 0.5f - target[1];
+        const float dz = (minZ + maxZ) * 0.5f - target[2];
+        return dx * dx + dy * dy + dz * dz <= radius * radius;
+    }
+
+    bool matchesCharacterLodTarget(const uint8_t *rdram, uint32_t bounds)
+    {
+        if (!g_characterLodTargetEnabled)
+            return true;
+        return withinCharacterLodTarget(
+            rdF(rdram, bounds), rdF(rdram, bounds + 4u), rdF(rdram, bounds + 8u),
+            rdF(rdram, bounds + 12u), rdF(rdram, bounds + 16u), rdF(rdram, bounds + 20u),
+            g_characterLodTargetCenter, g_characterLodTargetRadius);
+    }
+
+    bool firstCharacterLodResource(uint32_t table)
+    {
+        for (size_t i = 0; i < g_loggedCharacterLodResourceCount; ++i)
+            if (g_loggedCharacterLodResources[i] == table)
+                return false;
+        if (g_loggedCharacterLodResourceCount == g_loggedCharacterLodResources.size())
+            return false;
+        g_loggedCharacterLodResources[g_loggedCharacterLodResourceCount++] = table;
+        return true;
+    }
+
+    bool guestAsciiString(const uint8_t *rdram, uint32_t address, char (&text)[65])
+    {
+        if (!inRamRange(address, 1u))
+            return false;
+        size_t length = 0;
+        for (; length + 1 < sizeof(text) && inRamRange(address + static_cast<uint32_t>(length), 1u); ++length)
+        {
+            const unsigned char c = rdram[(address + static_cast<uint32_t>(length)) & kRamMask];
+            if (c == '\0')
+            {
+                text[length] = '\0';
+                return length >= 4;
+            }
+            if (c < 0x20u || c > 0x7Eu)
+                return false;
+            text[length] = static_cast<char>(c);
+        }
+        return false;
+    }
+
+    void logCharacterLodResourceStrings(const uint8_t *rdram, uint32_t resource, uint32_t size)
+    {
+        int logged = 0;
+        for (uint32_t offset = 0; offset + 4u <= size && logged < 4; offset += 4u)
+        {
+            const uint32_t pointer = rdU32(rdram, resource + offset);
+            char text[65]{};
+            if (guestAsciiString(rdram, pointer, text))
+            {
+                std::printf(" str+0x%02X='%s'", offset, text);
+                ++logged;
+            }
+            if (!inRamRange(pointer, 32u))
+                continue;
+            for (uint32_t nested = 0; nested < 32u && logged < 4; nested += 4u)
+            {
+                const uint32_t nestedPointer = rdU32(rdram, pointer + nested);
+                if (guestAsciiString(rdram, nestedPointer, text))
+                {
+                    std::printf(" str+0x%02X->0x%02X='%s'", offset, nested, text);
+                    ++logged;
+                }
+            }
+        }
+    }
+
+    void logCharacterLodResource(
+        const uint8_t *rdram, uint32_t bounds, uint32_t point, uint32_t state, uint32_t table,
+        uint32_t callerReturn, uint64_t gameplayOffset, float metric, int level,
+        const std::array<float, 4> &thresholds, uint32_t levelCount)
+    {
+        constexpr uint32_t tableOffset = 0x30u;
+        const uint32_t resource = table >= tableOffset ? table - tableOffset : 0u;
+        const float minX = rdF(rdram, bounds), minY = rdF(rdram, bounds + 4u), minZ = rdF(rdram, bounds + 8u);
+        const float maxX = rdF(rdram, bounds + 12u), maxY = rdF(rdram, bounds + 16u), maxZ = rdF(rdram, bounds + 20u);
+        const float pointX = rdF(rdram, point), pointY = rdF(rdram, point + 4u), pointZ = rdF(rdram, point + 8u);
+        std::printf("[kz-lod-resource] slot %zu table 0x%08X resource 0x%08X caller 0x%08X state 0x%08X "
+                    "gameplay %llu metric %.3f level %d bounds %.2f,%.2f,%.2f..%.2f,%.2f,%.2f "
+                    "point %.2f,%.2f,%.2f thresholds",
+                    g_loggedCharacterLodResourceCount - 1u, table, resource, callerReturn, state,
+                    static_cast<unsigned long long>(gameplayOffset), metric, level,
+                    minX, minY, minZ, maxX, maxY, maxZ, pointX, pointY, pointZ);
+        for (uint32_t i = 0; i < levelCount; ++i)
+            std::printf(" %s%.3f", i == 0u ? "[" : ",", thresholds[i]);
+        std::printf("%s table_words %08X/%08X/%08X",
+                    levelCount ? "]" : " []",
+                    inRamRange(table, 12u) ? rdU32(rdram, table) : 0u,
+                    inRamRange(table, 12u) ? rdU32(rdram, table + 4u) : 0u,
+                    inRamRange(table, 12u) ? rdU32(rdram, table + 8u) : 0u);
+        if (resource != 0u && inRamRange(resource, tableOffset))
+            logCharacterLodResourceStrings(rdram, resource, tableOffset);
+        std::printf("\n");
+    }
+
+    void aabbDistance(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
+    {
+        if (!entering(ctx, kAabbDistance))
+        {
+            g_origAabbDistance(rdram, ctx, rt);
+            return;
+        }
+
+        const uint32_t distanceReturn = getRegU32(ctx, 31);
+        const bool simpleSelector = distanceReturn == kSimpleLodDistanceReturn;
+        if (!simpleSelector && distanceReturn != kBlendedLodDistanceReturn)
+        {
+            g_origAabbDistance(rdram, ctx, rt);
+            return;
+        }
+        const uint32_t stack = getRegU32(ctx, 29);
+        const uint32_t savedReturnOffset = simpleSelector ? 8u : 0x20u;
+        const uint32_t callerReturn =
+            inRamRange(stack, savedReturnOffset + 4u) ? rdU32(rdram, stack + savedReturnOffset) : 0u;
+        if (!isSkinnedSelectorCall(simpleSelector, callerReturn))
+        {
+            g_origAabbDistance(rdram, ctx, rt);
+            return;
+        }
+
+        float baselineDistanceSquared = 0.0f;
+        const uint32_t bounds = getRegU32(ctx, 4);
+        const uint32_t point = getRegU32(ctx, 5);
+        if (!aabbPointDistanceSquared(rdram, bounds, point, baselineDistanceSquared))
+        {
+            if (g_invalidCharacterLodValues++ == 0)
+                std::fprintf(stderr, "[kz] character LOD probe: invalid selector bounds; preserving original call\n");
+            g_origAabbDistance(rdram, ctx, rt);
+            return;
+        }
+
+        const uint64_t gameplayOffset = kzGsGameplayOffsetVsync();
+        float probeScale = scheduledCharacterLodScale(
+            g_characterLodProbeScale, g_characterLodProbeFrom, g_characterLodProbeTo, gameplayOffset);
+        if (!matchesCharacterLodTarget(rdram, bounds))
+            probeScale = 1.0f;
+        const float divisor = probeScale * probeScale;
+        const float probeDistanceSquared = baselineDistanceSquared / divisor;
+        const uint32_t state = simpleSelector ? 0u : getRegU32(ctx, 17);
+        const uint32_t table = simpleSelector ? getRegU32(ctx, 16) : getRegU32(ctx, 19);
+        const float metricFactor =
+            simpleSelector ? (ctx->f[20] != 0.0f ? 1.0f / ctx->f[20] : NAN)
+                           : inRamRange(state, 0x20u) ? rdF(rdram, state + 0x1Cu) : NAN;
+        const float baselineMetric = std::sqrt(baselineDistanceSquared) * metricFactor;
+        const float probeMetric = std::sqrt(probeDistanceSquared) * metricFactor;
+        std::array<float, 4> thresholds{};
+        uint32_t levelCount = 0;
+        const int baselineLevel = selectedLodLevel(rdram, table, baselineMetric, thresholds, levelCount);
+        std::array<float, 4> probeThresholds{};
+        uint32_t probeLevelCount = 0;
+        const int probeLevel = selectedLodLevel(rdram, table, probeMetric, probeThresholds, probeLevelCount);
+        ++g_characterLodCalls;
+        if (baselineLevel >= 0 && baselineLevel < static_cast<int>(g_characterLodBaselineLevels.size()))
+            ++g_characterLodBaselineLevels[static_cast<size_t>(baselineLevel)];
+        if (probeLevel >= 0 && probeLevel < static_cast<int>(g_characterLodProbeLevels.size()))
+            ++g_characterLodProbeLevels[static_cast<size_t>(probeLevel)];
+        if (baselineLevel >= 0 && probeLevel >= 0 && baselineLevel != probeLevel)
+            ++g_characterLodChanges;
+
+        const bool firstTable = firstCharacterLodTable(table);
+        if (g_characterLodResourceLogAt > 0 && gameplayOffset >= g_characterLodResourceLogAt &&
+            firstCharacterLodResource(table))
+        {
+            logCharacterLodResource(
+                rdram, bounds, point, state, table, callerReturn, gameplayOffset, baselineMetric, baselineLevel,
+                thresholds, levelCount);
+        }
+        if (g_log && (firstTable || g_characterLodCalls % 5000 == 0))
+        {
+            std::printf("[kz-post] character LOD call %d: table 0x%08X, gameplay %llu, x%.2f, "
+                        "metric %.3f -> %.3f, level %d -> %d, "
+                        "thresholds",
+                        g_characterLodCalls, table, static_cast<unsigned long long>(gameplayOffset), probeScale,
+                        baselineMetric, probeMetric, baselineLevel, probeLevel);
+            for (uint32_t i = 0; i < levelCount; ++i)
+                std::printf(" %s%.3f", i == 0u ? "[" : ",", thresholds[i]);
+            std::printf("%s; changed %d, levels %d/%d/%d/%d -> %d/%d/%d/%d\n",
+                        levelCount ? "]" : " []", g_characterLodChanges,
+                        g_characterLodBaselineLevels[0], g_characterLodBaselineLevels[1],
+                        g_characterLodBaselineLevels[2], g_characterLodBaselineLevels[3],
+                        g_characterLodProbeLevels[0], g_characterLodProbeLevels[1],
+                        g_characterLodProbeLevels[2], g_characterLodProbeLevels[3]);
+        }
+
+        if (probeScale == 1.0f)
+        {
+            g_origAabbDistance(rdram, ctx, rt);
+            return;
+        }
+        ctx->f[0] = probeDistanceSquared;
+        ctx->pc = getRegU32(ctx, 31);
+    }
 
     bool scaledFinite(float value, float scale, float &result)
     {
@@ -277,6 +588,40 @@ namespace
         return result;
     }
 
+    uint64_t resolveOptionalVsync(const char *name, const char *value)
+    {
+        if (!value || !*value)
+            return 0;
+        errno = 0;
+        char *end = nullptr;
+        const unsigned long long parsed = std::strtoull(value, &end, 10);
+        if (end == value || *end != '\0' || errno == ERANGE || parsed == 0)
+        {
+            std::fprintf(stderr, "[kz] %s=%s is invalid; ignoring probe boundary\n", name, value);
+            return 0;
+        }
+        return static_cast<uint64_t>(parsed);
+    }
+
+    bool resolveCharacterLodTarget(const char *value)
+    {
+        if (!value || !*value)
+            return false;
+        char trailing = '\0';
+        std::array<float, 3> center{};
+        float radius = 0.0f;
+        if (std::sscanf(value, "%f,%f,%f,%f%c", &center[0], &center[1], &center[2], &radius, &trailing) != 4 ||
+            !std::isfinite(center[0]) || !std::isfinite(center[1]) || !std::isfinite(center[2]) ||
+            !std::isfinite(radius) || radius <= 0.0f)
+        {
+            std::fprintf(stderr, "[kz] KZ_CHARACTER_LOD_PROBE_CENTER=%s is invalid; ignoring target filter\n", value);
+            return false;
+        }
+        g_characterLodTargetCenter = center;
+        g_characterLodTargetRadius = radius;
+        return true;
+    }
+
     KzPostDetailSettings enforceDetailSafety(KzPostDetailSettings settings, bool reportDiagnostics)
     {
         if (settings.renderDistance > 1.0f && settings.lodScale > 1.0f)
@@ -312,6 +657,53 @@ void kzPostInstall(PS2Runtime &runtime)
         std::printf("[kz] film grain switch: hook FAILED\n");
     g_lensBlur = envFlag("KZ_LENS_BLUR", cfg.lensBlur);
     g_log = std::getenv("KZ_POST_LOG") != nullptr;
+    g_characterLodProbeScale =
+        resolveDetailValue("KZ_CHARACTER_LOD_PROBE", std::getenv("KZ_CHARACTER_LOD_PROBE"), 1.0f, 1.0f, 4.0f, true);
+    g_characterLodProbeFrom =
+        resolveOptionalVsync("KZ_CHARACTER_LOD_PROBE_FROM", std::getenv("KZ_CHARACTER_LOD_PROBE_FROM"));
+    g_characterLodProbeTo =
+        resolveOptionalVsync("KZ_CHARACTER_LOD_PROBE_TO", std::getenv("KZ_CHARACTER_LOD_PROBE_TO"));
+    g_characterLodResourceLogAt =
+        resolveOptionalVsync("KZ_CHARACTER_LOD_RESOURCE_LOG", std::getenv("KZ_CHARACTER_LOD_RESOURCE_LOG"));
+    g_characterLodTargetEnabled =
+        resolveCharacterLodTarget(std::getenv("KZ_CHARACTER_LOD_PROBE_CENTER"));
+    if (g_characterLodProbeTo > 0 &&
+        (g_characterLodProbeFrom == 0 || g_characterLodProbeTo <= g_characterLodProbeFrom))
+    {
+        std::fprintf(stderr, "[kz] character LOD probe: invalid gameplay window; ignoring boundaries\n");
+        g_characterLodProbeFrom = 0;
+        g_characterLodProbeTo = 0;
+    }
+    if (g_log || g_characterLodProbeScale != 1.0f || g_characterLodResourceLogAt > 0)
+    {
+        if (hook(runtime, kAabbDistance, &aabbDistance, g_origAabbDistance))
+        {
+            std::printf("[kz] character LOD probe: detail distance x%.2f (diagnostic-only)\n",
+                        g_characterLodProbeScale);
+            if (g_characterLodProbeFrom > 0)
+            {
+                if (g_characterLodProbeTo > 0)
+                    std::printf("[kz] character LOD probe: gameplay window %llu..%llu\n",
+                                static_cast<unsigned long long>(g_characterLodProbeFrom),
+                                static_cast<unsigned long long>(g_characterLodProbeTo));
+                else
+                    std::printf("[kz] character LOD probe: gameplay window %llu..end\n",
+                                static_cast<unsigned long long>(g_characterLodProbeFrom));
+            }
+            if (g_characterLodResourceLogAt > 0)
+                std::printf("[kz] character LOD resource log: gameplay %llu+\n",
+                            static_cast<unsigned long long>(g_characterLodResourceLogAt));
+            if (g_characterLodTargetEnabled)
+                std::printf("[kz] character LOD probe: center %.2f,%.2f,%.2f radius %.2f\n",
+                            g_characterLodTargetCenter[0], g_characterLodTargetCenter[1],
+                            g_characterLodTargetCenter[2], g_characterLodTargetRadius);
+        }
+        else
+        {
+            std::fprintf(stderr, "[kz] character LOD probe: hook FAILED; using original selection\n");
+            g_characterLodProbeScale = 1.0f;
+        }
+    }
     const KzPostDetailSettings detail = kzPostResolveDetailSettings(cfg, true);
     g_renderDistance = detail.renderDistance;
     g_lodScale = detail.lodScale;
@@ -374,6 +766,20 @@ int kzPostSelfTest()
     check(scaledFinite(-10.0f, 4.0f, scaled) && scaled == -40.0f,
           "signed fog transform");
     check(!scaledFinite(INFINITY, 4.0f, scaled), "non-finite detail rejection");
+    check(scheduledCharacterLodScale(4.0f, 180u, 300u, 179u) == 1.0f &&
+              scheduledCharacterLodScale(4.0f, 180u, 300u, 180u) == 4.0f &&
+              scheduledCharacterLodScale(4.0f, 180u, 300u, 299u) == 4.0f &&
+              scheduledCharacterLodScale(4.0f, 180u, 300u, 300u) == 1.0f,
+          "character LOD probe gameplay window");
+    check(isSkinnedSelectorCall(true, kSkinnedSimpleCallerReturn) &&
+              isSkinnedSelectorCall(false, kSkinnedBlendedCallerReturn) &&
+              !isSkinnedSelectorCall(true, 0x003EF72Cu) &&
+              !isSkinnedSelectorCall(false, 0x003EF81Cu),
+          "character LOD probe caller filter");
+    check(withinCharacterLodTarget(-1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f, {0.0f, 0.0f, 0.0f}, 0.1f) &&
+              !withinCharacterLodTarget(
+                  9.0f, -1.0f, -1.0f, 11.0f, 1.0f, 1.0f, {0.0f, 0.0f, 0.0f}, 1.0f),
+          "character LOD probe center filter");
     const KzPostDetailSettings safeDetail = enforceDetailSafety({2.0f, 4.0f}, false);
     check(safeDetail.renderDistance == 2.0f && safeDetail.lodScale == 1.0f,
           "unsafe combined detail controls are rejected");

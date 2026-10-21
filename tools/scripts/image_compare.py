@@ -111,6 +111,11 @@ def metadata_frames(directory: Path, pattern: str) -> list[dict]:
 def compare_aligned(reference: Path, variant: Path, pattern: str, max_vsync_delta: int) -> dict:
     reference_frames = metadata_frames(reference, pattern)
     variant_frames = metadata_frames(variant, pattern)
+    relative_clock = all(
+        isinstance(frame.get("gameplay_offset_vsync"), int)
+        for frame in reference_frames + variant_frames
+    )
+    clock = "gameplay_offset_vsync" if relative_clock else "guest_vsync"
     remaining_variant = set(range(len(variant_frames)))
     pairs: list[tuple[Path, Path, dict]] = []
     unmatched_reference = 0
@@ -126,12 +131,10 @@ def compare_aligned(reference: Path, variant: Path, pattern: str, max_vsync_delt
             continue
         variant_index = min(
             candidates,
-            key=lambda index: abs(
-                variant_frames[index]["guest_vsync"] - reference_frame["guest_vsync"]
-            ),
+            key=lambda index: abs(variant_frames[index][clock] - reference_frame[clock]),
         )
         variant_frame = variant_frames[variant_index]
-        delta = variant_frame["guest_vsync"] - reference_frame["guest_vsync"]
+        delta = variant_frame[clock] - reference_frame[clock]
         if abs(delta) > max_vsync_delta:
             unmatched_reference += 1
             continue
@@ -146,7 +149,10 @@ def compare_aligned(reference: Path, variant: Path, pattern: str, max_vsync_delt
                     "variant_frame": variant_frame["file"],
                     "reference_guest_vsync": reference_frame["guest_vsync"],
                     "variant_guest_vsync": variant_frame["guest_vsync"],
-                    "guest_vsync_delta": delta,
+                    "guest_vsync_delta": variant_frame["guest_vsync"] - reference_frame["guest_vsync"],
+                    "alignment_delta": delta,
+                    "reference_gameplay_offset_vsync": reference_frame.get("gameplay_offset_vsync"),
+                    "variant_gameplay_offset_vsync": variant_frame.get("gameplay_offset_vsync"),
                     "capture_point": reference_frame.get("capture_point"),
                 },
             )
@@ -155,7 +161,7 @@ def compare_aligned(reference: Path, variant: Path, pattern: str, max_vsync_delt
         raise ValueError("no metadata-linked frames aligned within the requested tolerance")
     summary = compare_pairs(pairs)
     summary["alignment"] = {
-        "clock": "guest_vsync",
+        "clock": clock,
         "max_allowed_delta": max_vsync_delta,
         "max_abs_delta": max(abs(delta) for delta in deltas),
         "unmatched_reference": unmatched_reference,
@@ -189,6 +195,7 @@ def self_test() -> None:
                     "record": "frame",
                     "file": "aligned_left.png",
                     "guest_vsync": 100,
+                    "gameplay_offset_vsync": 10,
                     "capture_point": "gs_internal",
                 }
             )
@@ -201,6 +208,7 @@ def self_test() -> None:
                     "record": "frame",
                     "file": "aligned_right.png",
                     "guest_vsync": 102,
+                    "gameplay_offset_vsync": 10,
                     "capture_point": "gs_internal",
                 }
             )
@@ -210,7 +218,8 @@ def self_test() -> None:
         aligned = compare_aligned(reference, variant, "aligned_*.png", 2)
         if (
             aligned["frame_count"] != 1
-            or aligned["alignment"]["max_abs_delta"] != 2
+            or aligned["alignment"]["clock"] != "gameplay_offset_vsync"
+            or aligned["alignment"]["max_abs_delta"] != 0
             or aligned["alignment"]["unmatched_reference"] != 0
             or aligned["alignment"]["unmatched_variant"] != 0
         ):

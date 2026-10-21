@@ -30,6 +30,8 @@ void kzGsApplyConfig(const KzConfig &cfg);
 // Automated screenshots: when `dir` is non-empty, the output frame is saved as <dir>/gs_<n>_t<sec>s.png every
 // `intervalSeconds` of wall time (checked at vblank).
 void kzGsSetScreenshotSchedule(const std::string &dir, int intervalSeconds);
+void kzGsSetGameplayCaptureOrigin(uint64_t guestVsync);
+uint64_t kzGsGameplayOffsetVsync();
 
 // Frames presented so far (vblanks forwarded to kzgs).
 uint64_t kzGsFrameCount();

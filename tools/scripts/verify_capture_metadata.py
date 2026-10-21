@@ -144,6 +144,11 @@ def validate(directory: Path, require_fire: bool) -> tuple[list[dict[str, Any]],
         if not isinstance(frame["guest_vsync"], int) or frame["guest_vsync"] < previous_vsync:
             raise ValueError("frame guest_vsync values must be nondecreasing integers")
         previous_vsync = frame["guest_vsync"]
+        gameplay_offset = frame.get("gameplay_offset_vsync")
+        if gameplay_offset is not None and (
+            not isinstance(gameplay_offset, int) or gameplay_offset < 0
+        ):
+            raise ValueError(f"frame {index} gameplay_offset_vsync must be null or a nonnegative integer")
         if frame["capture_point"] not in CAPTURE_POINTS:
             raise ValueError(f"frame {index} has unknown capture point {frame['capture_point']!r}")
         filename = frame["file"]
@@ -157,6 +162,7 @@ def validate(directory: Path, require_fire: bool) -> tuple[list[dict[str, Any]],
         image_rows.append(
             {
                 "frame_id": frame["frame_id"],
+                "gameplay_offset_vsync": gameplay_offset,
                 "capture_point": frame["capture_point"],
                 "width": frame["width"],
                 "height": frame["height"],

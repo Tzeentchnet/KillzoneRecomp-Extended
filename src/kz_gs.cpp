@@ -131,6 +131,8 @@ namespace
         int shotIndex = 0;
         uint64_t guestShotInterval = 0;
         uint64_t nextGuestShot = 0;
+        uint64_t guestShotGameplayOffset = 0;
+        std::atomic<uint64_t> gameplayStartVsync{0};
         // KZ_SHOT_BURST=N: at every shot time the GS thread captures the next N presented frames (gb_*.png, internal resolution, or
         // as presented in KZ_WINDOW_SIZE with KZ_SHOT_BURST_PRESENT=1) without stalling the game, plus gb_*.csv with one line per
         // guest vblank during the capture (field, whether a frame was presented or skipped as unchanged, wall time).
@@ -439,14 +441,20 @@ namespace
         std::lock_guard<std::mutex> lock(s.measurementMutex);
         if (!s.measurementFile)
             return;
+        const uint64_t gameplayOrigin = s.gameplayStartVsync.load(std::memory_order_acquire);
+        char gameplayOffset[32] = "null";
+        if (s.guestShotGameplayOffset > 0 && gameplayOrigin > 0 && guestVsync >= gameplayOrigin)
+            std::snprintf(gameplayOffset, sizeof(gameplayOffset), "%llu",
+                         static_cast<unsigned long long>(guestVsync - gameplayOrigin));
         std::fprintf(
             s.measurementFile,
             "{\"schema_version\":1,\"record\":\"frame\",\"frame_id\":%llu,\"guest_vsync\":%llu,"
-            "\"guest_time_s\":%.9f,\"present_seq\":%llu,\"capture_point\":\"%s\","
+            "\"guest_time_s\":%.9f,\"gameplay_offset_vsync\":%s,"
+            "\"present_seq\":%llu,\"capture_point\":\"%s\","
             "\"file\":\"%s\",\"width\":%d,\"height\":%d}\n",
             static_cast<unsigned long long>(guestVsync), static_cast<unsigned long long>(guestVsync),
             kzTimingRate() > 0 ? static_cast<double>(guestVsync) / kzTimingRate() : 0.0,
-            static_cast<unsigned long long>(presentSeq), capturePoint, file, width, height);
+            gameplayOffset, static_cast<unsigned long long>(presentSeq), capturePoint, file, width, height);
         std::fflush(s.measurementFile);
     }
 
@@ -896,7 +904,17 @@ namespace
             const auto now = std::chrono::steady_clock::now();
             const uint64_t guestVsync = s.currentGuestVsync.load(std::memory_order_relaxed);
             const bool guestScheduled = s.guestShotInterval > 0;
-            if ((guestScheduled && guestVsync >= s.nextGuestShot) ||
+            if (guestScheduled && s.nextGuestShot == 0 && s.guestShotGameplayOffset > 0)
+            {
+                const uint64_t origin = s.gameplayStartVsync.load(std::memory_order_acquire);
+                if (origin > 0)
+                {
+                    s.nextGuestShot = origin + s.guestShotGameplayOffset;
+                    std::cout << "[kz-measure] gameplay capture origin " << origin << ", first "
+                              << s.nextGuestShot << std::endl;
+                }
+            }
+            if ((guestScheduled && s.nextGuestShot > 0 && guestVsync >= s.nextGuestShot) ||
                 (!guestScheduled && now >= s.nextShot))
             {
                 if (guestScheduled)
@@ -1056,6 +1074,8 @@ void kzGsSetScreenshotSchedule(const std::string &dir, int intervalSeconds)
     s.shotInterval = std::max(1, intervalSeconds);
     s.guestShotInterval = 0;
     s.nextGuestShot = 0;
+    s.guestShotGameplayOffset = 0;
+    s.gameplayStartVsync.store(0, std::memory_order_relaxed);
     const auto parsePositiveGuestVsync = [](const char *name, const char *value, uint64_t &result)
     {
         errno = 0;
@@ -1077,11 +1097,22 @@ void kzGsSetScreenshotSchedule(const std::string &dir, int intervalSeconds)
             if (const char *from = std::getenv("KZ_SHOT_GUEST_FROM"); from && *from)
             {
                 uint64_t first = 0;
-                if (parsePositiveGuestVsync("KZ_SHOT_GUEST_FROM", from, first))
+                if ((*from == 'g' || *from == 'G') &&
+                    parsePositiveGuestVsync("KZ_SHOT_GUEST_FROM", from + 1, first))
+                {
+                    s.guestShotGameplayOffset = first;
+                    s.nextGuestShot = 0;
+                }
+                else if (*from != 'g' && *from != 'G' &&
+                         parsePositiveGuestVsync("KZ_SHOT_GUEST_FROM", from, first))
                     s.nextGuestShot = first;
             }
-            std::cout << "[kz-measure] guest-vsync capture schedule: first " << s.nextGuestShot
-                      << ", interval " << s.guestShotInterval << std::endl;
+            if (s.guestShotGameplayOffset > 0)
+                std::cout << "[kz-measure] gameplay-relative capture schedule: first +"
+                          << s.guestShotGameplayOffset << ", interval " << s.guestShotInterval << std::endl;
+            else
+                std::cout << "[kz-measure] guest-vsync capture schedule: first " << s.nextGuestShot
+                          << ", interval " << s.guestShotInterval << std::endl;
         }
     }
     s.start = std::chrono::steady_clock::now();
@@ -1089,6 +1120,22 @@ void kzGsSetScreenshotSchedule(const std::string &dir, int intervalSeconds)
     if (!dir.empty())
         std::filesystem::create_directories(dir);
     openMeasurement(s);
+}
+
+void kzGsSetGameplayCaptureOrigin(uint64_t guestVsync)
+{
+    GsState &s = gs();
+    uint64_t expected = 0;
+    s.gameplayStartVsync.compare_exchange_strong(
+        expected, guestVsync, std::memory_order_release, std::memory_order_relaxed);
+}
+
+uint64_t kzGsGameplayOffsetVsync()
+{
+    const GsState &s = gs();
+    const uint64_t origin = s.gameplayStartVsync.load(std::memory_order_acquire);
+    const uint64_t current = s.currentGuestVsync.load(std::memory_order_relaxed);
+    return origin > 0 && current >= origin ? current - origin : 0;
 }
 
 uint64_t kzGsFrameCount()
