@@ -30,6 +30,12 @@ enum class KzAspect
     Stretch,
 };
 
+enum class KzMipmapMode
+{
+    PS2,
+    HighestDetail,
+};
+
 struct KzConfig
 {
     // Display
@@ -44,6 +50,7 @@ struct KzConfig
     int upscale = 0; // integer GS render multiplier; 0 = auto from physical output height
     KzAspect aspect = KzAspect::Widescreen16x9;
     int anisotropy = 16;     // 0/2/4/8/16
+    KzMipmapMode mipmapMode = KzMipmapMode::PS2;
     bool fxaa = false;       // post-process blur AA; off by default (supersampling via Upscale is the sharp AA)
     bool smaa = true;        // SMAA 1x post-process (Direct3D 11 renderer only; measured: no frame-rate cost)
     float smaaThreshold = 0.2f; // SMAA edge threshold 0.05..0.5: 0.1 = SMAA HIGH preset (smooths more, softens textures: 73 % of the 8x-supersampled detail at 4x), higher keeps texture detail
@@ -58,7 +65,7 @@ struct KzConfig
     bool lensBlur = false;   // blur + overlay while the camera has a lens texture (rain)
     // View distance (docs/findings.md "Draw distance and LOD"). 1 = original.
     float renderDistance = 1.0f; // multiplies each render zone's far plane and fog start/end
-    float lodScale = 1.0f;       // multiplies the LOD detail scale (higher = detailed meshes farther away)
+    float lodScale = 1.0f;       // forced to 1: elevated values hang Escape in interactive gameplay
 
     // Input
     float mouseSensitivity = 1.0f;

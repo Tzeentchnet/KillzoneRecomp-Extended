@@ -124,6 +124,8 @@ def validate(directory: Path, require_fire: bool) -> tuple[list[dict[str, Any]],
             or not minimum <= value <= 16.0
         ):
             raise ValueError(f"effective_config.{key} is outside its supported range")
+    if effective_config.get("mipmap_mode") not in {None, "ps2", "base_only"}:
+        raise ValueError("effective_config.mipmap_mode is invalid")
 
     frames = [record for record in records if record.get("record") == "frame"]
     events = [record for record in records if record.get("record") == "event"]
@@ -338,6 +340,7 @@ def self_test() -> None:
                         },
                         "output_resolution": {"width": 1920, "height": 1080},
                         "pipeline": PIPELINE_ORDER,
+                        "mipmap_mode": "ps2",
                         "render_distance": 1.0,
                         "lod_scale": 1.0,
                     },

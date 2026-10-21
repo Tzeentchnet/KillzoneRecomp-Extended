@@ -279,6 +279,10 @@ namespace
 		o.UpscaleMultiplier = static_cast<float>(std::clamp(cfg.upscale, 1, 8));
 		o.TextureFiltering = static_cast<BiFiltering>(std::clamp(static_cast<int>(cfg.textureFiltering), 0, 3));
 		o.MaxAnisotropy = static_cast<u8>(std::clamp(cfg.anisotropy, 0, 16));
+		const bool mipmaps = cfg.mipmapMode == KzgsMipmapMode::PS2;
+		o.Mipmap = mipmaps;
+		o.HWMipmap = mipmaps;
+		o.TriFilter = mipmaps ? TriFiltering::Automatic : TriFiltering::Off;
 		o.FXAA = cfg.fxaa || (cfg.smaa && cfg.renderer == KzgsRenderer::D3D11); // SMAA rides on the FXAA slot of the post chain (kz_smaa11.cpp)
 		o.LoadTextureReplacements = cfg.loadTextureReplacements;
 		o.DumpReplaceableTextures = cfg.dumpTextures;

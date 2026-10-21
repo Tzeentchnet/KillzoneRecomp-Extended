@@ -174,6 +174,9 @@ risk. Do not edit an entry's evidence after the fact. If a later run disagrees, 
 - **Residual behavior:** launcher saves canonicalize managed sections and do not preserve comment placement or key
   ordering. Unknown key/value pairs are preserved. Schema diagnostics are written to the console or `killzone.log`;
   launcher save failures also display an error dialog.
+- **2026-10-20 re-verification:** schema 2 adds the optional `Mipmapping=ps2|highest` setting. Version 1 files retain
+  `ps2` behavior and migrate on save; the future-version refusal gate moved to version 3. The expanded product
+  self-test passes.
 
 ## LEGAL-01 - Distribution and provenance disposition
 

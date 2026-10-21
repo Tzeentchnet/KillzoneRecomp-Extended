@@ -303,6 +303,7 @@ namespace
                     if (ImGui::Button("Original PS2 look"))
                     {
                         cfg.fxaa = false; cfg.smaa = false; cfg.sharpScaling = false; cfg.bilinear = true;
+                        cfg.mipmapMode = KzMipmapMode::PS2;
                         cfg.noiseFilter = true; cfg.motionBlur = true; cfg.glow = true; cfg.lensBlur = true;
                         cfg.renderDistance = 1.0f; cfg.lodScale = 1.0f; cfg.sharpen = 0;
                     }
@@ -367,6 +368,11 @@ namespace
                             anisoIdx = 4;
                         if (ImGui::Combo("##aniso", &anisoIdx, aniso, 5))
                             cfg.anisotropy = anisoValues[anisoIdx];
+                        row("Mipmap detail",
+                            "PS2 transitions use authored lower-resolution mip levels. Highest detail always samples the base level.");
+                        enumCombo<KzMipmapMode>("##mipmapping", cfg.mipmapMode,
+                                               {{KzMipmapMode::PS2, "PS2 transitions"},
+                                                {KzMipmapMode::HighestDetail, "Highest detail (base mip only)"}});
                         toggleRow("Replacement textures", "Loads texture packs from the textures folder.", cfg.textureReplacement);
                         ImGui::EndTable();
                     }
@@ -386,8 +392,12 @@ namespace
                     {
                         row("View distance", "Pushes the fog back. 2x costs almost nothing.");
                         ImGui::SliderFloat("##renderdist", &cfg.renderDistance, 1.0f, 4.0f, "%.1fx");
-                        row("Model detail distance", "Keeps detailed models further away. 4x costs about 8 % fps.");
-                        ImGui::SliderFloat("##lod", &cfg.lodScale, 1.0f, 4.0f, "%.1fx");
+                        row("Model detail distance",
+                            "Unavailable: elevated model LOD hangs Escape in interactive gameplay.");
+                        cfg.lodScale = 1.0f;
+                        ImGui::BeginDisabled();
+                        ImGui::SliderFloat("##lod", &cfg.lodScale, 1.0f, 1.0f, "Unavailable (1x)");
+                        ImGui::EndDisabled();
                         row("Sharpening", "Extra edge contrast on the final picture (30 % by default).");
                         ImGui::SliderInt("##sharpen", &cfg.sharpen, 0, 100, cfg.sharpen == 0 ? "Off" : "%d%%");
                         ImGui::EndTable();

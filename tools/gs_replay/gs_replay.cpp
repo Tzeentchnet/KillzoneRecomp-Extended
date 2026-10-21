@@ -34,9 +34,16 @@ namespace
         uint64_t tags[4] = {};
         uint32_t zMin = 0xFFFFFFFFu, zMax = 0;
         std::map<uint32_t, std::map<uint64_t, uint64_t>> distinct; // A+D reg -> value -> count (TEST/ZBUF/FRAME/ALPHA)
+        uint64_t tex1Writes = 0;
+        uint64_t mipEnabledTex1Writes = 0;
+        std::map<uint32_t, uint64_t> mipLevels;
+        std::map<uint32_t, uint64_t> minFilters;
+        std::map<uint64_t, uint64_t> mipWritesByFrame;
+        int mipKMin = 2047;
+        int mipKMax = -2048;
     };
 
-    void scan(const uint8_t *data, uint32_t size, Stats &st)
+    void scan(const uint8_t *data, uint32_t size, uint64_t upcomingFrame, Stats &st)
     {
         uint32_t off = 0;
         while (off + 16 <= size)
@@ -81,6 +88,24 @@ namespace
                             st.adWrites[static_cast<uint32_t>(addr & 0xFF)]++;
                             st.lastAd[static_cast<uint32_t>(addr & 0xFF)] = val;
                             const uint32_t a = static_cast<uint32_t>(addr & 0xFF);
+                            if (a == 0x14 || a == 0x15)
+                            {
+                                const uint32_t mxl = static_cast<uint32_t>((val >> 2) & 0x7);
+                                const uint32_t mmin = static_cast<uint32_t>((val >> 6) & 0x7);
+                                int k = static_cast<int>((val >> 32) & 0xFFF);
+                                if (k & 0x800)
+                                    k -= 0x1000;
+                                st.tex1Writes++;
+                                st.mipLevels[mxl]++;
+                                st.minFilters[mmin]++;
+                                st.mipKMin = std::min(st.mipKMin, k);
+                                st.mipKMax = std::max(st.mipKMax, k);
+                                if (mxl > 0 && mmin >= 2 && mmin <= 5)
+                                {
+                                    st.mipEnabledTex1Writes++;
+                                    st.mipWritesByFrame[upcomingFrame]++;
+                                }
+                            }
                             if (a == 0x47 || a == 0x48 || a == 0x4E || a == 0x4F || a == 0x4C || a == 0x42 || a == 0x06)
                                 st.distinct[a][val]++;
                         }
@@ -154,23 +179,37 @@ int main(int argc, char **argv)
         std::fprintf(stderr,
                      "usage: kz_gs_replay <trace> <outdir> [--every N] [--upscale N] "
                      "[--renderer d3d11|d3d12|vulkan] [--fxaa] [--smaa] [--cas N] "
-                     "[--aniso N] [--tex-replace 0|1] [--bilinear 0|1] [--sharp 0|1] "
-                     "[--crop L,T,R,B] [--present WxH] "
+                     "[--aniso N] [--mip ps2|base] [--tex-replace 0|1] [--bilinear 0|1] [--sharp 0|1] "
+                     "[--crop L,T,R,B] [--present WxH] [--from N] [--to N] "
                      "[--backbuffer] [--stats]\n");
         return 2;
     }
     const std::string tracePath = argv[1];
     const std::filesystem::path outDir = argv[2];
     int every = 30, upscale = 2, presentWidth = 0, presentHeight = 0;
+    uint64_t captureFrom = 1, captureTo = UINT64_MAX;
     bool stats = false, fixDy = false, backbuffer = false;
     KzgsConfig cfg;
     for (int i = 3; i < argc; ++i)
     {
         const std::string a = argv[i];
         if (a == "--every" && i + 1 < argc) every = std::atoi(argv[++i]);
+        else if (a == "--from" && i + 1 < argc) captureFrom = std::strtoull(argv[++i], nullptr, 10);
+        else if (a == "--to" && i + 1 < argc) captureTo = std::strtoull(argv[++i], nullptr, 10);
         else if (a == "--upscale" && i + 1 < argc) upscale = std::atoi(argv[++i]);
         else if (a == "--stats") stats = true;
         else if (a == "--aniso" && i + 1 < argc) cfg.anisotropy = std::atoi(argv[++i]);
+        else if (a == "--mip" && i + 1 < argc)
+        {
+            const std::string mode = argv[++i];
+            if (mode == "base")
+                cfg.mipmapMode = KzgsMipmapMode::BaseOnly;
+            else if (mode != "ps2")
+            {
+                std::fprintf(stderr, "invalid --mip value: %s\n", mode.c_str());
+                return 2;
+            }
+        }
         else if (a == "--tex-replace" && i + 1 < argc) cfg.loadTextureReplacements = std::atoi(argv[++i]) != 0;
         else if (a == "--fxaa") cfg.fxaa = true;
         else if (a == "--smaa") cfg.smaa = true;
@@ -256,7 +295,7 @@ int main(int argc, char **argv)
         if (hdr[0] == 1)
         {
             if (hdr[1] <= 3) packets[hdr[1]]++;
-            if (stats) scan(buf.data(), hdr[2], st);
+            if (stats) scan(buf.data(), hdr[2], frame + 1, st);
             kzgsGifTransfer(static_cast<int>(hdr[1]), buf.data(), hdr[2] / 16u);
         }
         else if (hdr[0] == 2)
@@ -272,7 +311,9 @@ int main(int argc, char **argv)
                         d = (d & ~(0x7FFull << 12)) | (0x32ull << 12) | ((off == 0xA0u) ? 0 : 0);
                     std::memcpy(regs + off, &d, 8);
                 }
-            const bool capture = every > 0 && (frame + 1u) % static_cast<uint64_t>(every) == 0u;
+            const uint64_t upcomingFrame = frame + 1u;
+            const bool capture = every > 0 && upcomingFrame >= captureFrom && upcomingFrame <= captureTo &&
+                                 upcomingFrame % static_cast<uint64_t>(every) == 0u;
             if (capture && backbuffer)
                 kzgsBurstArm(1, -1, -1);
             kzgsVsync(static_cast<int>(hdr[1]), true);
@@ -331,6 +372,23 @@ int main(int argc, char **argv)
         std::printf("\nA+D registers (count, last value):\n");
         for (auto &[r, n] : st.adWrites)
             std::printf("  %02X  %8llu  %016llx\n", r, static_cast<unsigned long long>(n), static_cast<unsigned long long>(st.lastAd[r]));
+        std::printf("TEX1 writes: %llu, mip-enabled states: %llu, K range %.4f..%.4f\n",
+                    static_cast<unsigned long long>(st.tex1Writes),
+                    static_cast<unsigned long long>(st.mipEnabledTex1Writes),
+                    st.tex1Writes ? static_cast<double>(st.mipKMin) / 16.0 : 0.0,
+                    st.tex1Writes ? static_cast<double>(st.mipKMax) / 16.0 : 0.0);
+        std::printf("  MXL:");
+        for (const auto &[value, count] : st.mipLevels)
+            std::printf(" %u:%llu", value, static_cast<unsigned long long>(count));
+        std::printf("\n  MMIN:");
+        for (const auto &[value, count] : st.minFilters)
+            std::printf(" %u:%llu", value, static_cast<unsigned long long>(count));
+        std::printf("\n");
+        std::printf("  mip-enabled writes by upcoming frame:");
+        for (const auto &[mipFrame, count] : st.mipWritesByFrame)
+            std::printf(" %llu:%llu", static_cast<unsigned long long>(mipFrame),
+                        static_cast<unsigned long long>(count));
+        std::printf("\n");
     }
     if (stats)
     {

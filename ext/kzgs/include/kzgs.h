@@ -51,12 +51,19 @@ enum class KzgsTextureFilter : int
 	ForcedExceptSprites = 3,
 };
 
+enum class KzgsMipmapMode : int
+{
+	PS2 = 0,
+	BaseOnly = 1,
+};
+
 struct KzgsConfig
 {
 	KzgsRenderer renderer = KzgsRenderer::D3D11;
 	int upscale = 1;                                   // internal resolution multiplier, 1..8
 	KzgsTextureFilter textureFiltering = KzgsTextureFilter::PS2;
 	int anisotropy = 0;                                // 0 (off), 2, 4, 8, 16
+	KzgsMipmapMode mipmapMode = KzgsMipmapMode::PS2;   // BaseOnly disables mip selection and samples level zero
 	bool fxaa = false;                                 // post-process FXAA
 	bool smaa = false;                                 // post-process SMAA 1x (Direct3D 11 only; others ignore it)
 	// PCSX2 texture replacement: files in <exe dir>/textures/SCUS-97402/replacements (named by PCSX2's texture hash) replace

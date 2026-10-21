@@ -995,13 +995,16 @@ reflection data.
   `70 -> 140` and `-10..70 -> -20..140`; both signatures are locked in the generated manifest.
 - **LOD:** the LOD selectors divide the distance by `ctx+0x1AC` (`FUN_003F4E70` static meshes, `FUN_003F4F10` skinned, `FUN_003EFAD8` multi-mesh, the grass and ~35
   other readers). `FUN_001C2168(f12 = fov, a0 = game object)` sets it to `obj[0x1C] * tan(refFov/2) / tan(fov/2)` (refFov 75 at 0x559540, obj = `*(0x559178)`, obj[0x1C] = 1.0
-  in the dump), the setter `FUN_00151E60` also restores saved values, so the root is hooked instead: the hook on `0x1C2168` multiplies obj[0x1C] around the call.
+  in the dump). Both the entry and `0x1C21B0` continuation wrappers were rejected because generated tail dispatch made
+  their temporary/readback assumptions false. The final hook scales f12 at setter continuation `0x151E64`, gated to
+  caller return `0x1C21D4`, immediately before it stores render-context `+0x1AC`.
   Other per-class distances exist as data: MeshResource "Maximum visible distance" (+0x1C, default -1 = none), Grass "Max View Distance"/"Max Animate Distance"
-  (default 20), LodStaticMeshResource/LodSkinnedMeshResource "LOD Info" tables. The 4x wrapper now logs actual
-  `1.000 -> 4.000` input transformations independently of the RenderZone controls. The earlier frame-rate and image
+  (default 20), LodStaticMeshResource/LodSkinnedMeshResource "LOD Info" tables. The 4x hook logs the actual
+  `1.436 -> 5.742` setter transformation independently of RenderZone controls. The earlier frame-rate and image
   deltas remain preliminary, not range-qualification evidence.
-- Config: `[Graphics] RenderDistance=1..16` (default 1 = original), `LodScale=0.25..16` (default 1); env `KZ_RENDER_DISTANCE`, `KZ_LOD_SCALE`. Only the first mission was
-  checked; the defaults stay at the original values because other levels' fog and portal setups were not looked at (indoor zones, boss areas).
+- Config: `[Graphics] RenderDistance=1..16` (default 1 = original), `LodScale=1` (disabled); env
+  `KZ_RENDER_DISTANCE`, `KZ_LOD_SCALE`. The hands-on Escape retest froze at LOD 4x even with render distance 1x, so
+  product configuration now clamps LOD to 1x and does not install its experimental hook.
 
 ### 3. Shadows (identified, not changed)
 Materials carry "Cast Static Shadows / Cast Dynamic Shadows / Receives Dynamic Shadows" (MeshResource +0x?, light classes), shader variants PROJECTIVESHADOW
@@ -1809,8 +1812,21 @@ showing that output history and renderer recreation do not silently rewrite the 
 The inventory covers two guest controls (`RenderDistance`, `LodScale`) and three renderer controls (anisotropy,
 texture replacement and CAS). Default `RenderDistance=1`/`LodScale=1` installs no detail hooks. Elevated controls
 install independently: a 2x render-distance arm produced far/fog calls and no LOD calls; a 4x LOD arm produced LOD
-calls and no far/fog calls. Environment overrides now reject nonnumeric/non-finite values and clamp to the same
-1..16 / 0.25..16 bounds as the typed configuration.
+calls and no far/fog calls. The first LOD wrapper was not effective: it restored `obj+0x1C` before generated
+continuation `0x1C21B0` consumed it. The final hook is the call-site-gated setter continuation at `0x151E64`; at 4x it
+changes the actual selector input from 1.436 to 5.742. Environment overrides reject nonnumeric/non-finite values and
+clamp to the same 1..16 / 0.25..16 bounds as the typed configuration.
+
+The human Escape reproducer found a critical interaction: render distance 2x plus LOD 4x froze about one second into
+level load with buzzing audio. The standard isolated run reproduced a guest stall at `pc=0x1A` with DMA/VIF fixed at
+2097/874 while host vblank advanced; 2/3 additional combined runs froze, and a 1.5x/4x arm reached an invalid
+`0x80001828` guest indirect target. Baseline and render 2x alone advanced through Escape. Although final LOD 4x
+advanced in the headless gate and logged the expected `1.436 -> 5.742` mutation, the second hands-on test froze again
+with view distance 1x. Headless success is not accepted over that interactive failure: `LodScale` is now constrained
+to 1x in config/environment resolution and shown unavailable in the launcher. An existing config with an elevated
+value installs no LOD hook; the isolated Escape validation advanced and exited 0.
+The final hands-on safe build showed LOD unavailable at 1x, exposed the mipmap selector, and loaded/played Escape
+normally. Audio cutouts still occurred in heavier scenes and remain AUDIO-01 rather than a graphics acceptance issue.
 
 The first exact-clock scene matrix used one cloned card, identical input, six captures at guest-vsync
 1800/2160/2520/2880/3240/3600 and six matching fire transitions in each arm. All three arms exited 0. It is not valid
@@ -1819,11 +1835,18 @@ first baseline, 2x render distance changed 91.828% / 12.5122 and 4x LOD changed 
 do not remove front-end, loading and tutorial progression variance, so no image delta below or near that repeat
 variance is attributed to a control.
 
-The deterministic four-frame GS replay does isolate renderer-only controls. On the current active-gameplay trace:
+Deterministic GS replay isolates renderer-only controls. On the first active-gameplay trace:
 
 - anisotropy 0x versus 16x is 4/4 byte-identical;
 - texture replacement off versus on with an empty replacement directory is 4/4 byte-identical;
 - CAS 30 remains independently measured by GFX-01 (19.243% changed versus off).
+
+That trace has 130 `TEX1` writes but no mip-enabled state (`MXL=0`, `MMIN=0`), so a mipmap option cannot change it.
+The docking trace has 148 mip-enabled states (`MXL=3`, K from -2.8125 to 0). Dense capture of all frames 83-107 found
+PS2 mipmapping versus base-only identical in 24/25 frames; frame 86 changed 2.87% of pixels (mean absolute RGB 0.03,
+max 19), for an aggregate 0.115% changed / 0.0010 mean. Config schema 2 therefore exposes two measured modes:
+`Mipmapping=ps2` (default) and `Mipmapping=highest` (disables `Mipmap`, `HWMipmap` and trilinear selection so level
+zero is sampled). Adjustable transition bias is deferred because PCSX2 has no corresponding public GS option.
 
 PCSX2 enables anisotropy only for triangle primitives which do not use its shader-emulated sampler and do not use
 manual trilinear LOD. Paletted textures, render-target textures, complex clamp/depth cases, sprites and manual-mipmap

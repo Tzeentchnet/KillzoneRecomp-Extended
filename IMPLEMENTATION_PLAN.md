@@ -328,9 +328,10 @@ parallel after BASE-01, CFG-01 and TEST-01.
   campaign checkpoints without cumulative bounds growth, missing actors, streaming failures or memory exhaustion.
 - **Stop:** Reduce the supported range instead of adding sentinel values or unbounded allocations.
 - **Status (2026-10-20):** In progress. Baseline distance/LOD installs no hooks; independent 2x/4x arms transform
-  real far/fog/LOD values and exit cleanly. The original RenderZone post-call wrapper was invalid and has been
-  replaced by manifest-validated consumer hooks. Same-arm live captures remain too variable for visual acceptance;
-  deterministic scene/campaign and high-water qualification is still open.
+  real far/fog values and Escape exits cleanly. The final LOD setter hook changes the selector scale actually consumed
+  by static/skinned resources, but interactive Escape still freezes at 4x even when render distance is 1x; elevated
+  LOD is therefore unavailable and clamped to 1x. Schema 2 exposes measured PS2/base-only mipmap modes.
+  Deterministic character-LOD replacement, campaign and high-water qualification remain open.
 
 #### GFX-04 - Temporal input feasibility contract
 

@@ -31,20 +31,29 @@ GFX-01, GFX-02, PROFILE-01, WIN-01 and WIN-03 are complete in
 
 ### GFX-03 - Qualify render distance, LOD and texture clarity
 
-- **Status:** in progress in checkpoint `fdd5ba0`. Inventory, hook correction and independent first-mission arms
-  complete.
+- **Status:** in progress beyond checkpoint `fdd5ba0`. Mipmap controls are implemented; elevated model LOD was
+  withdrawn after the hands-on safety failure.
 - **Evidence so far:** baseline 1x/1x installs no detail hooks; render-distance 2x logs `70 -> 140` far and
-  `-10..70 -> -20..140` fog with no LOD calls; LOD 4x logs `1.000 -> 4.000` with no far/fog calls. All arms exited 0
-  with exact guest-clock captures and matching input-event counts. The manifest validates 55 hook signatures.
+  `-10..70 -> -20..140` fog with no LOD calls. The original LOD entry wrapper restored its temporary value before
+  the generated continuation consumed it; the final setter hook now logs `1.436 -> 5.742` at 4x. Escape passes with
+  either render distance 2x or LOD 4x alone.
+- **Safety bound:** Escape with render distance 2x plus LOD 4x froze in the first hands-on run and 2/3 automated
+  repeats; another elevated pair reached a guest missing-target. LOD 4x then froze again in hands-on testing even at
+  view distance 1x despite passing the headless gate. `LodScale` is therefore clamped to 1x and labeled unavailable;
+  elevated render/fog distance remains independently selectable.
 - **Measurement limit:** a same-arm live repeat changed 80.377% of pixels (mean absolute RGB 13.2611), so live image
-  deltas are not accepted without a deterministic scene/state. Deterministic replay found anisotropy 0x/16x and
-  empty-directory texture replacement off/on byte-identical on the current trace; this is scene-specific.
-- **Next step:** add or identify a deterministic textured-angle/LOD scene, then run 1x/2x/4x campaign checkpoints
-  with packet/pool high-water and actor/streaming checks before narrowing the currently broad config ranges.
+  deltas are not accepted without a deterministic scene/state.
+- **Mipmaps:** the first-mission trace has 130 `TEX1` writes and no mip-enabled state (`MXL=0`). The docking trace has
+  148 mip-enabled states (`MXL=3`, K -2.8125..0); base-only versus PS2 mode changed one of 25 dense captures
+  (2.87% of that frame, aggregate mean 0.115%). Config schema 2 and the launcher expose `PS2 transitions` versus
+  `Highest detail (base mip only)`.
+- **Next step:** investigate character resource/streaming LOD with a deterministic in-game state before proposing a
+  replacement control. Continue independent render-distance and texture-detail campaign qualification.
 
 ### AUDIO-01 - Combat audio clipping
 
-- **Status:** in progress. Reproduced by the human baseline owner in two hands-on runs.
+- **Status:** in progress. Reproduced by the human baseline owner in the two baseline runs and again during the safe
+  GFX-03 Escape retest.
 - **Reproducer:** first mission during action-heavy firefights on speakers. Gunfire/effects and dialogue truncate by
   about 100 ms several times per fight.
 - **Next step:** correlate SPU2 production, host callback delivery and output queue depth around truncated events.

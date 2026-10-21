@@ -20,7 +20,7 @@
 
 namespace
 {
-    constexpr int kConfigSchemaVersion = 1;
+    constexpr int kConfigSchemaVersion = 2;
 
     std::string trim(std::string s)
     {
@@ -42,6 +42,8 @@ namespace
         {KzRenderer::D3D11, "d3d11"}, {KzRenderer::D3D12, "d3d12"}, {KzRenderer::Vulkan, "vulkan"}};
     constexpr EnumName<KzAspect> kAspects[] = {
         {KzAspect::Widescreen16x9, "16:9"}, {KzAspect::Classic4x3, "4:3"}, {KzAspect::Stretch, "stretch"}};
+    constexpr EnumName<KzMipmapMode> kMipmapModes[] = {
+        {KzMipmapMode::PS2, "ps2"}, {KzMipmapMode::HighestDetail, "highest"}};
     enum class AimMode
     {
         Hold,
@@ -383,6 +385,7 @@ namespace
         c.upscale = reader.integer("Graphics", "Upscale", c.upscale, 0, 8);
         c.aspect = reader.enumeration("Graphics", "Aspect", c.aspect, kAspects);
         c.anisotropy = reader.integer("Graphics", "Anisotropy", c.anisotropy, 0, 16);
+        c.mipmapMode = reader.enumeration("Graphics", "Mipmapping", c.mipmapMode, kMipmapModes);
         c.fxaa = reader.boolean("Graphics", "FXAA", c.fxaa);
         c.smaa = reader.boolean("Graphics", "SMAA", c.smaa);
         c.smaaThreshold = reader.number("Graphics", "SmaaThreshold", c.smaaThreshold, 0.05f, 0.5f);
@@ -395,7 +398,7 @@ namespace
         c.glow = reader.boolean("Graphics", "Glow", c.glow);
         c.lensBlur = reader.boolean("Graphics", "LensBlur", c.lensBlur);
         c.renderDistance = reader.number("Graphics", "RenderDistance", c.renderDistance, 1.0f, 16.0f);
-        c.lodScale = reader.number("Graphics", "LodScale", c.lodScale, 0.25f, 16.0f);
+        c.lodScale = reader.number("Graphics", "LodScale", c.lodScale, 1.0f, 1.0f);
         c.mouseSensitivity = reader.number("Input", "MouseSensitivity", c.mouseSensitivity, 0.05f, 20.0f);
         c.invertY = reader.boolean("Input", "InvertY", c.invertY);
         c.rawMouse = reader.boolean("Input", "RawMouse", c.rawMouse);
@@ -508,6 +511,7 @@ namespace
         writeExtras("Display", false);
         o << "\n[Graphics]\nRenderer=" << toName(kRenderers, c.renderer) << "\nUpscale=" << c.upscale
           << "\nAspect=" << toName(kAspects, c.aspect) << "\nAnisotropy=" << c.anisotropy
+          << "\nMipmapping=" << toName(kMipmapModes, c.mipmapMode)
           << "\nFXAA=" << (c.fxaa ? 1 : 0) << "\nSMAA=" << (c.smaa ? 1 : 0)
           << "\nSmaaThreshold=" << c.smaaThreshold
           << "\nTextureReplacement=" << (c.textureReplacement ? 1 : 0)
@@ -569,7 +573,8 @@ namespace
     {
         return a.windowMode == b.windowMode && a.width == b.width && a.height == b.height && a.vsync == b.vsync &&
                a.fpsLimit == b.fpsLimit && a.renderer == b.renderer && a.upscale == b.upscale &&
-               a.aspect == b.aspect && a.anisotropy == b.anisotropy && a.fxaa == b.fxaa && a.smaa == b.smaa &&
+               a.aspect == b.aspect && a.anisotropy == b.anisotropy && a.mipmapMode == b.mipmapMode &&
+               a.fxaa == b.fxaa && a.smaa == b.smaa &&
                a.smaaThreshold == b.smaaThreshold && a.textureReplacement == b.textureReplacement &&
                a.bilinear == b.bilinear && a.sharpScaling == b.sharpScaling && a.sharpen == b.sharpen &&
                a.noiseFilter == b.noiseFilter && a.motionBlur == b.motionBlur && a.glow == b.glow &&
@@ -669,9 +674,9 @@ int kzConfigSelfTest()
 
     const std::filesystem::path baselinePath = root / "baseline.ini";
     const std::string baseline =
-        "[Config]\nVersion=1\n\n"
+        "[Config]\nVersion=2\n\n"
         "[Display]\nWindowMode=borderless\nWidth=0\nHeight=0\nVSync=0\nFpsLimit=0\n\n"
-        "[Graphics]\nRenderer=d3d12\nUpscale=0\nAspect=16:9\nAnisotropy=16\nFXAA=0\nSMAA=1\n"
+        "[Graphics]\nRenderer=d3d12\nUpscale=0\nAspect=16:9\nAnisotropy=16\nMipmapping=ps2\nFXAA=0\nSMAA=1\n"
         "SmaaThreshold=0.2\nTextureReplacement=1\nBilinear=1\nSharpScaling=1\nSharpen=30\n"
         "NoiseFilter=0\nMotionBlur=0\nGlow=0\nLensBlur=0\nRenderDistance=1\nLodScale=1\n\n"
         "[Input]\nMouseSensitivity=1\nInvertY=0\nRawMouse=1\nAimMode=Hold\nStickDeadzone=0.15\n\n"
@@ -693,7 +698,7 @@ int kzConfigSelfTest()
     const ConfigLoadResult baselineRoundTrip = loadConfigFile(baselinePath);
     check(sameConfig(baselineLoad.config, baselineRoundTrip.config), "baseline effective round-trip");
     check(baselineBindings == kzInputBindingPairs(baselinePath), "baseline bindings round-trip");
-    check(readText(baselinePath).find("[Config]\nVersion=1") != std::string::npos,
+    check(readText(baselinePath).find("[Config]\nVersion=2") != std::string::npos,
           "baseline schema version round-trip");
     KzConfig editedBaseline = baselineRoundTrip.config;
     editedBaseline.vsync = true;
@@ -709,11 +714,23 @@ int kzConfigSelfTest()
     check(missing.document.diagnostics.empty(), "missing file diagnostics");
 
     const std::filesystem::path partialPath = root / "partial.ini";
-    check(writeText(partialPath, "[Config]\nVersion=1\n[Display]\nVSync=1\n"), "write partial fixture");
+    check(writeText(partialPath, "[Config]\nVersion=2\n[Display]\nVSync=1\n"), "write partial fixture");
     const ConfigLoadResult partial = loadConfigFile(partialPath);
     check(partial.config.vsync && partial.config.width == 0 && partial.config.renderer == KzRenderer::D3D11,
           "partial file defaults");
     check(partial.document.diagnostics.empty(), "partial file diagnostics");
+
+    const std::filesystem::path versionOnePath = root / "version-one.ini";
+    check(writeText(versionOnePath, "[Config]\nVersion=1\n[Graphics]\nAnisotropy=8\n"),
+          "write version-one fixture");
+    const ConfigLoadResult versionOne = loadConfigFile(versionOnePath);
+    check(versionOne.config.anisotropy == 8 && versionOne.config.mipmapMode == KzMipmapMode::PS2,
+          "version-one mipmapping default");
+    check(hasDiagnostic(versionOne, DiagnosticLevel::Warning, "Config", "Version", "1"),
+          "version-one migration diagnostic");
+    check(saveConfigFile(versionOnePath, versionOne.config, false), "save version-one fixture");
+    check(readText(versionOnePath).find("[Config]\nVersion=2") != std::string::npos,
+          "version-one schema migration");
 
     const std::filesystem::path legacyPath = root / "legacy.ini";
     check(writeText(legacyPath, "[Graphics]\nFXAA=1\nSharpen=0\n"), "write legacy fixture");
@@ -721,11 +738,11 @@ int kzConfigSelfTest()
     check(!legacy.config.fxaa && legacy.config.sharpen == 30, "legacy deterministic migration");
     check(hasDiagnostic(legacy, DiagnosticLevel::Warning, "Config", "Version"), "legacy migration diagnostic");
     check(saveConfigFile(legacyPath, legacy.config, false), "save migrated fixture");
-    check(readText(legacyPath).find("[Config]\nVersion=1") != std::string::npos, "legacy schema migration");
+    check(readText(legacyPath).find("[Config]\nVersion=2") != std::string::npos, "legacy schema migration");
 
     const std::filesystem::path unknownPath = root / "unknown.ini";
     check(writeText(unknownPath,
-                    "[Config]\nVersion=1\n[Graphics]\nFutureFilter=quincunx\n[Plugin]\nMode=custom\n"),
+                    "[Config]\nVersion=2\n[Graphics]\nFutureFilter=quincunx\n[Plugin]\nMode=custom\n"),
           "write unknown-key fixture");
     const ConfigLoadResult unknown = loadConfigFile(unknownPath);
     check(hasDiagnostic(unknown, DiagnosticLevel::Warning, "Graphics", "FutureFilter", "quincunx"),
@@ -738,7 +755,7 @@ int kzConfigSelfTest()
 
     const std::filesystem::path duplicatePath = root / "duplicate.ini";
     check(writeText(duplicatePath,
-                    "[Config]\nVersion=1\n[Display]\nFpsLimit=60\nFpsLimit=144\n"),
+                    "[Config]\nVersion=2\n[Display]\nFpsLimit=60\nFpsLimit=144\n"),
           "write duplicate-key fixture");
     const ConfigLoadResult duplicate = loadConfigFile(duplicatePath);
     check(duplicate.config.fpsLimit == 144, "duplicate last value");
@@ -747,7 +764,7 @@ int kzConfigSelfTest()
 
     const std::filesystem::path malformedPath = root / "malformed.ini";
     check(writeText(malformedPath,
-                    "[Config]\nVersion=1\n"
+                    "[Config]\nVersion=2\n"
                     "[Display]\nWindowMode=hover\nWidth=wide\nVSync=maybe\n"
                     "[Graphics]\nRenderer=metal\nRenderDistance=near\nUpscale=99\n"
                     "[Testing]\nDefaultProfile=bad/name\n"),
@@ -770,10 +787,10 @@ int kzConfigSelfTest()
           "range diagnostic");
 
     const std::filesystem::path futurePath = root / "future.ini";
-    const std::string future = "[Config]\nVersion=2\n[Paths]\nISO=X:\\BYOD\\Future.iso\n";
+    const std::string future = "[Config]\nVersion=3\n[Paths]\nISO=X:\\BYOD\\Future.iso\n";
     check(writeText(futurePath, future), "write future-version fixture");
     const ConfigLoadResult futureLoad = loadConfigFile(futurePath);
-    check(hasDiagnostic(futureLoad, DiagnosticLevel::Error, "Config", "Version", "2"),
+    check(hasDiagnostic(futureLoad, DiagnosticLevel::Error, "Config", "Version", "3"),
           "future-version diagnostic");
     check(!saveConfigFile(futurePath, futureLoad.config, false), "future-version save refusal");
     check(readText(futurePath) == future, "future-version file unchanged");

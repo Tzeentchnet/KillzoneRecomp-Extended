@@ -9,6 +9,7 @@ namespace kz_hook
     inline constexpr uint32_t FilePoll = 0x0014DAD0u;
     inline constexpr uint32_t TimelineKick = 0x00150090u;
     inline constexpr uint32_t FogParams = 0x00151180u;
+    inline constexpr uint32_t LodScaleApply = 0x00151E64u;
     inline constexpr uint32_t TimelineKickCheck = 0x00151FC8u;
     inline constexpr uint32_t TimelineVblank = 0x00152018u;
     inline constexpr uint32_t UploadRecords = 0x0015A268u;
@@ -28,7 +29,6 @@ namespace kz_hook
     inline constexpr uint32_t SetLevelFile = 0x001B89A8u;
     inline constexpr uint32_t TimelineFrameLimiter = 0x001BFF10u;
     inline constexpr uint32_t FarPlaneApply = 0x001C1A2Cu;
-    inline constexpr uint32_t LodScale = 0x001C2168u;
     inline constexpr uint32_t ProfileMaxDifficulty = 0x001D7118u;
     inline constexpr uint32_t ProfileLevelUnlocked = 0x001D7190u;
     inline constexpr uint32_t ProfileAnimaticUnlocked = 0x001D7258u;

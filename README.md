@@ -75,14 +75,19 @@ Launcher-managed `killzone.ini` files use a file schema version independent of t
 
 ```ini
 [Config]
-Version=1
+Version=2
 ```
 
 Files without `[Config] Version` are treated as legacy version 0 and migrate deterministically on the next launcher
-save. Booleans, integers, floats and enums are parsed strictly; rejected values, range clamps, duplicate keys and
+save. Version 1 files default the new `Mipmapping` setting to `ps2` and migrate on save. Booleans, integers, floats
+and enums are parsed strictly; rejected values, range clamps, duplicate keys and
 unknown settings are reported in `killzone.log` with their section and key. The last duplicate value is effective.
 Unknown settings are preserved, and launcher saves retain the disc path and all `[Bindings]` entries. A build refuses
 to overwrite a file whose schema version is newer than it supports.
+
+`[Graphics] Mipmapping=ps2` preserves authored mip transitions. `Mipmapping=highest` disables mip selection and
+always samples the base level. The latter only changes draws that actually enable GS mipmapping; many Killzone scenes
+use `MXL=0` and are therefore identical in both modes.
 
 `[Testing] DefaultProfile=Shooterman` controls only the profile typed by Start in when the selected testing card is
 isolated and empty. It never renames an existing profile and is ignored for the normal memory card. Automation may

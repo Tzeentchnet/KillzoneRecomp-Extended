@@ -173,6 +173,15 @@ namespace
             *scaleContract = scale;
         k.textureFiltering = c.bilinear ? KzgsTextureFilter::PS2 : KzgsTextureFilter::Nearest;
         k.anisotropy = c.anisotropy;
+        k.mipmapMode =
+            c.mipmapMode == KzMipmapMode::HighestDetail ? KzgsMipmapMode::BaseOnly : KzgsMipmapMode::PS2;
+        if (const char *mode = std::getenv("KZ_MIPMAP_MODE"); mode && *mode)
+        {
+            if (_stricmp(mode, "base") == 0 || _stricmp(mode, "highest") == 0)
+                k.mipmapMode = KzgsMipmapMode::BaseOnly;
+            else if (_stricmp(mode, "ps2") != 0 && _stricmp(mode, "original") != 0)
+                std::fprintf(stderr, "[kz] KZ_MIPMAP_MODE=%s is invalid; using configured setting\n", mode);
+        }
         k.fxaa = c.fxaa;
         k.smaa = c.smaa;
         kzgsSetSmaaThreshold(c.smaaThreshold);
@@ -332,7 +341,8 @@ namespace
             "\"output_resolution\":{\"width\":%d,\"height\":%d},"
             "\"pipeline\":[\"gs_merge\",\"aa\",\"sharp_prescale_if_upscaling\","
             "\"crop_aspect\",\"cas\",\"present_filter\"],"
-            "\"aspect\":\"%s\",\"anisotropy\":%d,\"render_distance\":%.3f,\"lod_scale\":%.3f,"
+            "\"aspect\":\"%s\",\"anisotropy\":%d,\"mipmap_mode\":\"%s\","
+            "\"render_distance\":%.3f,\"lod_scale\":%.3f,"
             "\"aa\":\"%s\",\"fxaa\":%s,\"smaa_requested\":%s,\"smaa_available\":%s,"
             "\"smaa_effective\":%s,\"texture_replacement\":%s,"
             "\"bilinear_present\":%s,\"sharp_present\":%s,\"cas_sharpness\":%d,\"vsync\":%s,"
@@ -344,7 +354,8 @@ namespace
             renderScaleModeName(s.activeScale.mode), s.activeScale.configuredScale, s.activeScale.effectiveScale,
             kReferenceRenderHeight, kReferenceRenderHeight * k.upscale,
             s.windowWidth, s.windowHeight, aspectName(k.aspect),
-            k.anisotropy, detail.renderDistance, detail.lodScale,
+            k.anisotropy, k.mipmapMode == KzgsMipmapMode::BaseOnly ? "base_only" : "ps2",
+            detail.renderDistance, detail.lodScale,
             effectiveAaName(k), effectiveFxaa(k) ? "true" : "false",
             k.smaa ? "true" : "false", kzgsSmaaAvailable() ? "true" : "false",
             kzgsSmaaEffective() ? "true" : "false",
@@ -1001,6 +1012,9 @@ bool kzGsAttach(
               << ", scaling=" << scalingName(kc)
               << ", crop=" << kc.crop[0] << ',' << kc.crop[1] << ',' << kc.crop[2] << ',' << kc.crop[3]
               << (kc.smaa && kc.renderer != KzgsRenderer::D3D11 ? " (SMAA requested but unavailable)" : "")
+              << std::endl;
+    std::cout << "[kz] texture mipmapping: "
+              << (kc.mipmapMode == KzgsMipmapMode::BaseOnly ? "base level only (experimental)" : "PS2 transitions")
               << std::endl;
     return true;
 }

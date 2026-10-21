@@ -31,9 +31,9 @@
 //            was found. Recompiled function wrappers cannot inspect those results after a guest return. The hooks
 //            therefore scale the finalized consumers: far plane at 0x1C1A2C and fog start/end at 0x151180, gated to
 //            the three RenderZone call sites.
-//   0x1C2168 LOD scale from the camera's field of view (f12 = fov, a0 = game object): ctx+0x1AC = obj[0x1C] *
-//            tan(refFov/2) / tan(fov/2), the divisor of every distance the LOD selectors compare with the LOD tables
-//            (static: 0x3F4E70, skinned: 0x3F4F10, multi-mesh: 0x3EFAD8 ...). The hook scales obj[0x1C] around the call.
+//   0x1C2168 computes the camera/FOV LOD scale and calls setter 0x151E60. The setter's 0x151E64 continuation stores
+//            f12 to render context +0x1AC, the divisor used by static, skinned and multi-mesh LOD selectors
+//            (0x3F4E70, 0x3F4F10, 0x3EFAD8 ...). The hook scales f12 only for return address 0x1C21D4.
 // The colour grade (0x167050 + the palette composite) and the film grain (the noise texture strips at the end of
 // 0x1EF640) are not touched.
 namespace
@@ -45,13 +45,13 @@ namespace
     constexpr uint32_t kNoiseStrengthOffset = 0x284u;  // film grain alpha; the pass is skipped below 2/255
     constexpr uint32_t kFarPlaneApply = kz_hook::FarPlaneApply;
     constexpr uint32_t kFogParams = kz_hook::FogParams;
-    constexpr uint32_t kLodScale = kz_hook::LodScale;
+    constexpr uint32_t kLodScaleApply = kz_hook::LodScaleApply;
     constexpr uint32_t kRamMask = 0x01FFFFFFu;
     constexpr uint32_t kRamSize = 0x02000000u;
     constexpr float kRenderDistanceMin = 1.0f;
     constexpr float kRenderDistanceMax = 16.0f;
-    constexpr float kLodScaleMin = 0.25f;
-    constexpr float kLodScaleMax = 16.0f;
+    constexpr float kLodScaleMin = 1.0f;
+    constexpr float kLodScaleMax = 1.0f;
 
     bool g_motionBlur = false;
     bool g_glow = false;
@@ -65,7 +65,7 @@ namespace
     PS2Runtime::RecompiledFunction g_origPostRender = nullptr;
     PS2Runtime::RecompiledFunction g_origFarPlaneApply = nullptr;
     PS2Runtime::RecompiledFunction g_origFogParams = nullptr;
-    PS2Runtime::RecompiledFunction g_origLodScale = nullptr;
+    PS2Runtime::RecompiledFunction g_origLodScaleApply = nullptr;
     float g_renderDistance = 1.0f;
     float g_lodScale = 1.0f;
     std::atomic<int> g_farPlaneCalls{0}, g_fogCalls{0}, g_lodCalls{0};
@@ -204,33 +204,30 @@ namespace
         g_origFogParams(rdram, ctx, rt);
     }
 
-    void lodScale(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
+    void lodScaleApply(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
     {
-        const uint32_t base = getRegU32(ctx, 4);
-        const bool entry = entering(ctx, kLodScale) &&
-                           base >= 0x00100000u && base <= kRamSize - 0x20u;
-        const uint32_t obj = base + 0x1Cu;
-        float saved = 0.0f;
+        const bool atEntry = entering(ctx, kLodScaleApply);
+        const bool entry = atEntry && getRegU32(ctx, 31) == 0x001C21D4u;
+        const float base = ctx->f[12];
+        const float previous = ctx->f[0];
+        float scaled = base;
+        if (entry && scaledFinite(base, g_lodScale, scaled))
+        {
+            ctx->f[12] = scaled;
+        }
+        else if (entry && g_invalidLodValues.fetch_add(1) == 0)
+            std::fprintf(stderr, "[kz] view distance: ignored non-finite LOD scale input\n");
+
+        g_origLodScaleApply(rdram, ctx, rt);
         if (entry)
         {
-            saved = rdF(rdram, obj);
-            float scaled = 0.0f;
-            if (scaledFinite(saved, g_lodScale, scaled))
+            const int n = ++g_lodCalls;
+            if (g_log && (n == 1 || n % 600 == 0))
             {
-                wrF(rdram, obj, scaled);
-                const int n = ++g_lodCalls;
-                if (g_log && (n == 1 || n % 600 == 0))
-                    std::printf("[kz-post] lod scale call %d: base %.3f -> %.3f (x%.2f)\n",
-                                n, saved, scaled, g_lodScale);
-            }
-            else if (g_invalidLodValues.fetch_add(1) == 0)
-            {
-                std::fprintf(stderr, "[kz] view distance: ignored non-finite LOD scale input\n");
+                std::printf("[kz-post] lod scale call %d: previous %.3f, base %.3f -> %.3f (x%.2f)\n",
+                            n, previous, base, scaled, g_lodScale);
             }
         }
-        g_origLodScale(rdram, ctx, rt);
-        if (entry)
-            wrF(rdram, obj, saved);
     }
 
     // Film grain off: the grain strips at the end of the post-process render are drawn only when the object's noise
@@ -279,6 +276,18 @@ namespace
                          name, parsed, minimum, maximum, result);
         return result;
     }
+
+    KzPostDetailSettings enforceDetailSafety(KzPostDetailSettings settings, bool reportDiagnostics)
+    {
+        if (settings.renderDistance > 1.0f && settings.lodScale > 1.0f)
+        {
+            if (reportDiagnostics)
+                std::fprintf(stderr,
+                             "[kz] elevated RenderDistance and LodScale are unsafe together; using LodScale=1.0\n");
+            settings.lodScale = 1.0f;
+        }
+        return settings;
+    }
 }
 
 KzPostDetailSettings kzPostResolveDetailSettings(const KzConfig &config, bool reportDiagnostics)
@@ -290,7 +299,7 @@ KzPostDetailSettings kzPostResolveDetailSettings(const KzConfig &config, bool re
     settings.lodScale =
         resolveDetailValue("KZ_LOD_SCALE", std::getenv("KZ_LOD_SCALE"), config.lodScale,
                            kLodScaleMin, kLodScaleMax, reportDiagnostics);
-    return settings;
+    return enforceDetailSafety(settings, reportDiagnostics);
 }
 
 void kzPostInstall(PS2Runtime &runtime)
@@ -320,7 +329,7 @@ void kzPostInstall(PS2Runtime &runtime)
     if (g_lodScale != 1.0f)
     {
         viewHooked = true;
-        viewOk = hook(runtime, kLodScale, &lodScale, g_origLodScale) && viewOk;
+        viewOk = hook(runtime, kLodScaleApply, &lodScaleApply, g_origLodScaleApply) && viewOk;
     }
     std::printf("[kz] view distance: render x%.2f, LOD x%.2f (%s)\n", g_renderDistance, g_lodScale,
                 !viewHooked ? "original; no hooks" : viewOk ? "selected hooks installed" : "HOOK FAILED");
@@ -365,6 +374,9 @@ int kzPostSelfTest()
     check(scaledFinite(-10.0f, 4.0f, scaled) && scaled == -40.0f,
           "signed fog transform");
     check(!scaledFinite(INFINITY, 4.0f, scaled), "non-finite detail rejection");
+    const KzPostDetailSettings safeDetail = enforceDetailSafety({2.0f, 4.0f}, false);
+    check(safeDetail.renderDistance == 2.0f && safeDetail.lodScale == 1.0f,
+          "unsafe combined detail controls are rejected");
     check(isRenderZoneFogCall(0x001C1C30u) && isRenderZoneFogCall(0x001C1D08u) &&
               isRenderZoneFogCall(0x001EE260u) && !isRenderZoneFogCall(0x00151188u),
           "RenderZone fog call-site filter");

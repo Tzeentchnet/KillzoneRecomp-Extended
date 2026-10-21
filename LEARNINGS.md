@@ -98,6 +98,16 @@ few lines with a pointer to the evidence.
   `FUN_00339C38` and immediately read zero output because the generated owner returned after dispatching continuation
   `0x339D30`. Hook finalized consumers instead: GFX-03 uses `0x1C1A2C` for far plane and call-site-gated `0x151180`
   for fog. Require logs with real source/transformed values before accepting any output hook.
+- **LOD's final context is in PS2 scratchpad.** Entry `0x1C2168` and continuation `0x1C21B0` both precede the final
+  mutation; setter continuation `0x151E64` receives the computed value in f12 and writes context `0x70003A00+0x1AC`.
+  Do not apply RDRAM pointer bounds to scratchpad addresses. At 4x, require a logged `1.436 -> 5.742` setter value.
+- **Qualify elevated graphics controls together as well as alone.** Escape passed render distance 2x and LOD 4x
+  independently in headless runs, but 2x/4x froze 2/3 runs and another mixed arm produced a guest missing-target.
+  More importantly, the hands-on LOD-only retest still froze with buzzing audio. Interactive failure overrides the
+  headless pass: elevated LOD is now unavailable and forced to 1x until a different bounded mechanism is proven.
+- **Check TEX1 before blaming mipmaps.** The first gameplay trace had 130 TEX1 writes with MXL=0, so every mip mode
+  was necessarily identical. A docking trace with 148 MXL=3 states changed only one of 25 dense frames in base-only
+  mode. Record MXL/MMIN/K counts and exact affected frames before adding or evaluating a mip control.
 - **Equal guest-vsync IDs do not guarantee equal gameplay scenes.** Cloned-card GFX-03 baseline repeats at identical
   frame IDs still changed 80.377% of pixels because front-end/loading/tutorial progress is host-timing-sensitive.
   Measure same-arm variance and use a deterministic state/trace before attributing live pixel deltas to a setting.

@@ -211,6 +211,13 @@
       "signature_sha256": "12e981f8729cb19a88a408d348a0929008285e093518aa8b9811dafa5f9fcca4"
     },
     {
+      "symbol": "LodScaleApply",
+      "kind": "hook",
+      "address": "0x00151E64",
+      "signature_size": 16,
+      "signature_sha256": "a73e8d6c4582e37c629703472a61e2359706b52e164e6eb7166e1042fd95fff1"
+    },
+    {
       "symbol": "TimelineKickCheck",
       "kind": "debug_hook",
       "address": "0x00151FC8",
@@ -342,13 +349,6 @@
       "address": "0x001C1A2C",
       "signature_size": 16,
       "signature_sha256": "294cd0764897d092872af984c1e300c1b6dfad44364fedc192c98f20ecff7fef"
-    },
-    {
-      "symbol": "LodScale",
-      "kind": "hook",
-      "address": "0x001C2168",
-      "signature_size": 16,
-      "signature_sha256": "6bed1dadb699b982ffc8cce4834cebd4b2b212cebc814b0d1418a51d72476943"
     },
     {
       "symbol": "ProfileMaxDifficulty",
