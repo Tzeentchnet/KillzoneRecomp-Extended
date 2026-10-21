@@ -13,7 +13,7 @@ risk. Do not edit an entry's evidence after the fact. If a later run disagrees, 
 
 ## BASE-01 - Windows enhancement baseline
 
-- **Completed:** 2026-10-20; parent commit pending.
+- **Completed:** 2026-10-20 in `943d3fc`.
 - **Machine:** Windows 11 x64; clang-cl D3D12 on NVIDIA GeForce RTX 5070, driver `32.0.16.1742`; borderless
   high-refresh display; mouse/keyboard, controller and speakers.
 - **Configuration:** all testing options off, normal memory card, D3D12, automatic internal scale, original
@@ -30,7 +30,7 @@ risk. Do not edit an entry's evidence after the fact. If a later run disagrees, 
 
 ## TEST-01 - Graphics and weapon measurement harness
 
-- **Completed:** 2026-10-20; parent commit pending.
+- **Completed:** 2026-10-20 in `943d3fc`.
 - **Contract:** every `KZ_SHOT_DIR` run writes `capture.jsonl` schema 1. The path-free run record contains guest-vsync
   clock/rate, renderer and adapter identity, effective graphics configuration and effective testing/card mode.
   Frame records link each internal, presented or swap-chain capture to `frame_id == guest_vsync`, guest time and
@@ -57,7 +57,7 @@ risk. Do not edit an entry's evidence after the fact. If a later run disagrees, 
 
 ## GFX-01 - D3D12 presentation and post-process parity
 
-- **Completed:** 2026-10-20; parent commit pending.
+- **Completed:** 2026-10-20 in `943d3fc`.
 - **Truthful capability policy:** SMAA remains a persisted D3D11 preference but is disabled and labeled unavailable
   in the launcher on D3D12/Vulkan. D3D12 does not silently substitute FXAA. Runtime logs and TEST-01 metadata report
   effective AA (`none` on the accepted baseline), SMAA availability/effectiveness, CAS, final scaling and crop.
@@ -82,7 +82,7 @@ risk. Do not edit an entry's evidence after the fact. If a later run disagrees, 
 
 ## GFX-02 - Explicit internal-render/output contract
 
-- **Completed:** 2026-10-20; parent commit pending.
+- **Completed:** 2026-10-20 in `943d3fc`.
 - **Compatibility:** no INI schema or default changed. `Upscale=0` still selects the smallest integer scale whose
   448-line target covers the output height, clamped to 1x-8x, when the renderer starts or settings are applied.
   Explicit `Upscale=1..8` remains fixed across output resizes; zero-size minimize retains the last valid output.
