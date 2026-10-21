@@ -92,3 +92,4 @@ int kzConfigSelfTest();
 
 // Process-wide settings (loaded once in main; the launcher may replace them before boot).
 KzConfig &kzConfig();
+bool kzRendererSupportsSmaa(KzRenderer renderer);

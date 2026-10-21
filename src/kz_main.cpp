@@ -130,6 +130,7 @@ namespace
     int runSelfTest()
     {
         int failures = kzConfigSelfTest();
+        failures += kzGsSelfTest();
         kzInputInit(std::filesystem::temp_directory_path() / "kz_missing.ini");
         failures += kzInputSelfTest();
         failures += kzTestingSelfTest();
@@ -311,7 +312,7 @@ int main(int argc, char *argv[])
         const bool cpuGs = std::getenv("KZ_GS") && std::strcmp(std::getenv("KZ_GS"), "cpu") == 0; // debug: software GS
         if (cpuGs)
             std::cout << "[kz] KZ_GS=cpu: using the runtime's software GS (PS2X_HEADLESS_SHOTS for frames)" << std::endl;
-        else if (!kzGsAttach(runtime, nativeWindow, winH, cfg, &gsError))
+        else if (!kzGsAttach(runtime, nativeWindow, winW, winH, cfg, &gsError))
         {
             const std::string msg = "Could not start the renderer: " + gsError;
             std::cerr << "[kz] " << msg << std::endl;

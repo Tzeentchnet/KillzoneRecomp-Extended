@@ -636,6 +636,11 @@ bool kzSaveConfig(const std::filesystem::path &path, const KzConfig &c)
     return saveConfigFile(path, c, true);
 }
 
+bool kzRendererSupportsSmaa(KzRenderer renderer)
+{
+    return renderer == KzRenderer::D3D11;
+}
+
 int kzConfigSelfTest()
 {
     int failures = 0;
@@ -646,6 +651,10 @@ int kzConfigSelfTest()
             ++failures;
         }
     };
+    check(kzRendererSupportsSmaa(KzRenderer::D3D11) &&
+              !kzRendererSupportsSmaa(KzRenderer::D3D12) &&
+              !kzRendererSupportsSmaa(KzRenderer::Vulkan),
+          "SMAA renderer capability");
 
     const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
     const std::filesystem::path root =

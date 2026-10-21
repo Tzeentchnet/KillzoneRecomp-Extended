@@ -82,3 +82,15 @@ few lines with a pointer to the evidence.
 - **Run `ps2x_tests.exe` from `ext/PS2Recomp`.** Some code-generator tests read source fixtures relative to that
   directory. Use `PS2X_TEST_FILTER=<substring>` for focused diagnosis. The accepted broad result is 439/439, not a
   root-directory run with unrelated fixture-path failures.
+- **Align captures on guest events, not wall time.** TEST-01 records guest-vsync frame IDs and fire-action edges in
+  `capture.jsonl`. A scripted pulse can be absent while the game is not polling input; the comparer aligns nearest
+  matching events and reports unmatched events instead of forcing ordinal matches or hiding them.
+- **CAS must be measured at the swap chain.** PCSX2's presented-size snapshot includes aspect/crop/scaling but occurs
+  before final Present-time CAS. GFX-01's D3D12 `EndPresent` hook captures the current back buffer before Present;
+  internal/presented snapshots are not valid evidence that CAS is active or inactive.
+- **Do not infer exact GS width from the scale selector.** `Upscale=0` chooses a whole multiplier from the 448-line
+  output rule, but exact width comes from the active GS display: Killzone measured 512x448 while the synthetic kzgs
+  scene is 640x448. Use completed-frame `kzgsGetResolutionInfo` telemetry, not `640 * scale`.
+- **Large hidden overlapped windows are work-area-clamped.** The first 1080p/1440p/4K kzgs matrix silently became
+  1920x941/2297x941. Switch the test HWND to a borderless popup for unconstrained dimensions, assert the physical
+  swap-chain size, then restore the ordinary style before minimize/restore coverage.

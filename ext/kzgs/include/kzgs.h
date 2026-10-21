@@ -101,6 +101,14 @@ struct KzgsConfig
 	bool debugDevice = false;                          // D3D/Vulkan validation layer
 };
 
+struct KzgsResolutionInfo
+{
+	int renderWidth = 0;                               // GS merged output before presentation crop/aspect/scale
+	int renderHeight = 0;
+	int outputWidth = 0;                               // current physical swap-chain output
+	int outputHeight = 0;
+};
+
 // Creates the GS thread and render device on `window`, which must outlive kzgsClose. An empty handle is surfaceless.
 // The current renderer backends accept Win32 windows and reject other native-window types explicitly.
 // `privRegs` is the caller's 0x2000-byte privileged register block (see above); it is read at open and at every
@@ -135,14 +143,19 @@ void kzgsReset();
 // Window client area changed.
 void kzgsResize(int width, int height);
 
+// Returns the most recent completed frame's exact render and output dimensions without blocking the GS thread.
+// False until the first frame has completed or after the renderer closes.
+bool kzgsGetResolutionInfo(KzgsResolutionInfo& out);
+
 // Applies new settings (renderer switches recreate the device on the same window).
 void kzgsUpdateConfig(const KzgsConfig& cfg);
 
 // Blocks until the GS thread has processed everything queued so far.
 void kzgsSync();
 
-// Reads back the last output frame (display circuits merged, before scaling to the window), at internal resolution:
-// e.g. 640x448 at upscale 1, 1280x896 at upscale 2. RGBA8, top-down, w*h*4 bytes. Blocks (drains the queue first).
+// Reads back the last output frame (display circuits merged, before scaling to the window), at its exact internal
+// resolution. Dimensions derive from the active GS display (for example, a 640x448 display becomes 1280x896 at 2x).
+// RGBA8, top-down, w*h*4 bytes. Blocks (drains the queue first).
 // With presentWidth/presentHeight > 0 the image is instead scaled and aspect-corrected the way it is presented in a
 // window of that size (letterboxed with black to exactly presentWidth x presentHeight).
 bool kzgsReadback(std::vector<uint8_t>& rgba, int& width, int& height, int presentWidth = 0, int presentHeight = 0);
@@ -160,6 +173,11 @@ void kzgsSetTraceHook(KzgsTraceFn fn);
 
 // SMAA edge-detection luma threshold (0.02 .. 0.5, default 0.1 = the HIGH preset); applied the next time the SMAA shaders are built.
 void kzgsSetSmaaThreshold(float threshold);
+bool kzgsSmaaAvailable();
+bool kzgsSmaaEffective();
+
+// Test/tooling only: forces the active D3D12 device through PCSX2's normal device-loss recovery path.
+bool kzgsDebugInjectDeviceLoss();
 
 // SMAA luma edge threshold (0.02..0.5, default 0.1 = SMAA's HIGH preset). Higher = only strong edges are smoothed and texture detail is kept;
 // the shaders are rebuilt on the next frame when it changes. Direct3D 11 only. See docs/findings.md ("Menu jitter and blur").

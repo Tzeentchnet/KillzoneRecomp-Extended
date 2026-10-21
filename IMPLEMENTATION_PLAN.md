@@ -93,7 +93,7 @@ recorded here as the comparison baseline. The ISO path is intentionally excluded
 
 | Section | Baseline |
 |---|---|
-| `Display` | `WindowMode=borderless`, `Width=0`, `Height=0`, `VSync=0`, `FpsLimit=0` |
+| `Display` | `WindowMode=borderless`, `Width=0`, `Height=0`, `VSync=1`, `FpsLimit=0` |
 | `Graphics` renderer/output | `Renderer=d3d12`, `Upscale=0`, `Aspect=16:9` |
 | `Graphics` filtering/AA | `Anisotropy=16`, `FXAA=0`, `SMAA=1`, `SmaaThreshold=0.2`, `Bilinear=1` |
 | `Graphics` presentation | `SharpScaling=1`, `Sharpen=30`, `TextureReplacement=1` |
@@ -120,13 +120,14 @@ Baseline rules:
 
 | Area | Starting point |
 |---|---|
-| Rendering | D3D12 renders the game on the current NVIDIA machine; D3D11 can produce a black image on that hardware. |
+| Rendering | D3D11 and D3D12 render on the current NVIDIA machine. D3D11's historical all-zero output no longer reproduces on the pinned stack. |
 | Image quality | Integer internal scaling up to 8x, anisotropy, FXAA, D3D11-only SMAA, sharp scaling, CAS sharpening and texture replacement already exist. |
 | Scene range | Render-distance and root-LOD multipliers already exist in [`src/kz_post.cpp`](src/kz_post.cpp). Their safe limits and campaign effects are not fully qualified. |
 | Temporal inputs | The renderer does not yet provide a proven color/depth/motion/exposure/reactive/UI/history contract suitable for DLSS. |
 | Testing profile | PROFILE-01 passed: the isolated empty-card workflow creates exact `Shooterman` through the native UI, native chapter 11/Hard selection works without unlock hooks, and populated/normal card hashes remain unchanged. |
 | Weapon tuning | No recoil or accuracy symbol, field or hook is currently approved. Existing references to weapon objects and spread UI are discovery leads only. |
 | Stability | WIN-06, the intermittent chapter 11 crash/corruption, also reproduces after the full intro. The testing shortcut is not the common cause. |
+| Audio | First-mission firefights can truncate effects and dialogue by roughly 100 ms several times per fight; AUDIO-01 tracks the baseline defect. |
 
 WIN-06 remains a release blocker. Graphics capture and read-only weapon research may proceed in parallel, but no
 campaign-wide quality or balance conclusion is valid while the repeated-load gate is unstable.
@@ -248,6 +249,20 @@ parallel after BASE-01, CFG-01 and TEST-01.
 - **Acceptance:** Profile creation, first-mission gameplay, save/load, return to front end, high-refresh timing, mouse
   aim, controller input and clean shutdown pass with all testing options off.
 - **Stop:** Any regression becomes a separately reproduced baseline defect before enhancement work relies on it.
+- **Status (2026-10-20):** Complete on Windows. The hands-on D3D12 run passed profile/gameplay, Continue/load,
+  front-end return, high-refresh mouse timing, controller input and exit-code-0 shutdown with all testing options off.
+  VSync-on is the selected baseline after eliminating tearing seen with VSync off.
+
+#### AUDIO-01 - Reproduce combat audio clipping
+
+- **Depends on:** BASE-01
+- **Objective:** Reproduce and localize short audio truncation during action-heavy gameplay.
+- **Reproducer:** First mission, action-heavy firefights, speakers; gunfire/effects and dialogue end roughly 100 ms
+  early several times per fight.
+- **Acceptance:** A deterministic capture identifies whether the loss begins in guest/SPU2 production, the host
+  callback queue or the output device, and the corrected path completes a combat soak without truncated events.
+- **Stop:** Do not hide clipping with global buffering or latency increases without measuring event delivery and
+  callback timing.
 
 #### STAB-01 - Resolve WIN-06 repeated-load corruption
 
@@ -266,6 +281,9 @@ parallel after BASE-01, CFG-01 and TEST-01.
   shot events and protected-content-safe summaries.
 - **Acceptance:** Repeated baseline runs can be aligned by frame/event and compared without relying on filenames or
   wall-clock timing alone.
+- **Status (2026-10-20):** Complete. `capture.jsonl` schema 1 records effective renderer/testing configuration,
+  guest-vsync frame IDs, capture points and fire-action transitions. The verifier produces path-free hash/count
+  summaries and aligns repeated runs by event/frame IDs.
 
 ### Graphics lane
 
@@ -281,6 +299,9 @@ parallel after BASE-01, CFG-01 and TEST-01.
 - **Acceptance:** Synthetic golden tests and the BYOD scene set prove each toggle independently; disabled toggles are
   baseline-identical; no launcher control reports an effect that the selected backend ignores.
 - **Stop:** Do not stack sharpening or AA passes whose order and color space are unknown.
+- **Status (2026-10-20):** Complete. D3D12 labels SMAA unavailable and does not substitute FXAA. Runtime logs and
+  capture metadata report the effective AA/scaling/CAS/crop chain. Deterministic final-back-buffer A/Bs and the
+  D3D12 resize/minimize/device-loss/renderer-restart integration test pass.
 
 #### GFX-02 - Separate internal render scale from output scale
 
@@ -292,6 +313,10 @@ parallel after BASE-01, CFG-01 and TEST-01.
 - **Acceptance:** 720p, 1080p, 1440p and 4K output matrices have exact effective-resolution diagnostics and stable
   resize/history behavior; legacy INIs produce their previous effective integer scale.
 - **Stop:** No temporal upscaler work while render and output coordinates are ambiguous.
+- **Status (2026-10-20):** Complete. `Upscale=0` retains the legacy whole-scale rule based on 448-line output
+  coverage; fixed scales and output resize are independent. Runtime metadata reports the scale decision, declared
+  pipeline and completed-frame render/output dimensions. Product runs at 720p, 1080p, 1440p and 4K exited 0 with
+  exact outputs and effective 2x/3x/4x/5x Killzone render sizes; the hardware fixed-2x resize matrix also passes.
 
 #### GFX-03 - Qualify render distance, LOD and texture clarity
 
@@ -431,6 +456,8 @@ parallel after BASE-01, CFG-01 and TEST-01.
 | **M3 - Modern-rendering decision** | GFX-04 and DLSS-01 produce signed go/no-go decisions; no DLSS product claim is made. |
 | **M4 - Enhancement release candidate** | STAB-01, GAME-01 and the selected display follow-up pass; release gate evidence is complete. |
 
+M0 and M1 passed on 2026-10-20. STAB-01 remains explicitly deferred and blocking for M4/release.
+
 Parallel order after M0:
 
 ```text
@@ -505,7 +532,7 @@ This plan records the requested direction but does not substitute for named rele
 | Role | Status |
 |---|---|
 | Product direction | Graphics/gameplay focus requested 2026-10-20 |
-| Windows/runtime owner | Pending M0 evidence; STAB-01 investigation deferred 2026-10-20 without waiving its release gate |
+| Windows/runtime owner | M0 and M1 accepted 2026-10-20; STAB-01 remains deferred and release-blocking |
 | Graphics owner | Pending GFX-04 and DLSS-01 |
 | Gameplay owner | Pending WPN-01 evidence |
 | Test/release owner | Pending hardware and campaign matrices |

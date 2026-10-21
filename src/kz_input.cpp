@@ -1,12 +1,14 @@
 #include "kz_input.h"
 
 #include "kz_config.h"
+#include "kz_gs.h"
 
 #include <SDL3/SDL.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -442,6 +444,7 @@ namespace
         applyScript(pressed, lx, ly, rx, ry);
         if (s.r2 > 0.5f) pressed |= KZ_PAD_R2;
         if (s.l2 > 0.5f) pressed |= KZ_PAD_L2;
+        kzGsRecordFireButtonValue((pressed & KZ_PAD_R1) != 0u ? 1.0f : 0.0f);
 
         std::memset(data, 0, 32);
         data[0] = 0x00;
@@ -469,6 +472,8 @@ void kzInputInit(const std::filesystem::path &bindingsIni)
     State &s = state();
     std::lock_guard<std::mutex> lock(s.mutex);
     s.bindings = loadBindings(bindingsIni);
+    if (std::getenv("KZ_INPUT_SCRIPT"))
+        std::printf("[kz-input] loaded %zu scripted event(s)\n", script().size());
 }
 
 void kzInputShutdown()

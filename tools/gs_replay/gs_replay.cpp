@@ -1,6 +1,8 @@
 // Replays a GS trace recorded by the game (KZ_GS_TRACE, see src/kz_gs.cpp) through kzgs and saves output frames.
 //
-// Usage: kz_gs_replay <trace> <outdir> [--every N] [--upscale N] [--renderer d3d11|d3d12|vulkan] [--stats]
+// Usage: kz_gs_replay <trace> <outdir> [--every N] [--upscale N] [--renderer d3d11|d3d12|vulkan]
+//        [--fxaa] [--smaa] [--cas N] [--bilinear 0|1] [--sharp 0|1] [--crop L,T,R,B] [--present WxH]
+//        [--backbuffer] [--stats]
 //   --stats  also prints a histogram of GS registers written (PACKED A+D and PACKED reg descriptors) and the last
 //            value seen for the interesting ones.
 
@@ -149,13 +151,17 @@ int main(int argc, char **argv)
     SetUnhandledExceptionFilter(crashFilter);
     if (argc < 3)
     {
-        std::fprintf(stderr, "usage: kz_gs_replay <trace> <outdir> [--every N] [--upscale N] [--renderer d3d11|d3d12|vulkan] [--stats]\n");
+        std::fprintf(stderr,
+                     "usage: kz_gs_replay <trace> <outdir> [--every N] [--upscale N] "
+                     "[--renderer d3d11|d3d12|vulkan] [--fxaa] [--smaa] [--cas N] "
+                     "[--bilinear 0|1] [--sharp 0|1] [--crop L,T,R,B] [--present WxH] "
+                     "[--backbuffer] [--stats]\n");
         return 2;
     }
     const std::string tracePath = argv[1];
     const std::filesystem::path outDir = argv[2];
-    int every = 30, upscale = 2;
-    bool stats = false, fixDy = false;
+    int every = 30, upscale = 2, presentWidth = 0, presentHeight = 0;
+    bool stats = false, fixDy = false, backbuffer = false;
     KzgsConfig cfg;
     for (int i = 3; i < argc; ++i)
     {
@@ -165,12 +171,39 @@ int main(int argc, char **argv)
         else if (a == "--stats") stats = true;
         else if (a == "--aniso" && i + 1 < argc) cfg.anisotropy = std::atoi(argv[++i]);
         else if (a == "--fxaa") cfg.fxaa = true;
+        else if (a == "--smaa") cfg.smaa = true;
+        else if (a == "--backbuffer") backbuffer = true;
+        else if (a == "--cas" && i + 1 < argc) cfg.casSharpness = std::clamp(std::atoi(argv[++i]), 0, 100);
+        else if (a == "--bilinear" && i + 1 < argc) cfg.bilinearPresent = std::atoi(argv[++i]) != 0;
+        else if (a == "--sharp" && i + 1 < argc) cfg.sharpPresent = std::atoi(argv[++i]) != 0;
+        else if (a == "--crop" && i + 1 < argc)
+        {
+            if (std::sscanf(argv[++i], "%d,%d,%d,%d", &cfg.crop[0], &cfg.crop[1], &cfg.crop[2], &cfg.crop[3]) != 4)
+            {
+                std::fprintf(stderr, "invalid --crop value\n");
+                return 2;
+            }
+        }
+        else if (a == "--present" && i + 1 < argc)
+        {
+            if (std::sscanf(argv[++i], "%dx%d", &presentWidth, &presentHeight) != 2 ||
+                presentWidth <= 0 || presentHeight <= 0)
+            {
+                std::fprintf(stderr, "invalid --present value\n");
+                return 2;
+            }
+        }
         else if (a == "--adapter" && i + 1 < argc) cfg.adapter = argv[++i];
         else if (a == "--fix-dy") fixDy = true;
         else if (a == "--renderer" && i + 1 < argc)
         {
             const std::string r = argv[++i];
             cfg.renderer = r == "vulkan" ? KzgsRenderer::Vulkan : r == "d3d12" ? KzgsRenderer::D3D12 : KzgsRenderer::D3D11;
+        }
+        else
+        {
+            std::fprintf(stderr, "unknown or incomplete option: %s\n", a.c_str());
+            return 2;
         }
     }
     cfg.upscale = upscale;
@@ -184,7 +217,9 @@ int main(int argc, char **argv)
         return 1;
     }
     SDL_Init(SDL_INIT_VIDEO);
-    SDL_Window *win = SDL_CreateWindow("gs_replay", 1280, 896, SDL_WINDOW_HIDDEN);
+    const int windowWidth = presentWidth > 0 ? presentWidth : 1280;
+    const int windowHeight = presentHeight > 0 ? presentHeight : 896;
+    SDL_Window *win = SDL_CreateWindow("gs_replay", windowWidth, windowHeight, SDL_WINDOW_HIDDEN);
     void *hwnd = SDL_GetPointerProperty(SDL_GetWindowProperties(win), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
     const kz::host::NativeWindow nativeWindow = kz::host::NativeWindow::win32(hwnd);
     alignas(16) static uint8_t regs[0x2000] = {};
@@ -235,13 +270,33 @@ int main(int argc, char **argv)
                         d = (d & ~(0x7FFull << 12)) | (0x32ull << 12) | ((off == 0xA0u) ? 0 : 0);
                     std::memcpy(regs + off, &d, 8);
                 }
+            const bool capture = every > 0 && (frame + 1u) % static_cast<uint64_t>(every) == 0u;
+            if (capture && backbuffer)
+                kzgsBurstArm(1, -1, -1);
             kzgsVsync(static_cast<int>(hdr[1]), true);
             ++frame;
-            if (every > 0 && frame % every == 0)
+            if (capture)
             {
                 std::vector<uint8_t> px;
                 int w = 0, h = 0;
-                if (kzgsReadback(px, w, h))
+                bool readbackOk = false;
+                if (backbuffer)
+                {
+                    kzgsSync();
+                    std::vector<KzgsBurstFrame> captured;
+                    readbackOk = kzgsBurstTake(captured) && captured.size() == 1u;
+                    if (readbackOk)
+                    {
+                        px = std::move(captured[0].rgba);
+                        w = captured[0].width;
+                        h = captured[0].height;
+                    }
+                }
+                else
+                {
+                    readbackOk = kzgsReadback(px, w, h, presentWidth, presentHeight);
+                }
+                if (readbackOk)
                 {
                     size_t nonBlack = 0;
                     for (size_t i = 0; i + 3 < px.size(); i += 4)
@@ -251,6 +306,11 @@ int main(int argc, char **argv)
                     savePng(px, w, h, (outDir / name).string());
                     std::printf("frame %llu: %dx%d nonblack %.1f%%\n", static_cast<unsigned long long>(frame), w, h,
                                 100.0 * nonBlack / (px.size() / 4 ? px.size() / 4 : 1));
+                }
+                else
+                {
+                    std::fprintf(stderr, "frame %llu: readback failed\n", static_cast<unsigned long long>(frame));
+                    return 1;
                 }
             }
         }

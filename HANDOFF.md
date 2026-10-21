@@ -66,8 +66,8 @@ tools\scripts\cmake_preset.ps1 -Preset win-clang-rel -Action test -Label iso-fre
 git diff --check
 ```
 
-Expected today: 31/0/0 dependency checks, both generated gates PASS (51 hook signatures and 101,715
-recompiler-resumable entries), 12/12 ISO-free under each compiler. WIN-06 has its own gate,
+Expected today: 31/0/0 dependency checks, both generated gates PASS (54 hook signatures and 101,715
+recompiler-resumable entries), 13/13 ISO-free under each compiler. WIN-06 has its own gate,
 `tools\scripts\win06_gate.ps1` (about 18 minutes for ten runs; see `LEARNINGS.md`). The focused PORT-01 gate is
 `tools\scripts\cmake_preset.ps1 -Preset win-clang-rel -Action build -Target kz_host_core`.
 
@@ -116,14 +116,14 @@ Safe parallel work:
 ## 7. Latest session record
 
 ```text
-Task: Defer STAB-01; complete WIN-01 and WIN-03
+Task: Complete BASE-01, TEST-01, GFX-01 and GFX-02; begin GFX-03
 Owner/session: Copilot SDK in VS Code, 2026-10-20
 Machine: Windows 11 x64; MSVC and clang-cl presets; D3D12 on NVIDIA GeForce RTX 5070
-Status: STAB-01 investigation is deferred by project decision and remains an M4/release blocker. WIN-01 and WIN-03 are complete in WORKDONE. BASE-01 still needs hands-on acceptance.
-Files changed: IMPLEMENTATION_PLAN.md; README.md; TODO.md; WORKDONE.md; docs/findings.md; LEARNINGS.md; HANDOFF.md; src/kz_launcher.cpp; src/kz_win06_watch.cpp; src/kz_hook_addresses.h; config/generated-manifest.json; config/dependencies.lock.json; patches/README.md; patches/ps2recomp/0032-standalone-runtime-test-suite.patch; patches/ps2recomp/combined.lock.diff; ext/PS2Recomp gitlink. The temporary generated allocator trace was removed.
-Acceptance commands and exact results: STAB diagnostics `win06_listoverlap1` 8/10 and `win06_heapword1` 7/10, then deferred without a workaround. D3D11 hardware golden PASS at 1x/2x with zero mismatches; chapter 1 run exit 0 with nonblack frames; actual swap-chain frames 55.5-71.4% nonblack; original 90-second run exit 0 with advancing nonblack frames. Standalone PS2Recomp suite PASS 439/439. verify_deps.py --strict PASS 31/0/0; resume table PASS 132,656/100,661/31,995; generated inventory PASS (54 hooks, 101,715 resumable entries); MSVC ISO-free 13/13; clang-cl ISO-free 13/13; git diff checks PASS.
-New facts or decisions: the historical D3D11 all-zero defect no longer reproduces on the same RTX 5070/driver and stale warnings were removed. WIN-03 combined a stale PCM fixture, a null-runtime libsd probe, zero-CL VIF semantics, and stale regression expectations; PS2Recomp commit 93d19aa fixes them. The later STAB arms did not reproduce the list/vector overlap and instead caught allocator bin/candidate corruption directly, so that alias is not assumed to be the universal first fault.
-Blocker and minimal reproducer: BASE-01 requires a human play-test with all testing options disabled. STAB-01 remains deferred but its standard reproducer is tools\scripts\win06_gate.ps1 -Runs 10 -Name <name> -Card work\win04_20261019_card -Iso <image> -Elf game\SCUS_974.02.
-Next command: perform the BASE-01 hands-on D3D12 run: create/select a profile, play the first mission, save/load, return to the front end, and check high-refresh timing, mouse aim, controller input and clean shutdown with all testing options off.
-Safe parallel work: none in the active M0 queue; reactivating STAB-01 requires reprioritization.
+Status: M0 and M1 are complete. BASE-01 passed hands-on with VSync selected as the baseline; TEST-01 emits deterministic path-free measurement metadata; GFX-01 has truthful D3D12 post-processing and exact pre-Present capture; GFX-02 has an explicit, legacy-compatible render/output contract. GFX-03 inventory is active. STAB-01 remains deferred and release-blocking.
+Files changed: IMPLEMENTATION_PLAN.md; README.md; TODO.md; WORKDONE.md; docs/findings.md; LEARNINGS.md; HANDOFF.md; src/kz_config.{h,cpp}; src/kz_gs.{h,cpp}; src/kz_input.cpp; src/kz_launcher.cpp; src/kz_main.cpp; ext/kzgs public/shim/CMake/README sources and tests, including new src/kz_present12.cpp; tools/gs_replay/gs_replay.cpp; new tools/scripts/verify_capture_metadata.py and image_compare.py. Protected traces, images, cards and JSONL remain under ignored work/.
+Acceptance commands and exact results: BASE hands-on passed profile/gameplay, Continue/load, front-end return, mouse timing, controller and clean exit; VSync removed visible tearing. TEST-01 repeated runs aligned four fire events within two guest-vsyncs and reported two unmatched events. GFX-01 four-frame A/Bs: unavailable D3D12 SMAA 0.000% changed; FXAA 8.611%; CAS 19.243%; sharp/smooth 32.816%; crop 65.555%. Full D3D12 integration PASS includes exact fixed-2x 720p/1080p/1440p/4K outputs, resize, minimize/restore, injected device loss, 2,600-upload ring stress, packet continuation and D3D11 restart. GFX-02 product auto-scale matrix exited 0 at all outputs: 1024x896->1280x720 (2x, 3 captures), 1536x1344->1920x1080 (3x, 3), 2048x1792->2560x1440 (4x, 4), 2560x2240->3840x2160 (5x, 3). Metadata/image self-tests PASS. verify_deps.py --strict PASS 31/0/0; resume table PASS 132,656/100,661/31,995; generated inventory PASS (54 hooks, 101,715 resumable entries); MSVC ISO-free 13/13; clang-cl ISO-free 13/13; git diff --check PASS.
+New facts or decisions: SMAA is D3D11-only and D3D12 never substitutes FXAA. CAS evidence must come from the pre-Present swap-chain buffer. `Upscale=0` remains ceil(output height / 448), 1x-8x, resolved at renderer start/settings apply; resize changes output only. Exact render width is dynamic: Killzone uses a 512x448 active display while the synthetic kzgs scene uses 640x448, so completed-frame telemetry is authoritative. The executed presentation order is GS merge, AA, conditional sharp prescale, crop/aspect, CAS, final present filter.
+Blocker and minimal reproducer: STAB-01 remains deferred but blocks M4/release; its retained gate is tools\scripts\win06_gate.ps1 -Runs 10 -Name <name> -Card work\win04_20261019_card -Iso <image> -Elf game\SCUS_974.02. AUDIO-01 reproduces in first-mission action-heavy firefights: effects/dialogue truncate about 100 ms several times per fight.
+Next command: inventory GFX-03's RenderDistance/LodScale hook definitions, manifest signatures, launcher/config ranges, anisotropy, texture replacement and sharpening surfaces; then define independent bounded A/B arms before changing behavior.
+Safe parallel work: read-only WPN-01 discovery and AUDIO-01 instrumentation design may proceed independently. Do not reactivate STAB-01 without reprioritization.
 ```

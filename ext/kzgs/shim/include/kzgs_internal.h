@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace kzgs
 {
@@ -24,6 +25,9 @@ namespace kzgs
 	// Measurement: while a sink is set, every Direct3D 11 Present first hands the finished back buffer (RGBA8) to it (src/kz_present11.cpp).
 	using PresentSink = void (*)(const uint8_t* rgba, int width, int height);
 	bool PresentCapture(PresentSink sink);
+	bool PresentCaptureD3D12(PresentSink sink);
+	bool InjectD3D12DeviceLoss();
+	int EndPresentVtableIndex();
 
 	// GSState::m_scanmask_used (src/kz_inspect.cpp): frames left in which PCSX2 treats the output as scan-masked (anti-blur is off while > 0).
 	int ScanmaskUsed();

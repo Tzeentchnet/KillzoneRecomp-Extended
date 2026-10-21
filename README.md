@@ -40,7 +40,7 @@ Test build, currently in M0 (Windows enhancement baseline); see [`TODO.md`](TODO
 - **Mouse and keyboard:** mouse aim is an engine patch (raw counts go into the game's own look rate: no stick
   acceleration or dead zone), with fully rebindable keys. Controllers work through SDL3 with the original PS2 layout.
 - **Graphics:** internal resolution up to 8x (supersampling), native 16:9, sharp scaling, anisotropic filtering,
-  optional FXAA; D3D11, D3D12 or Vulkan.
+  optional FXAA; D3D11, D3D12 or Vulkan. SMAA is D3D11-only and is explicitly shown as unavailable on other renderers.
 - **Launcher:** display, graphics, controls and audio settings; checks the disc image is the supported version.
 - **Testing options (launcher Testing tab, all off by default):** unlock all campaign levels without changing saves,
   skip the logos and intro movie, start directly in a chosen chapter and difficulty, and use a separate test memory
@@ -119,6 +119,18 @@ workload, CMake 3.24+, Ninja 1.13.2, Python 3.11+, and a CPU with AVX2. The full
 
 `killzone.exe --selftest` runs the unit checks. `tools\scripts\run_headless.ps1` runs the game without a window, with
 scripted input (`KZ_INPUT_SCRIPT`) and periodic screenshots, which is how everything here was verified.
+
+When `KZ_SHOT_DIR` is set, captures also include `capture.jsonl` schema 1 with effective renderer/testing settings,
+the render-scale mode and exact render/output resolutions, post-process order, guest-vsync frame IDs, capture points
+and default fire-action transitions. Validate a run or align two runs without using filenames or wall time:
+
+```powershell
+python .\tools\scripts\verify_capture_metadata.py .\work\run1 --require-fire
+python .\tools\scripts\verify_capture_metadata.py .\work\run1 --compare .\work\run2 `
+  --require-fire --summary .\work\comparison-summary.json
+```
+
+The summary is protected-content-safe: configuration, frame/event counts, dimensions and image hashes only.
 
 Build scripts discover the repository from their own location. `KZ_ROOT` and `KZ_BUILD_ROOT` override the source and
 build roots; `KZ_VCVARS64` can point to `vcvars64.bat`, `KZ_CMAKE` can point to `cmake.exe`, `KZ_NINJA` can point to

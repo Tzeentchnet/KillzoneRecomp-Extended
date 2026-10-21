@@ -127,6 +127,11 @@ namespace
 	static std::atomic<bool> s_thread_failed{false};
 	static uint8_t* s_caller_regs = nullptr;
 	alignas(16) static u8 s_gs_regs[0x2000]; // the GS thread's copy of the privileged registers
+	static std::atomic<u32> s_resolution_sequence{0};
+	static std::atomic<int> s_render_width{0};
+	static std::atomic<int> s_render_height{0};
+	static std::atomic<int> s_output_width{0};
+	static std::atomic<int> s_output_height{0};
 	static int s_max_queued_frames = 2;
 	static bool s_self_contained_packets = true;
 	static KzgsLogFn s_log_fn = nullptr;
@@ -139,6 +144,29 @@ namespace
 	}
 
 	static constexpr u32 Align16(u32 v) { return (v + 15u) & ~15u; }
+
+	static void ResetResolutionInfo()
+	{
+		s_resolution_sequence.fetch_add(1, std::memory_order_acq_rel);
+		s_render_width.store(0, std::memory_order_relaxed);
+		s_render_height.store(0, std::memory_order_relaxed);
+		s_output_width.store(0, std::memory_order_relaxed);
+		s_output_height.store(0, std::memory_order_relaxed);
+		s_resolution_sequence.fetch_add(1, std::memory_order_release);
+	}
+
+	static void PublishResolutionInfo()
+	{
+		if (!g_gs_renderer || !g_gs_device)
+			return;
+		const GSVector2i render = g_gs_renderer->GetInternalResolution();
+		s_resolution_sequence.fetch_add(1, std::memory_order_acq_rel);
+		s_render_width.store(render.x, std::memory_order_relaxed);
+		s_render_height.store(render.y, std::memory_order_relaxed);
+		s_output_width.store(g_gs_device->GetWindowWidth(), std::memory_order_relaxed);
+		s_output_height.store(g_gs_device->GetWindowHeight(), std::memory_order_relaxed);
+		s_resolution_sequence.fetch_add(1, std::memory_order_release);
+	}
 
 	// Reserves header+payload space, waiting for the consumer if needed. Returns a pointer to the header slot.
 	// Must hold s_produce_lock.
@@ -580,6 +608,7 @@ namespace
 					if (s_present_log_path) QueryPerformanceCounter(&t0);
 					s_cur_field = static_cast<int>(hdr.a);
 					GSvsync(hdr.a, hdr.b != 0);
+					PublishResolutionInfo();
 					if (s_present_log_path)
 					{
 						QueryPerformanceCounter(&t1);
@@ -760,6 +789,7 @@ bool kzgsOpen(const kz::host::NativeWindow& window, const KzgsConfig& cfg, uint8
 	s_read_pos.store(0);
 	s_local_write = 0;
 	s_queued_frames.store(0);
+	ResetResolutionInfo();
 
 	s_caller_regs = privRegs;
 	std::memcpy(s_gs_regs, privRegs, sizeof(s_gs_regs));
@@ -798,6 +828,7 @@ void kzgsClose()
 	}
 	s_open.store(false);
 	s_caller_regs = nullptr;
+	ResetResolutionInfo();
 }
 
 bool kzgsIsOpen()
@@ -879,6 +910,29 @@ void kzgsResize(int width, int height)
 		Push(Cmd::Resize, static_cast<u32>(width), static_cast<u32>(height));
 }
 
+bool kzgsGetResolutionInfo(KzgsResolutionInfo& out)
+{
+	for (;;)
+	{
+		const u32 before = s_resolution_sequence.load(std::memory_order_acquire);
+		if (before & 1u)
+			continue;
+		KzgsResolutionInfo current;
+		current.renderWidth = s_render_width.load(std::memory_order_relaxed);
+		current.renderHeight = s_render_height.load(std::memory_order_relaxed);
+		current.outputWidth = s_output_width.load(std::memory_order_relaxed);
+		current.outputHeight = s_output_height.load(std::memory_order_relaxed);
+		const u32 after = s_resolution_sequence.load(std::memory_order_acquire);
+		if (before != after)
+			continue;
+		if (current.renderWidth <= 0 || current.renderHeight <= 0 ||
+		    current.outputWidth <= 0 || current.outputHeight <= 0)
+			return false;
+		out = current;
+		return true;
+	}
+}
+
 void kzgsUpdateConfig(const KzgsConfig& cfg)
 {
 	if (s_open.load(std::memory_order_relaxed))
@@ -892,6 +946,15 @@ void kzgsSync()
 	SyncPoint sp;
 	PushPtr(Cmd::Sync, &sp);
 	sp.Wait();
+}
+
+bool kzgsDebugInjectDeviceLoss()
+{
+	if (!s_open.load(std::memory_order_relaxed))
+		return false;
+	bool injected = false;
+	kzgs::RunOnGSThread([&injected] { injected = kzgs::InjectD3D12DeviceLoss(); });
+	return injected;
 }
 
 bool kzgsReadback(std::vector<uint8_t>& rgba, int& width, int& height, int presentWidth, int presentHeight)
@@ -937,7 +1000,14 @@ void kzgsBurstArm(int count, int presentWidth, int presentHeight)
 	s_burst_ph = presentHeight;
 	s_burst_left.store(std::max(count, 0), std::memory_order_release);
 	if (presentWidth < 0 && count > 0)
-		kzgs::RunOnGSThread([] { kzgs::PresentCapture(&BurstPresentSink); });
+		kzgs::RunOnGSThread([] {
+			if (!kzgs::PresentCapture(&BurstPresentSink) &&
+			    !kzgs::PresentCaptureD3D12(&BurstPresentSink))
+			{
+				Console.Error("kzgs: swap-chain capture is unavailable on the active renderer");
+				s_burst_left.store(0, std::memory_order_release);
+			}
+		});
 }
 
 bool kzgsBurstTake(std::vector<KzgsBurstFrame>& out)
@@ -945,7 +1015,10 @@ bool kzgsBurstTake(std::vector<KzgsBurstFrame>& out)
 	if (s_burst_left.load(std::memory_order_acquire) > 0)
 		return false;
 	if (s_burst_pw < 0)
-		kzgs::RunOnGSThread([] { kzgs::PresentCapture(nullptr); });
+		kzgs::RunOnGSThread([] {
+			kzgs::PresentCapture(nullptr);
+			kzgs::PresentCaptureD3D12(nullptr);
+		});
 	std::lock_guard<std::mutex> lock(s_burst_mutex);
 	out = std::move(s_burst_frames);
 	s_burst_frames.clear();

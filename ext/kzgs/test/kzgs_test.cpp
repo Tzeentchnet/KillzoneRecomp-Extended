@@ -231,6 +231,33 @@ static HWND CreateTestWindow(bool show)
 	return hwnd;
 }
 
+static void PumpMessages();
+
+static void ResizeTestWindow(HWND hwnd, int width, int height)
+{
+	RECT rc = {0, 0, width, height};
+	AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
+	SetWindowPos(hwnd, nullptr, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
+	             SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+	PumpMessages();
+}
+
+static void ResizeTestWindowUnconstrained(HWND hwnd, int width, int height)
+{
+	SetWindowLongPtrW(hwnd, GWL_STYLE, WS_POPUP);
+	SetWindowPos(hwnd, nullptr, 0, 0, width, height,
+	             SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+	PumpMessages();
+}
+
+static void RestoreTestWindowStyle(HWND hwnd)
+{
+	SetWindowLongPtrW(hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW);
+	SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+	             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+	PumpMessages();
+}
+
 static void PumpMessages()
 {
 	MSG msg;
@@ -419,6 +446,58 @@ static bool RenderAndCheck(const std::vector<uint8_t>& packet, int frames, int s
 	return true;
 }
 
+static bool RenderAndCheckBackbuffer(
+	const std::vector<uint8_t>& packet, int frames, int expected_w, int expected_h, const char* png_name)
+{
+	kzgsBurstArm(1, -1, -1);
+	PresentFrames(packet, frames, 3);
+	kzgsSync();
+	std::vector<KzgsBurstFrame> captured;
+	if (!kzgsBurstTake(captured) || captured.size() != 1u)
+	{
+		std::printf("  FAIL swap-chain capture returned %zu frames\n", captured.size());
+		g_failures++;
+		return false;
+	}
+	const KzgsBurstFrame& frame = captured[0];
+	std::printf("  swap-chain readback %dx%d (expected %dx%d)\n", frame.width, frame.height, expected_w, expected_h);
+	if (frame.width != expected_w || frame.height != expected_h)
+	{
+		std::printf("  FAIL swap-chain readback size\n");
+		g_failures++;
+	}
+	size_t non_black = 0;
+	for (size_t i = 0; i + 3 < frame.rgba.size(); i += 4)
+		non_black += (frame.rgba[i] + frame.rgba[i + 1] + frame.rgba[i + 2]) > 30;
+	if (frame.rgba.empty() || non_black * 100u < (frame.rgba.size() / 4u))
+	{
+		std::printf("  FAIL swap-chain readback is empty/black\n");
+		g_failures++;
+	}
+	const std::string path = (std::filesystem::path(g_output_dir) / png_name).string();
+	if (!WritePNG(path.c_str(), frame.rgba, frame.width, frame.height))
+	{
+		std::printf("  FAIL writing %s\n", path.c_str());
+		g_failures++;
+	}
+	return true;
+}
+
+static void CheckResolutionInfo(int render_w, int render_h, int output_w, int output_h)
+{
+	KzgsResolutionInfo info;
+	const bool available = kzgsGetResolutionInfo(info);
+	std::printf("  resolution contract: render %dx%d -> output %dx%d\n",
+		info.renderWidth, info.renderHeight, info.outputWidth, info.outputHeight);
+	if (!available || info.renderWidth != render_w || info.renderHeight != render_h ||
+		info.outputWidth != output_w || info.outputHeight != output_h)
+	{
+		std::printf("  FAIL resolution contract (expected render %dx%d -> output %dx%d)\n",
+			render_w, render_h, output_w, output_h);
+		g_failures++;
+	}
+}
+
 int main(int argc, char** argv)
 {
 	KzgsConfig cfg;
@@ -506,6 +585,61 @@ int main(int argc, char** argv)
 		DestroyWindow(hwnd);
 		std::printf("%s (%d failure%s)\n", g_failures ? "FAIL" : "PASS", g_failures, g_failures == 1 ? "" : "s");
 		return g_failures ? 1 : 0;
+	}
+
+	if (cfg.renderer == KzgsRenderer::D3D12)
+	{
+		std::printf("== D3D12 resize 800x600\n");
+		ResizeTestWindow(hwnd, 800, 600);
+		kzgsResize(800, 600);
+		RenderAndCheckBackbuffer(scene, frames, 800, 600, "out_resize.png");
+		CheckResolutionInfo(1280, 896, 800, 600);
+
+		struct OutputCase
+		{
+			int width;
+			int height;
+			const char* image;
+		};
+		static constexpr OutputCase output_matrix[] = {
+			{1280, 720, "out_720p.png"},
+			{1920, 1080, "out_1080p.png"},
+			{2560, 1440, "out_1440p.png"},
+			{3840, 2160, "out_4k.png"},
+		};
+		for (const OutputCase& output : output_matrix)
+		{
+			std::printf("== D3D12 output matrix %dx%d (fixed 2x render)\n", output.width, output.height);
+			ResizeTestWindowUnconstrained(hwnd, output.width, output.height);
+			kzgsResize(output.width, output.height);
+			RenderAndCheckBackbuffer(scene, frames, output.width, output.height, output.image);
+			CheckResolutionInfo(1280, 896, output.width, output.height);
+		}
+		RestoreTestWindowStyle(hwnd);
+
+		std::printf("== D3D12 minimize/restore\n");
+		ShowWindow(hwnd, SW_MINIMIZE);
+		PumpMessages();
+		kzgsResize(0, 0); // minimized windows retain the last valid swap-chain size
+		ShowWindow(hwnd, SW_RESTORE);
+		ResizeTestWindow(hwnd, 640, 448);
+		kzgsResize(640, 448);
+		RenderAndCheckBackbuffer(scene, frames, 640, 448, "out_restore.png");
+		CheckResolutionInfo(1280, 896, 640, 448);
+
+		std::printf("== D3D12 device-loss recovery\n");
+		if (!kzgsDebugInjectDeviceLoss())
+		{
+			std::printf("  FAIL could not inject D3D12 device loss\n");
+			g_failures++;
+		}
+		else
+		{
+			PresentFrames(scene, 2, 3); // first present reopens the device; second repopulates it
+			kzgsSync();
+			RenderAndCheckBackbuffer(scene, frames, 640, 448, "out_device_recovery.png");
+			CheckResolutionInfo(1280, 896, 640, 448);
+		}
 	}
 
 	// Ring stress over PATH2: >32 MB of IMAGE uploads to off-screen VRAM (wraps the ring several times over), split

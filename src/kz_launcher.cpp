@@ -313,8 +313,8 @@ namespace
                         row("Renderer", "Choose the graphics API used to render and present the game.");
                         enumCombo<KzRenderer>("##renderer", cfg.renderer,
                                               {{KzRenderer::D3D11, "Direct3D 11"}, {KzRenderer::D3D12, "Direct3D 12"}, {KzRenderer::Vulkan, "Vulkan"}});
-                        row("Internal resolution", "Higher = sharper edges. Auto matches your display.");
-                        const char *scales[] = {"Auto (match display)", "1x (PS2 native 640x448)", "2x", "3x (about 1080p)", "4x (about 1440p)",
+                        row("Internal render scale", "Integer GS render scale. Auto chooses the smallest whole scale that covers the output height.");
+                        const char *scales[] = {"Auto (from output height)", "1x (native GS)", "2x", "3x (about 1080p)", "4x (about 1440p)",
                                                 "5x", "6x (about 4K)", "7x", "8x"};
                         ImGui::Combo("##upscale", &cfg.upscale, scales, IM_ARRAYSIZE(scales));
                         row("Aspect ratio");
@@ -322,7 +322,7 @@ namespace
                                             {{KzAspect::Widescreen16x9, "16:9 widescreen (native)"},
                                              {KzAspect::Classic4x3, "4:3 original"},
                                              {KzAspect::Stretch, "Stretch to window"}});
-                        row("Scaling to the screen", "How the picture is fitted to your display.");
+                        row("Output scaling filter", "How the rendered picture is fitted to the output. This does not change internal render scale.");
                         int scaling = cfg.sharpScaling ? 0 : 1;
                         const char *scalings[] = {"Sharp (crisp pixels)", "Smooth (softer)"};
                         if (ImGui::Combo("##scaling", &scaling, scalings, 2))
@@ -333,7 +333,19 @@ namespace
                     section("Anti-aliasing");
                     if (beginRows("aa"))
                     {
-                        toggleRow("SMAA", "Smooths jagged edges; costs a little fine texture detail. Direct3D 11 only.", cfg.smaa);
+                        const bool smaaAvailable = kzRendererSupportsSmaa(cfg.renderer);
+                        row("SMAA", smaaAvailable
+                                        ? "Smooths jagged edges; costs a little fine texture detail."
+                                        : "Unavailable on this renderer. Enable FXAA explicitly or raise internal resolution.");
+                        ImGui::PushID("SMAA");
+                        ImGui::BeginDisabled(!smaaAvailable);
+                        ImGui::Checkbox("##v", &cfg.smaa);
+                        ImGui::EndDisabled();
+                        ImGui::SameLine();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted(smaaAvailable ? (cfg.smaa ? "On" : "Off")
+                                                           : "Unavailable (Direct3D 11 only)");
+                        ImGui::PopID();
                         toggleRow("FXAA", "Softens the whole picture slightly.", cfg.fxaa, "On (softer)", "Off");
                         ImGui::EndTable();
                     }

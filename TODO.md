@@ -1,6 +1,6 @@
 # TODO - current milestone queue
 
-**Milestone:** M0 - Windows enhancement baseline
+**Milestone:** M2 - Safe graphics and weapon controls
 **Last updated:** 2026-10-20
 
 The durable queue of open work. Definitions, dependencies, acceptance commands and stop conditions are in
@@ -16,21 +16,31 @@ owns edits; `[SERIAL]` waits on dependencies or the integration owner; `[HUMAN]`
 
 | # | ID | Task | Machine | Label | Status | Blocked by |
 |---|---|---|---|---|---|---|
-| 1 | BASE-01 | Lock the Windows enhancement baseline (legacy WIN-04) | Windows | `[SERIAL]` | in progress | hands-on play-test |
-| 2 | STAB-01 | Resolve chapter 11 repeated-load corruption (legacy WIN-06) | Windows | `[SERIAL]` | blocked | deferred by project decision |
-| 3 | TEST-01 | Graphics and weapon measurement harness | Windows | `[SERIAL]` | blocked | BASE-01 |
-| 4 | GFX-01 | D3D12 presentation and post-process parity | Windows | `[SERIAL]` | blocked | TEST-01 |
-| 5 | GFX-03 | Qualify render distance, LOD and texture clarity | Windows | `[SERIAL]` | blocked | BASE-01, TEST-01 |
-| 6 | WPN-01 | Discover and measure the player weapon model | Windows | `[READ-PARALLEL]` | blocked | BASE-01, TEST-01, BYOD authorization |
-| 7 | GFX-02 | Separate internal render scale from output scale | Windows | `[SERIAL]` | blocked | GFX-01 |
-| 8 | WPN-02 / WPN-03 | Global recoil, spread and recovery controls | Windows | `[SERIAL]` | blocked | WPN-01 |
-| 9 | GFX-04 | Temporal input feasibility contract | Windows | `[SERIAL]` | blocked | GFX-02 |
-| 10 | DLSS-01 | DLSS 5 qualification and go/no-go decision | Windows | `[HUMAN]` | blocked | GFX-04, SDK/legal access |
+| 1 | GFX-03 | Qualify render distance, LOD and texture clarity | Windows | `[SERIAL]` | in progress | - |
+| 2 | WPN-01 | Discover and measure the player weapon model | Windows | `[READ-PARALLEL]` | not started | BYOD authorization |
+| 3 | AUDIO-01 | Reproduce combat audio clipping | Windows | `[READ-PARALLEL]` | in progress | - |
+| 4 | STAB-01 | Resolve chapter 11 repeated-load corruption (legacy WIN-06) | Windows | `[SERIAL]` | blocked | deferred by project decision |
+| 5 | WPN-02 / WPN-03 | Global recoil, spread and recovery controls | Windows | `[SERIAL]` | blocked | WPN-01 |
+| 6 | GFX-04 | Temporal input feasibility contract | Windows | `[SERIAL]` | not started | - |
+| 7 | DLSS-01 | DLSS 5 qualification and go/no-go decision | Windows | `[HUMAN]` | blocked | GFX-04, SDK/legal access |
 
-BASE-01 is the current milestone gate while its hands-on acceptance is pending. STAB-01 investigation is deferred by
-project decision but remains a release blocker. TEST-01 follows BASE-01. Graphics and gameplay then split into
-independent lanes as defined in the plan. CFG-01, PROFILE-01, WIN-01 and WIN-03 are complete in
+GFX-03 is the active serial task. WPN-01 and AUDIO-01 may be investigated in their independent lanes.
+STAB-01 investigation is deferred by project decision but remains a release blocker. BASE-01, CFG-01, TEST-01,
+GFX-01, GFX-02, PROFILE-01, WIN-01 and WIN-03 are complete in
 [`WORKDONE.md`](WORKDONE.md). DLSS-01 is qualification only; product integration is not in this queue.
+
+### GFX-03 - Qualify render distance, LOD and texture clarity
+
+- **Status:** in progress after M1 acceptance.
+- **First step:** inventory and verify the existing RenderDistance/LodScale hook signatures and all renderer-side
+  anisotropy, texture-replacement and sharpening surfaces before selecting bounded A/B arms.
+
+### AUDIO-01 - Combat audio clipping
+
+- **Status:** in progress. Reproduced by the human baseline owner in two hands-on runs.
+- **Reproducer:** first mission during action-heavy firefights on speakers. Gunfire/effects and dialogue truncate by
+  about 100 ms several times per fight.
+- **Next step:** correlate SPU2 production, host callback delivery and output queue depth around truncated events.
 
 ## Paused work from the superseded portability roadmap
 
@@ -99,17 +109,6 @@ a plan revision.
 - **Acceptance:** `ctest --preset macos-arm64 --output-on-failure -R '^kzgs_metal_golden$'`
 
 ## Existing Windows baseline work
-
-### BASE-01 (legacy WIN-04) - re-verify the Windows gameplay baseline
-
-- **Status:** in progress. The scripted portion passed on 2026-10-19; the hands-on acceptance remains.
-- **Scripted evidence (win-clang-rel, D3D12):** a clean isolated card entered the game's create-profile flow, saved
-  `Tester`, selected `1.Trenches` on Normal and reached first-mission gameplay. The 120 Hz run exited 0 after 120 s,
-  produced 11 distinct nonblack captures through 110 s, and logged no crash signature. The start-in-chapter
-  autopilot was the scripted driver; this does not replace the hands-on baseline with testing options disabled.
-- **Next command:** hands-on D3D12 play-test with testing options disabled: create/select a profile, play the first
-  mission, save/load, quit to the front end, and check high-refresh timing and mouse aim.
-- **Why now:** it protects every graphics and gameplay comparison in the revised plan.
 
 ### 9. WIN-02 - Unlock All Campaign Levels launcher option
 

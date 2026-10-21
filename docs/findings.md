@@ -1721,6 +1721,84 @@ Zero `CL` now follows hardware semantics, and the fixtures assert the current co
 supports `PS2X_TEST_FILTER=<substring>` for focused reproduction. Focused audio (2/2), VIF (29/29), JALR (2/2) and
 SifInitRpc (1/1) runs pass. The complete standalone executable now exits 0 with 439/439 tests passing.
 
+## Versioned measurement harness (2026-10-20)
+
+TEST-01 extends the existing screenshot and burst paths without renaming their artifacts. Every run with
+`KZ_SHOT_DIR` writes `capture.jsonl` schema 1. Its run record contains only protected-content-safe state: the
+guest-vsync clock/rate, source ID, renderer/backend identity, adapter, effective graphics settings and effective
+testing/card mode. It deliberately excludes the ISO, ELF, memory-card and output-directory paths.
+
+Each saved internal, presented or swap-chain image gets a frame record with capture point, dimensions, present
+sequence and `frame_id == guest_vsync`. Burst metadata resolves kzgs' sequence to the host present sequence through
+the vblank log; the existing burst CSV now also carries `guest_vsync`. The guest pad provider records transitions of
+default fire action R1 as `player_fire_input`, tied to guest-vsync and present sequence. This is a deterministic input
+event for measurement alignment, not yet a claim that a projectile was emitted; WPN-01 can add an engine-confirmed
+shot event after discovering that path.
+
+`verify_capture_metadata.py` validates records and referenced images, rejects absolute paths, generates summaries
+containing hashes/counts/dimensions/configuration only, and aligns repeated runs by nearest same-type event within one
+guest second. Two 38-second D3D12 chapter-1 runs exited 0 with seven captures each. Four fire transitions aligned
+within two guest-vsyncs; a middle scripted pulse occurred while one run was not polling the pad and is reported as
+unmatched rather than silently discarded. A presented-output burst run produced four monotonic 1280x896 frame
+records. The contract self-test and product self-test pass.
+
+## D3D12 effective post-process parity (2026-10-20)
+
+The selected policy is explicit capability reporting, not an implicit fallback: SMAA remains available only on
+D3D11. D3D12/Vulkan gray the launcher control, preserve its persisted request for a later D3D11 switch, and direct
+users to explicit FXAA or higher internal resolution. D3D12 with the accepted baseline reports
+`aa=none, cas=30, scaling=sharp_bilinear, crop=4,3,4,4 (SMAA requested but unavailable)` in both stdout and
+`capture.jsonl`.
+
+To measure the final chain, D3D12 burst capture now copies the active swap-chain render target inside a compiler-safe
+`EndPresent` vtable hook, after scaling/CAS draws and before transition/Present. The clang-cl virtual-call thunk form
+resolves to slot 19. The copy uses PCSX2's own D3D12 download texture, restores the resource state and does not touch
+the protected game inputs. Offline replay gained the same post controls plus exact back-buffer capture.
+
+A single 120-frame active-gameplay GS trace drove all arms. Four 1600x900 frames per arm produced:
+
+- requested SMAA on D3D12: 4/4 byte-identical to baseline (disabled is truly baseline-identical);
+- FXAA: 8.611% pixels changed, mean absolute RGB 0.0985, max 36;
+- CAS 30 versus off: 19.243% changed, mean 0.1576, max 16;
+- sharp versus smooth bilinear: 32.816% changed, mean 0.2750, max 25;
+- crop `4,3,4,4` versus uncropped: 65.555% changed, mean 2.4556, max 120.
+
+The D3D12 hardware integration test also passes an 800x600 swap-chain resize, zero-size minimize followed by 640x448
+restore, injected device-loss recovery through PCSX2's normal reopen path, GIF ring stress, packet continuation and a
+D3D12-to-D3D11 renderer restart. All recovered outputs are nonblack and have the requested dimensions.
+
+## Internal render scale versus physical output (2026-10-20)
+
+No configuration migration or quality-default change was needed. The previously ambiguous behavior is now an
+explicit contract:
+
+- `Upscale=0` selects `ceil(output_height / 448)`, clamped to 1x-8x, at renderer start or when settings are applied;
+- `Upscale=1..8` is a fixed integer GS render scale, independent of physical output resize;
+- resize changes the physical swap-chain output only; zero-size minimize retains the last valid dimensions;
+- aspect/crop, CAS and sharp/smooth filtering remain presentation operations, with the declared diagnostic order
+  `gs_merge -> aa -> sharp_prescale_if_upscaling -> crop_aspect -> cas -> present_filter`;
+- `KZ_UPSCALE` is the explicit automation override for controlled sub-output experiments.
+
+The host logs the scale decision immediately, then `kzgsGetResolutionInfo` publishes exact dimensions after a
+completed frame. Exact dimensions cannot be predicted as `640 * scale`: the synthetic kzgs scene uses 640x448, while
+Killzone's active display measured 512x448. `capture.jsonl` records both the pre-frame 448-line selection contract and
+the completed-frame dimensions, and the verifier checks that the exact render height and physical output agree with
+that contract.
+
+Four eight-second D3D12 product runs with legacy `Upscale=0`, isolated cards and no path-bearing summary data passed:
+
+| Physical output | Scale | Exact internal render | Captures | Exit |
+|---|---:|---:|---:|---:|
+| 1280x720 | 2x | 1024x896 | 3 | 0 |
+| 1920x1080 | 3x | 1536x1344 | 3 | 0 |
+| 2560x1440 | 4x | 2048x1792 | 4 | 0 |
+| 3840x2160 | 5x | 2560x2240 | 3 | 0 |
+
+An independent hardware synthetic run held the internal scene at exactly 1280x896 (fixed 2x) while changing the
+swap chain through all four output sizes. Every final-back-buffer capture was nonblack and exact-sized. The test then
+restored an ordinary decorated window and passed minimize/restore, device-loss recovery and D3D12-to-D3D11 restart,
+showing that output history and renderer recreation do not silently rewrite the fixed internal scale.
+
 ## Testing options (2026-10-17)
 
 Launcher Testing tab (`[Testing]` in `killzone.ini`, all off by default; nothing is hooked while off): unlock all
@@ -2076,3 +2154,15 @@ The run produced 11 captures at 10-second intervals through 110 seconds. All 11 
 nonblack coverage ranged from 81% to 99%, and the later frames visibly contain first-person gameplay, HUD, world
 geometry and animation. This proves the scripted gameplay portion only. WIN-04 remains open for a hands-on run with
 testing options disabled that covers save/load, quit to the front end, high-refresh behavior and mouse aim.
+
+### Hands-on closure (2026-10-20)
+
+Two hands-on D3D12 runs with every testing option off completed BASE-01. Normal profile selection, first-mission
+gameplay, controller input, game timing and mouse aim passed. Quit to menu followed by Continue/load resumed saved
+progress. Closing the window completed promptly with exit code 0 and no crash or hang.
+
+The first run used the recorded `VSync=0` configuration and showed screen tearing. A focused A/B with `VSync=1`
+eliminated tearing; the human owner selected VSync-on as the comparison baseline. Two observations remain tracked,
+not hidden in the sign-off: short-distance LOD pop-in is aggressive at original `RenderDistance=1`/`LodScale=1`
+(GFX-03), and action-heavy first-mission firefights repeatedly truncate gunfire/effects and dialogue by roughly
+100 ms on speakers (AUDIO-01).

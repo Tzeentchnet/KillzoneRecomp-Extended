@@ -43,8 +43,9 @@ namespace kzgs
 namespace
 {
 	std::atomic<bool> s_enabled{false};
+	std::atomic<bool> s_installed{false};
 	std::atomic<float> s_threshold{0.1f}; // luma edge threshold (SMAA_THRESHOLD); the HIGH preset's value by default
-	bool s_failed = false;
+	std::atomic<bool> s_failed{false};
 
 	using DoFxaaFn = void (*)(GSDevice11*, GSTexture*, GSTexture*);
 	DoFxaaFn s_origDoFxaa = nullptr;
@@ -435,12 +436,12 @@ float4 ps_blend(VSOut i) : SV_Target
 	{
 		if (s_enabled.load())
 		{
-			if (!s_failed && RunSmaa(dev, sTex, dTex))
+			if (!s_failed.load() && RunSmaa(dev, sTex, dTex))
 				return;
 			// A pending-clear source is a one-off; a missing shader file or a compile error is not.
-			if (!s_failed && sTex->GetState() == GSTexture::State::Dirty)
+			if (!s_failed.load() && sTex->GetState() == GSTexture::State::Dirty)
 			{
-				s_failed = true;
+				s_failed.store(true);
 				Console.Error("kzgs: SMAA failed, frames pass through unchanged");
 			}
 			PassThrough(dev, sTex, dTex);
@@ -461,16 +462,22 @@ namespace kzgs
 	{
 		s_enabled.store(on);
 		if (on)
-			s_failed = false;
+			s_failed.store(false);
 	}
 
 	void SmaaInstall()
 	{
 		if (!g_gs_device || g_gs_device->GetRenderAPI() != RenderAPI::D3D11)
+		{
+			s_installed.store(false);
 			return;
+		}
 		void** live = *reinterpret_cast<void***>(g_gs_device.get());
 		if (s_vtableCopy && live == s_vtableCopy + 1)
+		{
+			s_installed.store(true);
 			return; // already installed on this device
+		}
 		if (s_vtableCopy && s_origVtable != live)
 		{
 			// A new device (renderer switch): start over with its vtable. The old copy is leaked on purpose (tiny).
@@ -482,6 +489,7 @@ namespace kzgs
 			s_slot = FxaaVtableIndex();
 			if (s_slot < 0)
 			{
+				s_installed.store(false);
 				Console.Error("kzgs: SMAA unavailable (DoFXAA vtable slot not found)");
 				return;
 			}
@@ -490,6 +498,7 @@ namespace kzgs
 			if (!VirtualQuery(live - 1, &mbi, sizeof(mbi)) ||
 				static_cast<size_t>(reinterpret_cast<uint8_t*>(mbi.BaseAddress) + mbi.RegionSize - reinterpret_cast<uint8_t*>(live - 1)) < (kEntries + 1) * sizeof(void*))
 			{
+				s_installed.store(false);
 				Console.Error("kzgs: SMAA unavailable (vtable region too small)");
 				return;
 			}
@@ -500,5 +509,16 @@ namespace kzgs
 			s_vtableCopy[1 + s_slot] = reinterpret_cast<void*>(&KzDoFXAA);
 		}
 		*reinterpret_cast<void***>(g_gs_device.get()) = s_vtableCopy + 1;
+		s_installed.store(true);
 	}
 } // namespace kzgs
+
+bool kzgsSmaaAvailable()
+{
+	return s_installed.load();
+}
+
+bool kzgsSmaaEffective()
+{
+	return s_installed.load() && s_enabled.load() && !s_failed.load();
+}

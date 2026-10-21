@@ -13,10 +13,11 @@
 
 class PS2Runtime;
 
-// An empty native window selects an offscreen device. windowHeight drives the automatic internal resolution.
+// An empty native window selects an offscreen device. The physical output size drives the automatic internal scale.
 bool kzGsAttach(
     PS2Runtime &runtime,
     const kz::host::NativeWindow &window,
+    int windowWidth,
     int windowHeight,
     const KzConfig &cfg,
     std::string *error);
@@ -32,3 +33,10 @@ void kzGsSetScreenshotSchedule(const std::string &dir, int intervalSeconds);
 
 // Frames presented so far (vblanks forwarded to kzgs).
 uint64_t kzGsFrameCount();
+
+// TEST-01 measurement event: value read by the guest for its default fire action (button id 9/R1).
+// No-op unless KZ_SHOT_DIR enabled the versioned capture metadata stream.
+void kzGsRecordFireButtonValue(float value);
+
+// Pure render/output contract checks used by the product self-test.
+int kzGsSelfTest();

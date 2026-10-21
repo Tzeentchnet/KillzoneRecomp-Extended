@@ -11,6 +11,102 @@ behind each item are in [`docs/findings.md`](docs/findings.md), [`docs/assetform
 Each entry records: commit, date, machine and toolchain, acceptance commands and results, decisions, and residual
 risk. Do not edit an entry's evidence after the fact. If a later run disagrees, add a new dated re-verification.
 
+## BASE-01 - Windows enhancement baseline
+
+- **Completed:** 2026-10-20; parent commit pending.
+- **Machine:** Windows 11 x64; clang-cl D3D12 on NVIDIA GeForce RTX 5070, driver `32.0.16.1742`; borderless
+  high-refresh display; mouse/keyboard, controller and speakers.
+- **Configuration:** all testing options off, normal memory card, D3D12, automatic internal scale, original
+  `RenderDistance=1` and `LodScale=1`. A VSync A/B showed visible tearing at `VSync=0` and none at `VSync=1`; the
+  human owner selected `VSync=1` as the recorded comparison baseline.
+- **Hands-on acceptance:** normal profile selection and first-mission gameplay passed; Quit to menu and Continue/load
+  resumed saved progress; game timing and mouse aim passed; controller movement, aiming, buttons and menus passed;
+  closing the window exited promptly with code 0 and no crash or hang.
+- **Scripted evidence:** the earlier 120-second isolated-card D3D12 run reached first-mission gameplay, exited 0,
+  produced 11 distinct nonblack captures through 110 seconds and logged no crash signature.
+- **Observed baseline issues:** aggressive short-distance LOD pop-in is direct input to GFX-03. AUDIO-01 separately
+  tracks repeatable roughly 100 ms truncation of effects/dialogue during first-mission firefights.
+- **Protected-content disposition:** no retail path, save data or screenshot is committed.
+
+## TEST-01 - Graphics and weapon measurement harness
+
+- **Completed:** 2026-10-20; parent commit pending.
+- **Contract:** every `KZ_SHOT_DIR` run writes `capture.jsonl` schema 1. The path-free run record contains guest-vsync
+  clock/rate, renderer and adapter identity, effective graphics configuration and effective testing/card mode.
+  Frame records link each internal, presented or swap-chain capture to `frame_id == guest_vsync`, guest time and
+  present sequence. Default fire-action press/release transitions are recorded where the guest pad provider consumes
+  them.
+- **Compatibility:** existing `gs_*.png`, `gp_*.png`, `gb_*.png`, texture-cache dumps and burst CSV names remain
+  unchanged. Burst CSV adds `guest_vsync`; metadata maps kzgs burst sequence IDs to the actual present sequence.
+- **Tooling:** `tools/scripts/verify_capture_metadata.py` validates the stream and referenced images, rejects absolute
+  paths, emits protected-content-safe SHA-256/count/config summaries, and aligns repeated runs by nearest same-type
+  events within one guest second.
+- **Acceptance results:**
+
+| Command / run | Result |
+|---|---|
+| `python tools\scripts\verify_capture_metadata.py --selftest` | PASS |
+| Two 38-second D3D12 chapter-1 runs with guest-clocked R1 windows | Both exit 0; seven frame records each |
+| First run metadata | PASS: six fire events |
+| Repeated-run comparison | PASS: four events aligned, maximum guest-vsync delta 2; two explicitly unmatched events |
+| Presented-output burst run | PASS: four 1280x896 frame records with monotonic guest-vsync IDs |
+| `kz_product_selftest` | PASS |
+
+- **Protected-content disposition:** runtime images, cards and full JSONL remain untracked under `work/`. Summaries
+  contain only hashes, counts, dimensions, safe configuration and event/frame IDs.
+
+## GFX-01 - D3D12 presentation and post-process parity
+
+- **Completed:** 2026-10-20; parent commit pending.
+- **Truthful capability policy:** SMAA remains a persisted D3D11 preference but is disabled and labeled unavailable
+  in the launcher on D3D12/Vulkan. D3D12 does not silently substitute FXAA. Runtime logs and TEST-01 metadata report
+  effective AA (`none` on the accepted baseline), SMAA availability/effectiveness, CAS, final scaling and crop.
+- **Measurement path:** D3D12 now supports exact swap-chain back-buffer bursts before Present, after final scaling and
+  CAS. The offline GS replay exposes FXAA/SMAA request, CAS, bilinear/sharp scaling, crop, present dimensions and
+  back-buffer capture. `image_compare.py` emits path-free hashes and pixel-delta metrics.
+- **Deterministic gameplay-trace results (four 1600x900 final frames):**
+
+| Arm vs baseline | Identical | Changed pixels | Mean absolute RGB | Max delta |
+|---|---:|---:|---:|---:|
+| Requested SMAA on D3D12 | 4/4 | 0.000% | 0.0000 | 0 |
+| FXAA on | 0/4 | 8.611% | 0.0985 | 36 |
+| CAS 30 vs CAS off | 0/4 | 19.243% | 0.1576 | 16 |
+| Sharp bilinear vs smooth bilinear | 0/4 | 32.816% | 0.2750 | 25 |
+| Crop `4,3,4,4` vs uncropped | 0/4 | 65.555% | 2.4556 | 120 |
+
+- **Lifecycle acceptance:** the hardware D3D12 integration test passes 800x600 resize, zero-size minimize followed by
+  640x448 restore, injected device-loss recovery, GIF ring stress, packet continuation and D3D12-to-D3D11 renderer
+  restart with correct nonblack output.
+- **Protected-content disposition:** the GS trace and images remain untracked under `work/`; recorded evidence is
+  limited to counts, dimensions, hashes and pixel-delta metrics.
+
+## GFX-02 - Explicit internal-render/output contract
+
+- **Completed:** 2026-10-20; parent commit pending.
+- **Compatibility:** no INI schema or default changed. `Upscale=0` still selects the smallest integer scale whose
+  448-line target covers the output height, clamped to 1x-8x, when the renderer starts or settings are applied.
+  Explicit `Upscale=1..8` remains fixed across output resizes; zero-size minimize retains the last valid output.
+- **Diagnostics:** startup and `capture.jsonl` report scale source, configured/effective scale, target height, output
+  size, aspect/crop/filter and declared pipeline order. Completed-frame telemetry reports exact active GS render and
+  physical swap-chain dimensions; it does not assume a 640-pixel GS width.
+- **Product D3D12 matrix (`Upscale=0`, eight seconds per isolated BYOD run):**
+
+| Output | Effective scale | Exact Killzone render | Frames | Exit |
+|---|---:|---:|---:|---:|
+| 1280x720 | 2x | 1024x896 | 3 | 0 |
+| 1920x1080 | 3x | 1536x1344 | 3 | 0 |
+| 2560x1440 | 4x | 2048x1792 | 4 | 0 |
+| 3840x2160 | 5x | 2560x2240 | 3 | 0 |
+
+- **Separation/lifecycle matrix:** the synthetic D3D12 scene remains exactly 1280x896 at fixed 2x while physical
+  outputs change through 1280x720, 1920x1080, 2560x1440 and 3840x2160. All swap-chain captures have the requested
+  dimensions and nonblack output. The same run passes 800x600 ordinary resize, minimize/640x448 restore, device-loss
+  recovery, GIF ring stress, packet continuation and renderer restart.
+- **Controlled experiments:** `KZ_UPSCALE` remains an explicit automation-only override, allowing a fixed sub-output
+  input without changing player defaults or legacy INIs.
+- **Protected-content disposition:** product images, cards, logs and JSONL remain untracked under `work/`; committed
+  evidence contains only dimensions, counts and effective configuration.
+
 ## PROFILE-01 - Default `Shooterman` isolated test profile
 
 - **Completed:** 2026-10-20 in the current working tree; commit pending.

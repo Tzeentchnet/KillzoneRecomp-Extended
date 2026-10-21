@@ -26,6 +26,58 @@
 
 namespace
 {
+    constexpr int kReferenceRenderHeight = 448;
+
+    enum class RenderScaleMode
+    {
+        AutoOutputHeight,
+        FixedInteger,
+        AutomationOverride,
+    };
+
+    struct RenderScaleContract
+    {
+        RenderScaleMode mode = RenderScaleMode::AutoOutputHeight;
+        int configuredScale = 0;
+        int effectiveScale = 1;
+    };
+
+    const char *renderScaleModeName(RenderScaleMode mode)
+    {
+        switch (mode)
+        {
+        case RenderScaleMode::AutoOutputHeight: return "auto_output_height";
+        case RenderScaleMode::FixedInteger: return "fixed_integer";
+        case RenderScaleMode::AutomationOverride: return "automation_override";
+        }
+        return "unknown";
+    }
+
+    RenderScaleContract resolveRenderScale(int configuredScale, int outputHeight, const char *automationOverride)
+    {
+        RenderScaleContract contract;
+        contract.configuredScale = std::clamp(configuredScale, 0, 8);
+        if (automationOverride && *automationOverride)
+        {
+            contract.mode = RenderScaleMode::AutomationOverride;
+            contract.effectiveScale = std::clamp(std::atoi(automationOverride), 1, 8);
+        }
+        else if (contract.configuredScale > 0)
+        {
+            contract.mode = RenderScaleMode::FixedInteger;
+            contract.effectiveScale = contract.configuredScale;
+        }
+        else
+        {
+            contract.mode = RenderScaleMode::AutoOutputHeight;
+            contract.effectiveScale =
+                std::clamp((std::max(outputHeight, kReferenceRenderHeight) + kReferenceRenderHeight - 1) /
+                               kReferenceRenderHeight,
+                           1, 8);
+        }
+        return contract;
+    }
+
     // Delegates to the CPU backend for uploads/VRAM access but skips drawing and presentation, which kzgs does.
     class SkipDrawBackend final : public GSRasterBackend
     {
@@ -63,7 +115,12 @@ namespace
         int resizeW = 0, resizeH = 0;
         bool configPending = false;
         KzgsConfig pendingConfig;
+        RenderScaleContract pendingScale;
+        KzgsConfig activeConfig;
+        RenderScaleContract activeScale;
+        int windowWidth = 0;
         int windowHeight = 0;
+        KzgsResolutionInfo reportedResolution;
 
         std::string shotDir;
         int shotInterval = 0;
@@ -75,8 +132,14 @@ namespace
         // guest vblank during the capture (field, whether a frame was presented or skipped as unchanged, wall time).
         bool burstArmed = false;
         int burstIndex = 0;
-        uint64_t presentedSeq = 0;
-        std::vector<std::array<long long, 11>> vblankLog; // frame, field, presented, presentedSeq, ns, pmode, smode2, dispfb1, display1, dispfb2, display2
+        int burstCapturePoint = 0;
+        std::atomic<uint64_t> presentedSeq{0};
+        std::atomic<uint64_t> currentGuestVsync{0};
+        std::vector<std::array<long long, 12>> vblankLog; // frame, field, presented, presentedSeq, ns, pmode, smode2, dispfb1, display1, dispfb2, display2, guestVsync
+
+        std::mutex measurementMutex;
+        FILE *measurementFile = nullptr;
+        bool firePressed = false;
     };
 
     GsState &gs()
@@ -85,7 +148,7 @@ namespace
         return s;
     }
 
-    KzgsConfig toKzgs(const KzConfig &c, int windowHeight)
+    KzgsConfig toKzgs(const KzConfig &c, int windowHeight, RenderScaleContract *scaleContract = nullptr)
     {
         KzgsConfig k;
         switch (c.renderer)
@@ -100,10 +163,10 @@ namespace
                          : _stricmp(r, "software") == 0 || _stricmp(r, "sw") == 0
                              ? KzgsRenderer::Software
                              : KzgsRenderer::D3D11;
-        // Auto: smallest multiple of 448 lines that covers the window height.
-        k.upscale = c.upscale > 0 ? c.upscale : std::clamp((std::max(windowHeight, 448) + 447) / 448, 1, 8);
-        if (const char *u = std::getenv("KZ_UPSCALE")) // automation override
-            k.upscale = std::clamp(std::atoi(u), 1, 8);
+        const RenderScaleContract scale = resolveRenderScale(c.upscale, windowHeight, std::getenv("KZ_UPSCALE"));
+        k.upscale = scale.effectiveScale;
+        if (scaleContract)
+            *scaleContract = scale;
         k.textureFiltering = c.bilinear ? KzgsTextureFilter::PS2 : KzgsTextureFilter::Nearest;
         k.anisotropy = c.anisotropy;
         k.fxaa = c.fxaa;
@@ -161,6 +224,213 @@ namespace
         static const std::string gpu = kzPreferredGpuName();
         k.adapter = gpu;
         return k;
+    }
+
+    const char *rendererName(KzgsRenderer renderer)
+    {
+        switch (renderer)
+        {
+        case KzgsRenderer::D3D11: return "d3d11";
+        case KzgsRenderer::D3D12: return "d3d12";
+        case KzgsRenderer::Vulkan: return "vulkan";
+        case KzgsRenderer::Software: return "software";
+        }
+        return "unknown";
+    }
+
+    const char *aspectName(KzgsAspect aspect)
+    {
+        switch (aspect)
+        {
+        case KzgsAspect::Ratio4_3: return "4:3";
+        case KzgsAspect::Ratio16_9: return "16:9";
+        case KzgsAspect::Stretch: return "stretch";
+        }
+        return "unknown";
+    }
+
+    bool effectiveFxaa(const KzgsConfig &config)
+    {
+        return config.fxaa ||
+               (config.smaa && config.renderer == KzgsRenderer::D3D11 && !kzgsSmaaEffective());
+    }
+
+    const char *effectiveAaName(const KzgsConfig &config)
+    {
+        if (config.smaa && config.renderer == KzgsRenderer::D3D11 && kzgsSmaaEffective())
+            return "smaa";
+        if (effectiveFxaa(config))
+            return config.smaa && !config.fxaa ? "fxaa_fallback" : "fxaa";
+        return "none";
+    }
+
+    const char *scalingName(const KzgsConfig &config)
+    {
+        if (!config.bilinearPresent)
+            return "nearest";
+        return config.sharpPresent ? "sharp_bilinear" : "bilinear";
+    }
+
+    std::string jsonEscape(const std::string &value)
+    {
+        std::string escaped;
+        escaped.reserve(value.size());
+        for (const unsigned char c : value)
+        {
+            switch (c)
+            {
+            case '\\': escaped += "\\\\"; break;
+            case '"': escaped += "\\\""; break;
+            case '\n': escaped += "\\n"; break;
+            case '\r': escaped += "\\r"; break;
+            case '\t': escaped += "\\t"; break;
+            default:
+                if (c >= 0x20u)
+                    escaped.push_back(static_cast<char>(c));
+                break;
+            }
+        }
+        return escaped;
+    }
+
+    void writeConfigRecordLocked(GsState &s, const char *record)
+    {
+        if (!s.measurementFile)
+            return;
+        const KzgsConfig &k = s.activeConfig;
+        const KzConfig &c = kzConfig();
+        const std::string adapter = jsonEscape(k.adapter);
+        const auto envBool = [](const char *name, bool fallback)
+        {
+            const char *value = std::getenv(name);
+            return value && *value ? std::atoi(value) != 0 : fallback;
+        };
+        const auto envInt = [](const char *name, int fallback)
+        {
+            const char *value = std::getenv(name);
+            return value && *value ? std::atoi(value) : fallback;
+        };
+        const bool unlockAll = envBool("KZ_UNLOCK_ALL", c.unlockAllLevels);
+        const bool skipIntro = envBool("KZ_SKIP_INTRO", c.skipIntro);
+        const int startLevel = std::clamp(envInt("KZ_START_LEVEL", c.startLevel), 0, 11);
+        const int startDifficulty = std::clamp(envInt("KZ_START_DIFFICULTY", c.startDifficulty), 0, 2);
+        const char *cardMode = std::getenv("KZ_MC_ROOT") && std::getenv("KZ_MC_ROOT")[0] != '\0'
+                                   ? "explicit_isolated"
+                                   : c.testMemoryCard ? "test" : "normal";
+        std::fprintf(
+            s.measurementFile,
+            "{\"schema_version\":1,\"record\":\"%s\",\"source_id\":\"SCUS-97402\","
+            "\"clock\":\"guest_vsync\",\"timing_rate_hz\":%d,\"renderer\":\"%s\",\"adapter\":\"%s\","
+            "\"effective_config\":{\"upscale\":%d,"
+            "\"render_scale\":{\"mode\":\"%s\",\"configured\":%d,\"effective\":%d,"
+            "\"native_height\":%d,\"target_height\":%d},"
+            "\"output_resolution\":{\"width\":%d,\"height\":%d},"
+            "\"pipeline\":[\"gs_merge\",\"aa\",\"sharp_prescale_if_upscaling\","
+            "\"crop_aspect\",\"cas\",\"present_filter\"],"
+            "\"aspect\":\"%s\",\"anisotropy\":%d,"
+            "\"aa\":\"%s\",\"fxaa\":%s,\"smaa_requested\":%s,\"smaa_available\":%s,"
+            "\"smaa_effective\":%s,\"texture_replacement\":%s,"
+            "\"bilinear_present\":%s,\"sharp_present\":%s,\"cas_sharpness\":%d,\"vsync\":%s,"
+            "\"crop\":[%d,%d,%d,%d],\"interlace_mode\":%d,\"vertex_shader_expand\":%s,"
+            "\"max_queued_frames\":%d},"
+            "\"testing\":{\"unlock_all_levels\":%s,\"skip_intro\":%s,\"start_level\":%d,"
+            "\"start_difficulty\":%d,\"memory_card\":\"%s\"}}\n",
+            record, kzTimingRate(), rendererName(k.renderer), adapter.c_str(), k.upscale,
+            renderScaleModeName(s.activeScale.mode), s.activeScale.configuredScale, s.activeScale.effectiveScale,
+            kReferenceRenderHeight, kReferenceRenderHeight * k.upscale,
+            s.windowWidth, s.windowHeight, aspectName(k.aspect),
+            k.anisotropy, effectiveAaName(k), effectiveFxaa(k) ? "true" : "false",
+            k.smaa ? "true" : "false", kzgsSmaaAvailable() ? "true" : "false",
+            kzgsSmaaEffective() ? "true" : "false",
+            k.loadTextureReplacements ? "true" : "false", k.bilinearPresent ? "true" : "false",
+            k.sharpPresent ? "true" : "false", k.casSharpness, k.vsync ? "true" : "false",
+            k.crop[0], k.crop[1], k.crop[2], k.crop[3], k.interlaceMode,
+            k.vertexShaderExpand ? "true" : "false", k.maxQueuedFrames,
+            unlockAll ? "true" : "false", skipIntro ? "true" : "false", startLevel,
+            startDifficulty, cardMode);
+        std::fflush(s.measurementFile);
+    }
+
+    void reportResolution(GsState &s)
+    {
+        KzgsResolutionInfo current;
+        if (!kzgsGetResolutionInfo(current) ||
+            (current.renderWidth == s.reportedResolution.renderWidth &&
+             current.renderHeight == s.reportedResolution.renderHeight &&
+             current.outputWidth == s.reportedResolution.outputWidth &&
+             current.outputHeight == s.reportedResolution.outputHeight))
+            return;
+        s.reportedResolution = current;
+        const bool outputUpscale =
+            current.outputWidth > current.renderWidth || current.outputHeight > current.renderHeight;
+        std::cout << "[kz] effective resolution: render " << current.renderWidth << 'x' << current.renderHeight
+                  << " -> output " << current.outputWidth << 'x' << current.outputHeight
+                  << " (" << (outputUpscale ? "output upscale" : "native/downsample") << ')' << std::endl;
+
+        std::lock_guard<std::mutex> lock(s.measurementMutex);
+        if (!s.measurementFile)
+            return;
+        std::fprintf(
+            s.measurementFile,
+            "{\"schema_version\":1,\"record\":\"resolution\",\"guest_vsync\":%llu,"
+            "\"render_width\":%d,\"render_height\":%d,\"output_width\":%d,\"output_height\":%d,"
+            "\"output_upscale\":%s}\n",
+            static_cast<unsigned long long>(s.currentGuestVsync.load(std::memory_order_relaxed)),
+            current.renderWidth, current.renderHeight, current.outputWidth, current.outputHeight,
+            outputUpscale ? "true" : "false");
+        std::fflush(s.measurementFile);
+    }
+
+    void openMeasurement(GsState &s)
+    {
+        std::lock_guard<std::mutex> lock(s.measurementMutex);
+        if (s.measurementFile)
+        {
+            std::fclose(s.measurementFile);
+            s.measurementFile = nullptr;
+        }
+        s.firePressed = false;
+        if (s.shotDir.empty())
+            return;
+        const std::filesystem::path path = std::filesystem::path(s.shotDir) / "capture.jsonl";
+        s.measurementFile = std::fopen(path.string().c_str(), "w");
+        if (!s.measurementFile)
+        {
+            std::fprintf(stderr, "[kz-measure] cannot open %s\n", path.string().c_str());
+            return;
+        }
+        writeConfigRecordLocked(s, "run");
+    }
+
+    void closeMeasurement(GsState &s)
+    {
+        std::lock_guard<std::mutex> lock(s.measurementMutex);
+        if (!s.measurementFile)
+            return;
+        std::fprintf(s.measurementFile,
+                     "{\"schema_version\":1,\"record\":\"run_end\",\"guest_vsync\":%llu,"
+                     "\"present_seq\":%llu}\n",
+                     static_cast<unsigned long long>(s.currentGuestVsync.load(std::memory_order_relaxed)),
+                     static_cast<unsigned long long>(s.presentedSeq.load(std::memory_order_relaxed)));
+        std::fclose(s.measurementFile);
+        s.measurementFile = nullptr;
+    }
+
+    void recordCapture(GsState &s, const char *capturePoint, const char *file, int width, int height,
+                       uint64_t guestVsync, uint64_t presentSeq)
+    {
+        std::lock_guard<std::mutex> lock(s.measurementMutex);
+        if (!s.measurementFile)
+            return;
+        std::fprintf(
+            s.measurementFile,
+            "{\"schema_version\":1,\"record\":\"frame\",\"frame_id\":%llu,\"guest_vsync\":%llu,"
+            "\"guest_time_s\":%.9f,\"present_seq\":%llu,\"capture_point\":\"%s\","
+            "\"file\":\"%s\",\"width\":%d,\"height\":%d}\n",
+            static_cast<unsigned long long>(guestVsync), static_cast<unsigned long long>(guestVsync),
+            kzTimingRate() > 0 ? static_cast<double>(guestVsync) / kzTimingRate() : 0.0,
+            static_cast<unsigned long long>(presentSeq), capturePoint, file, width, height);
+        std::fflush(s.measurementFile);
     }
 
     // Runtime GSRegisters -> PCSX2 GSPrivRegSet layout (see kzgs.h), into `out` (0x2000 bytes).
@@ -235,11 +505,19 @@ namespace
         int w = 0, h = 0;
         char name[96];
         const int index = s.shotIndex++;
+        const uint64_t guestVsync = s.currentGuestVsync.load(std::memory_order_relaxed);
+        const uint64_t presentSeq = s.presentedSeq.load(std::memory_order_relaxed);
         if (kzgsReadback(rgba, w, h) && w > 0 && h > 0)
         {
             std::snprintf(name, sizeof(name), "/gs_%03d_t%llds_f%llu.png", index, seconds, static_cast<unsigned long long>(s.frames.load(std::memory_order_relaxed)));
-            savePng((s.shotDir + name).c_str(), rgba, w, h);
+            if (savePng((s.shotDir + name).c_str(), rgba, w, h))
+                recordCapture(s, "gs_internal", name + 1, w, h, guestVsync, presentSeq);
+            else
+                std::fprintf(stderr, "[kz-measure] failed to save %s\n", (s.shotDir + name).c_str());
         }
+        else
+            std::fprintf(stderr, "[kz-measure] internal readback failed at guest vsync %llu\n",
+                         static_cast<unsigned long long>(guestVsync));
         static const bool present = std::getenv("KZ_SHOT_PRESENT") && std::getenv("KZ_SHOT_PRESENT")[0] == '1';
         if (present)
         {
@@ -249,8 +527,14 @@ namespace
             if (kzgsReadback(rgba, w, h, ww, wh) && w > 0 && h > 0)
             {
                 std::snprintf(name, sizeof(name), "/gp_%03d_t%llds_f%llu.png", index, seconds, static_cast<unsigned long long>(s.frames.load(std::memory_order_relaxed)));
-                savePng((s.shotDir + name).c_str(), rgba, w, h);
+                if (savePng((s.shotDir + name).c_str(), rgba, w, h))
+                    recordCapture(s, "presented_output", name + 1, w, h, guestVsync, presentSeq);
+                else
+                    std::fprintf(stderr, "[kz-measure] failed to save %s\n", (s.shotDir + name).c_str());
             }
+            else
+                std::fprintf(stderr, "[kz-measure] presented readback failed at guest vsync %llu\n",
+                             static_cast<unsigned long long>(guestVsync));
         }
     }
 
@@ -273,7 +557,24 @@ namespace
         {
             std::snprintf(name, sizeof(name), "/gb_%02d_%04llu_fld%d_sm%d_fb%d-%d-%d-%d%s.png", index, static_cast<unsigned long long>(b.seq), b.field, b.scanmask, b.rc[0], b.rc[1], b.rc[2], b.rc[3],
                           b.gameDeint ? "_deint" : "");
-            savePng((s.shotDir + name).c_str(), b.rgba, b.width, b.height);
+            uint64_t guestVsync = s.currentGuestVsync.load(std::memory_order_relaxed);
+            uint64_t presentSeq = b.seq;
+            for (const auto &line : s.vblankLog)
+                if (static_cast<uint64_t>(line[3]) == b.seq + 1u)
+                {
+                    guestVsync = static_cast<uint64_t>(line[11]);
+                    presentSeq = static_cast<uint64_t>(line[3]);
+                    break;
+                }
+            if (savePng((s.shotDir + name).c_str(), b.rgba, b.width, b.height))
+            {
+                const char *point = s.burstCapturePoint == 2 ? "swapchain_backbuffer"
+                                    : s.burstCapturePoint == 1 ? "presented_output"
+                                                               : "gs_internal_burst";
+                recordCapture(s, point, name + 1, b.width, b.height, guestVsync, presentSeq);
+            }
+            else
+                std::fprintf(stderr, "[kz-measure] failed to save %s\n", (s.shotDir + name).c_str());
         }
         for (auto &b : frames)
         {
@@ -287,11 +588,11 @@ namespace
         std::snprintf(name, sizeof(name), "/gb_%02d.csv", index);
         if (FILE *f = std::fopen((s.shotDir + name).c_str(), "w"))
         {
-            std::fprintf(f, "vblank_frame,field,presented,present_seq,ns,pmode,smode2,dispfb1,display1,dispfb2,display2\n");
+            std::fprintf(f, "vblank_frame,field,presented,present_seq,ns,pmode,smode2,dispfb1,display1,dispfb2,display2,guest_vsync\n");
             for (auto &l : s.vblankLog)
-                std::fprintf(f, "%lld,%lld,%lld,%lld,%lld,%llx,%llx,%llx,%llx,%llx,%llx\n", l[0], l[1], l[2], l[3], l[4],
+                std::fprintf(f, "%lld,%lld,%lld,%lld,%lld,%llx,%llx,%llx,%llx,%llx,%llx,%lld\n", l[0], l[1], l[2], l[3], l[4],
                              static_cast<unsigned long long>(l[5]), static_cast<unsigned long long>(l[6]), static_cast<unsigned long long>(l[7]),
-                             static_cast<unsigned long long>(l[8]), static_cast<unsigned long long>(l[9]), static_cast<unsigned long long>(l[10]));
+                             static_cast<unsigned long long>(l[8]), static_cast<unsigned long long>(l[9]), static_cast<unsigned long long>(l[10]), l[11]);
             std::fclose(f);
         }
         s.vblankLog.clear();
@@ -471,6 +772,7 @@ namespace
     // EE saw them at the vblank.
     struct VsyncJob
     {
+        uint64_t guestVsync = 0;
         int field = 0;
         alignas(16) uint8_t regs[0x2000] = {};
     };
@@ -499,16 +801,28 @@ namespace
         if (!s.attached.load(std::memory_order_acquire))
             return;
         const int field = job->field;
+        s.currentGuestVsync.store(job->guestVsync, std::memory_order_relaxed);
         {
             std::lock_guard<std::mutex> lock(s.pendingMutex);
             if (s.resizePending)
             {
                 kzgsResize(s.resizeW, s.resizeH);
+                if (s.resizeW > 0 && s.resizeH > 0)
+                {
+                    s.windowWidth = s.resizeW;
+                    s.windowHeight = s.resizeH;
+                }
                 s.resizePending = false;
             }
             if (s.configPending)
             {
                 kzgsUpdateConfig(s.pendingConfig);
+                s.activeConfig = s.pendingConfig;
+                s.activeScale = s.pendingScale;
+                {
+                    std::lock_guard<std::mutex> measurementLock(s.measurementMutex);
+                    writeConfigRecordLocked(s, "config");
+                }
                 s.configPending = false;
             }
         }
@@ -544,16 +858,18 @@ namespace
             presentedOnce = true;
             kzgsVsync(field, regsChanged || !presentedOnce);
         }
+        reportResolution(s);
         if (didPresent)
-            ++s.presentedSeq;
+            s.presentedSeq.fetch_add(1, std::memory_order_relaxed);
         if (s.burstArmed)
         {
             s.vblankLog.push_back({static_cast<long long>(s.frames.load(std::memory_order_relaxed)), field, didPresent ? 1 : 0,
-                                   static_cast<long long>(s.presentedSeq),
+                                   static_cast<long long>(s.presentedSeq.load(std::memory_order_relaxed)),
                                    std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - s.start).count(),
                                    static_cast<long long>(rd64(s.privRegs, 0x00)), static_cast<long long>(rd64(s.privRegs, 0x20)),
                                    static_cast<long long>(rd64(s.privRegs, 0x70)), static_cast<long long>(rd64(s.privRegs, 0x80)),
-                                   static_cast<long long>(rd64(s.privRegs, 0x90)), static_cast<long long>(rd64(s.privRegs, 0xA0))});
+                                   static_cast<long long>(rd64(s.privRegs, 0x90)), static_cast<long long>(rd64(s.privRegs, 0xA0)),
+                                   static_cast<long long>(job->guestVsync)});
             burstFinish(s);
         }
         s.frames.fetch_add(1, std::memory_order_relaxed);
@@ -581,6 +897,7 @@ namespace
                             std::sscanf(v, "%dx%d", &ww, &wh);
                     }
                     s.vblankLog.clear();
+                    s.burstCapturePoint = burstPresent;
                     s.burstArmed = true;
                     kzgsBurstArm(burstN, ww, wh);
                 }
@@ -590,12 +907,13 @@ namespace
         }
     }
 
-    void onVsync(uint64_t, int field)
+    void onVsync(uint64_t guestVsync, int field)
     {
         GsState &s = gs();
         kzTimingOnVsync(s.runtime->memory().getRDRAM());
         kzPatchesApply(s.runtime->memory().getRDRAM(), kzConfig());
         auto *job = new VsyncJob;
+        job->guestVsync = guestVsync;
         job->field = field;
         snapshotPrivRegs(s, job->regs);
         ps2RunAfterQueuedGif(&runVsync, job);
@@ -612,6 +930,7 @@ namespace
 bool kzGsAttach(
     PS2Runtime &runtime,
     const kz::host::NativeWindow &window,
+    int windowWidth,
     int windowHeight,
     const KzConfig &cfg,
     std::string *error)
@@ -621,9 +940,12 @@ bool kzGsAttach(
     kzgsSetLogCallback(&onLog);
     if (const char *tl = std::getenv("KZ_TIMELINE"); tl && *tl) // the hook costs a clock read per GS idle wait: only when recording
         kzgsSetTraceHook(&onKzgsTrace);
+    s.windowWidth = windowWidth;
     s.windowHeight = windowHeight;
+    s.reportedResolution = {};
     snapshotPrivRegs(s, s.privRegs);
-    KzgsConfig kc = toKzgs(cfg, windowHeight);
+    RenderScaleContract scale;
+    KzgsConfig kc = toKzgs(cfg, windowHeight, &scale);
     if (!kzgsOpen(window, kc, s.privRegs, error))
         return false;
     runtime.gs().setRasterBackend(std::make_unique<SkipDrawBackend>());
@@ -636,10 +958,25 @@ bool kzGsAttach(
     hooks.exclusive = !(std::getenv("KZ_SW_GS") && std::getenv("KZ_SW_GS")[0] == '1');
     ps2SetHostGs(hooks);
     s.attached = true;
+    s.activeConfig = kc;
+    s.activeScale = scale;
+    s.frames.store(0, std::memory_order_relaxed);
+    s.presentedSeq.store(0, std::memory_order_relaxed);
+    s.currentGuestVsync.store(0, std::memory_order_relaxed);
     static const char *kRendererNames[] = {"D3D11", "D3D12", "Vulkan"};
     const int rendererIndex = static_cast<int>(kc.renderer);
     std::cout << "[kz] hardware GS attached (" << (rendererIndex >= 0 && rendererIndex < 3 ? kRendererNames[rendererIndex] : "?")
               << ", upscale " << kc.upscale << "x)" << std::endl;
+    std::cout << "[kz] resolution contract: render_scale=" << renderScaleModeName(scale.mode)
+              << " (configured " << scale.configuredScale << ", effective " << scale.effectiveScale
+              << "x, target height " << kReferenceRenderHeight * scale.effectiveScale << "), output="
+              << windowWidth << 'x' << windowHeight << "; resize changes output only" << std::endl;
+    std::cout << "[kz] effective post-process: aa=" << effectiveAaName(kc)
+              << ", cas=" << kc.casSharpness
+              << ", scaling=" << scalingName(kc)
+              << ", crop=" << kc.crop[0] << ',' << kc.crop[1] << ',' << kc.crop[2] << ',' << kc.crop[3]
+              << (kc.smaa && kc.renderer != KzgsRenderer::D3D11 ? " (SMAA requested but unavailable)" : "")
+              << std::endl;
     return true;
 }
 
@@ -651,6 +988,7 @@ void kzGsDetach()
     ps2FlushQueuedGif(); // vsync jobs still queued on the VIF1 worker use kzgs
     s.attached = false;
     ps2SetHostGs(PS2HostGs{});
+    closeMeasurement(s);
     kzgsClose();
 }
 
@@ -661,14 +999,14 @@ void kzGsResize(int width, int height)
     s.resizePending = true;
     s.resizeW = width;
     s.resizeH = height;
-    s.windowHeight = height;
 }
 
 void kzGsApplyConfig(const KzConfig &cfg)
 {
     GsState &s = gs();
     std::lock_guard<std::mutex> lock(s.pendingMutex);
-    s.pendingConfig = toKzgs(cfg, s.windowHeight);
+    const int outputHeight = s.resizePending && s.resizeH > 0 ? s.resizeH : s.windowHeight;
+    s.pendingConfig = toKzgs(cfg, outputHeight, &s.pendingScale);
     s.configPending = true;
 }
 
@@ -681,9 +1019,74 @@ void kzGsSetScreenshotSchedule(const std::string &dir, int intervalSeconds)
     s.nextShot = s.start + std::chrono::seconds(s.shotInterval);
     if (!dir.empty())
         std::filesystem::create_directories(dir);
+    openMeasurement(s);
 }
 
 uint64_t kzGsFrameCount()
 {
     return gs().frames.load(std::memory_order_relaxed);
+}
+
+int kzGsSelfTest()
+{
+    int failures = 0;
+    const auto check = [&](bool condition, const char *label)
+    {
+        if (!condition)
+        {
+            std::cerr << "[selftest] FAIL: " << label << std::endl;
+            ++failures;
+        }
+    };
+    struct MatrixCase
+    {
+        int width;
+        int height;
+        int scale;
+    };
+    constexpr MatrixCase matrix[] = {
+        {1280, 720, 2},
+        {1920, 1080, 3},
+        {2560, 1440, 4},
+        {3840, 2160, 5},
+    };
+    for (const MatrixCase &entry : matrix)
+    {
+        const RenderScaleContract contract = resolveRenderScale(0, entry.height, nullptr);
+        std::cout << "[selftest] resolution " << entry.width << 'x' << entry.height
+                  << ": auto -> " << contract.effectiveScale << "x target height "
+                  << kReferenceRenderHeight * contract.effectiveScale << std::endl;
+        check(contract.mode == RenderScaleMode::AutoOutputHeight &&
+                  contract.configuredScale == 0 && contract.effectiveScale == entry.scale,
+              "auto render/output matrix");
+    }
+    check(resolveRenderScale(3, 2160, nullptr).effectiveScale == 3,
+          "legacy fixed Upscale remains independent of output");
+    check(resolveRenderScale(0, 0, nullptr).effectiveScale == 1,
+          "invalid/minimized output uses native fallback");
+    const RenderScaleContract override = resolveRenderScale(0, 2160, "2");
+    check(override.mode == RenderScaleMode::AutomationOverride && override.effectiveScale == 2,
+          "automation can request a controlled sub-output input");
+    return failures;
+}
+
+void kzGsRecordFireButtonValue(float value)
+{
+    GsState &s = gs();
+    const bool pressed = value > 0.1f;
+    std::lock_guard<std::mutex> lock(s.measurementMutex);
+    if (!s.measurementFile || pressed == s.firePressed)
+        return;
+    s.firePressed = pressed;
+    const uint64_t guestVsync = s.currentGuestVsync.load(std::memory_order_relaxed);
+    const uint64_t presentSeq = s.presentedSeq.load(std::memory_order_relaxed);
+    std::fprintf(
+        s.measurementFile,
+        "{\"schema_version\":1,\"record\":\"event\",\"event\":\"player_fire_input\","
+        "\"edge\":\"%s\",\"button_id\":9,\"guest_vsync\":%llu,\"guest_time_s\":%.9f,"
+        "\"present_seq\":%llu}\n",
+        pressed ? "press" : "release", static_cast<unsigned long long>(guestVsync),
+        kzTimingRate() > 0 ? static_cast<double>(guestVsync) / kzTimingRate() : 0.0,
+        static_cast<unsigned long long>(presentSeq));
+    std::fflush(s.measurementFile);
 }

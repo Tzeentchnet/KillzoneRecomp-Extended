@@ -80,6 +80,7 @@ void kzgsWriteCSR(uint32_t csr);                      // RESET bit
 void kzgsSoftReset(uint32_t mask = 7);                // GIF path soft reset
 void kzgsReset();                                     // full GS reset
 void kzgsResize(int width, int height);
+bool kzgsGetResolutionInfo(KzgsResolutionInfo& out);  // latest exact render and physical output dimensions
 void kzgsUpdateConfig(const KzgsConfig& cfg);         // any setting, including a renderer switch
 void kzgsSync();                                      // wait until the GS thread has drained the queue
 bool kzgsReadback(std::vector<uint8_t>& rgba, int& w, int& h,
