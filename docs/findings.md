@@ -1825,8 +1825,12 @@ The deterministic four-frame GS replay does isolate renderer-only controls. On t
 - texture replacement off versus on with an empty replacement directory is 4/4 byte-identical;
 - CAS 30 remains independently measured by GFX-01 (19.243% changed versus off).
 
-The identical anisotropy arm is scene-specific, not proof that the control is ineffective globally. GFX-03 remains
-open for a deterministic textured-angle scene, campaign/checkpoint coverage and safe elevated distance/LOD ranges.
+PCSX2 enables anisotropy only for triangle primitives which do not use its shader-emulated sampler and do not use
+manual trilinear LOD. Paletted textures, render-target textures, complex clamp/depth cases, sprites and manual-mipmap
+draws bypass it. The launcher now describes that eligibility instead of promising every ground/wall texture will
+change. The identical trace arm is still scene-specific, not proof that the eligible path is globally ineffective.
+GFX-03 remains open for a deterministic textured-angle scene, campaign/checkpoint coverage and safe elevated
+distance/LOD ranges.
 
 ## Testing options (2026-10-17)
 

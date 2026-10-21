@@ -358,7 +358,8 @@ namespace
                         const char *filterings[] = {"Bilinear (as the game intends)", "Nearest (blocky pixels)"};
                         if (ImGui::Combo("##filtering", &filtering, filterings, 2))
                             cfg.bilinear = filtering == 0;
-                        row("Anisotropic filtering", "Keeps ground and wall textures sharp at a distance.");
+                        row("Anisotropic filtering",
+                            "Improves eligible angled triangle textures. Paletted, sprite and manual-mipmap draws are unaffected.");
                         const int anisoValues[] = {0, 2, 4, 8, 16};
                         const char *aniso[] = {"Off", "2x", "4x", "8x", "16x"};
                         int anisoIdx = static_cast<int>(std::find(std::begin(anisoValues), std::end(anisoValues), cfg.anisotropy) - std::begin(anisoValues));
