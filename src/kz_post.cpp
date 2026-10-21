@@ -5,7 +5,10 @@
 
 #include "ps2_runtime.h"
 
+#include <algorithm>
 #include <atomic>
+#include <cerrno>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -25,7 +28,9 @@
 //   0x339C38 RenderZoneManager blend (a0 manager, a1 camera, a2 out): picks the zone around the camera (blending two
 //            at a boundary) and writes out[0] far plane (min of far plane and fog end when fog is on), out+4 byte fog
 //            enabled, out[2] fog start, out[3] fog end, out[4]/[5] densities, out[6] colour. Returns 1 when a zone
-//            was found. The hook scales out[0], out[2], out[3] by the render distance factor.
+//            was found. Recompiled function wrappers cannot inspect those results after a guest return. The hooks
+//            therefore scale the finalized consumers: far plane at 0x1C1A2C and fog start/end at 0x151180, gated to
+//            the three RenderZone call sites.
 //   0x1C2168 LOD scale from the camera's field of view (f12 = fov, a0 = game object): ctx+0x1AC = obj[0x1C] *
 //            tan(refFov/2) / tan(fov/2), the divisor of every distance the LOD selectors compare with the LOD tables
 //            (static: 0x3F4E70, skinned: 0x3F4F10, multi-mesh: 0x3EFAD8 ...). The hook scales obj[0x1C] around the call.
@@ -38,9 +43,15 @@ namespace
     constexpr uint32_t kLensBlur = kz_hook::LensBlur;
     constexpr uint32_t kPostRender = kz_hook::PostRender; // post-process render (a0 = PostProcess object)
     constexpr uint32_t kNoiseStrengthOffset = 0x284u;  // film grain alpha; the pass is skipped below 2/255
-    constexpr uint32_t kZoneParams = kz_hook::ZoneParams;
+    constexpr uint32_t kFarPlaneApply = kz_hook::FarPlaneApply;
+    constexpr uint32_t kFogParams = kz_hook::FogParams;
     constexpr uint32_t kLodScale = kz_hook::LodScale;
     constexpr uint32_t kRamMask = 0x01FFFFFFu;
+    constexpr uint32_t kRamSize = 0x02000000u;
+    constexpr float kRenderDistanceMin = 1.0f;
+    constexpr float kRenderDistanceMax = 16.0f;
+    constexpr float kLodScaleMin = 0.25f;
+    constexpr float kLodScaleMax = 16.0f;
 
     bool g_motionBlur = false;
     bool g_glow = false;
@@ -52,11 +63,13 @@ namespace
     PS2Runtime::RecompiledFunction g_origFrameBlend = nullptr;
     PS2Runtime::RecompiledFunction g_origLensBlur = nullptr;
     PS2Runtime::RecompiledFunction g_origPostRender = nullptr;
-    PS2Runtime::RecompiledFunction g_origZoneParams = nullptr;
+    PS2Runtime::RecompiledFunction g_origFarPlaneApply = nullptr;
+    PS2Runtime::RecompiledFunction g_origFogParams = nullptr;
     PS2Runtime::RecompiledFunction g_origLodScale = nullptr;
     float g_renderDistance = 1.0f;
     float g_lodScale = 1.0f;
-    std::atomic<int> g_zoneCalls{0}, g_lodCalls{0};
+    std::atomic<int> g_farPlaneCalls{0}, g_fogCalls{0}, g_lodCalls{0};
+    std::atomic<int> g_invalidZoneValues{0}, g_invalidLodValues{0};
 
     std::atomic<int> g_glowCalls{0}, g_blendCalls{0}, g_lensCalls{0};
     std::atomic<int> g_glowSkipped{0}, g_blendSkipped{0}, g_lensSkipped{0};
@@ -124,39 +137,96 @@ namespace
     }
     void wrF(uint8_t *rdram, uint32_t a, float v) { std::memcpy(rdram + (a & kRamMask), &v, 4); }
 
-    void zoneParams(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
+    bool scaledFinite(float value, float scale, float &result)
     {
-        const bool entry = entering(ctx, kZoneParams);
-        const uint32_t out = getRegU32(ctx, 6);
-        g_origZoneParams(rdram, ctx, rt);
-        // A normal return (pc == ra) with v0 = 1: a zone was found and out[] is filled in.
-        if (entry && getRegU32(ctx, 2) == 1u && out >= 0x00100000u && out < 0x02000000u)
+        result = value * scale;
+        return std::isfinite(value) && std::isfinite(result);
+    }
+
+    void farPlaneApply(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
+    {
+        const uint32_t out = getRegU32(ctx, 29);
+        if (entering(ctx, kFarPlaneApply) && getRegU32(ctx, 2) == 1u &&
+            out >= 0x00100000u && out <= kRamSize - 4u)
         {
-            const int n = ++g_zoneCalls;
+            const float farPlane = rdF(rdram, out);
+            float scaledFar = 0.0f;
+            const bool valid = scaledFinite(farPlane, g_renderDistance, scaledFar);
+            const int n = ++g_farPlaneCalls;
             if (g_log && (n == 1 || n % 600 == 0))
-                std::printf("[kz-post] zone params: far %.1f fog %d start %.1f end %.1f (x%.2f)\n", rdF(rdram, out),
-                            rdram[(out + 4) & kRamMask], rdF(rdram, out + 8), rdF(rdram, out + 12), g_renderDistance);
-            wrF(rdram, out, rdF(rdram, out) * g_renderDistance);
-            if (rdram[(out + 4) & kRamMask])
+                std::printf("[kz-post] far plane call %d: %.1f -> %.1f (x%.2f)\n",
+                            n, farPlane, scaledFar, g_renderDistance);
+            if (!valid)
             {
-                wrF(rdram, out + 8, rdF(rdram, out + 8) * g_renderDistance);
-                wrF(rdram, out + 12, rdF(rdram, out + 12) * g_renderDistance);
+                if (g_invalidZoneValues.fetch_add(1) == 0)
+                    std::fprintf(stderr, "[kz] view distance: ignored a non-finite far plane\n");
+            }
+            else
+            {
+                wrF(rdram, out, scaledFar);
             }
         }
+        g_origFarPlaneApply(rdram, ctx, rt);
+    }
+
+    bool isRenderZoneFogCall(uint32_t returnAddress)
+    {
+        return returnAddress == 0x001C1C30u ||
+               returnAddress == 0x001C1D08u ||
+               returnAddress == 0x001EE260u;
+    }
+
+    void fogParams(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
+    {
+        if (entering(ctx, kFogParams) && getRegU32(ctx, 5) == 0x101u &&
+            isRenderZoneFogCall(getRegU32(ctx, 31)))
+        {
+            const float fogStart = ctx->f[12];
+            const float fogEnd = ctx->f[13];
+            float scaledStart = 0.0f, scaledEnd = 0.0f;
+            const bool valid = scaledFinite(fogStart, g_renderDistance, scaledStart) &&
+                               scaledFinite(fogEnd, g_renderDistance, scaledEnd);
+            const int n = ++g_fogCalls;
+            if (g_log && (n == 1 || n % 600 == 0))
+                std::printf("[kz-post] fog call %d: %.1f..%.1f -> %.1f..%.1f (x%.2f)\n",
+                            n, fogStart, fogEnd, scaledStart, scaledEnd, g_renderDistance);
+            if (!valid)
+            {
+                if (g_invalidZoneValues.fetch_add(1) == 0)
+                    std::fprintf(stderr, "[kz] view distance: ignored non-finite fog parameters\n");
+            }
+            else
+            {
+                ctx->f[12] = scaledStart;
+                ctx->f[13] = scaledEnd;
+            }
+        }
+        g_origFogParams(rdram, ctx, rt);
     }
 
     void lodScale(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
     {
-        const uint32_t obj = getRegU32(ctx, 4) + 0x1Cu;
-        const bool entry = entering(ctx, kLodScale) && obj >= 0x00100000u && obj < 0x02000000u;
+        const uint32_t base = getRegU32(ctx, 4);
+        const bool entry = entering(ctx, kLodScale) &&
+                           base >= 0x00100000u && base <= kRamSize - 0x20u;
+        const uint32_t obj = base + 0x1Cu;
         float saved = 0.0f;
         if (entry)
         {
             saved = rdF(rdram, obj);
-            wrF(rdram, obj, saved * g_lodScale);
-            const int n = ++g_lodCalls;
-            if (g_log && (n == 1 || n % 600 == 0))
-                std::printf("[kz-post] lod scale call %d: base %.3f x%.2f\n", n, saved, g_lodScale);
+            float scaled = 0.0f;
+            if (scaledFinite(saved, g_lodScale, scaled))
+            {
+                wrF(rdram, obj, scaled);
+                const int n = ++g_lodCalls;
+                if (g_log && (n == 1 || n % 600 == 0))
+                    std::printf("[kz-post] lod scale call %d: base %.3f -> %.3f (x%.2f)\n",
+                                n, saved, scaled, g_lodScale);
+            }
+            else if (g_invalidLodValues.fetch_add(1) == 0)
+            {
+                std::fprintf(stderr, "[kz] view distance: ignored non-finite LOD scale input\n");
+            }
         }
         g_origLodScale(rdram, ctx, rt);
         if (entry)
@@ -188,6 +258,39 @@ namespace
             return std::atoi(v) != 0;
         return value;
     }
+
+    float resolveDetailValue(
+        const char *name, const char *value, float fallback, float minimum, float maximum, bool reportDiagnostics)
+    {
+        if (!value || !*value)
+            return std::clamp(fallback, minimum, maximum);
+        errno = 0;
+        char *end = nullptr;
+        const float parsed = std::strtof(value, &end);
+        if (end == value || *end != '\0' || errno == ERANGE || !std::isfinite(parsed))
+        {
+            if (reportDiagnostics)
+                std::fprintf(stderr, "[kz] %s=%s is invalid; using %.2f\n", name, value, fallback);
+            return std::clamp(fallback, minimum, maximum);
+        }
+        const float result = std::clamp(parsed, minimum, maximum);
+        if (reportDiagnostics && result != parsed)
+            std::fprintf(stderr, "[kz] %s=%.3f is outside %.2f..%.2f; clamped to %.2f\n",
+                         name, parsed, minimum, maximum, result);
+        return result;
+    }
+}
+
+KzPostDetailSettings kzPostResolveDetailSettings(const KzConfig &config, bool reportDiagnostics)
+{
+    KzPostDetailSettings settings;
+    settings.renderDistance =
+        resolveDetailValue("KZ_RENDER_DISTANCE", std::getenv("KZ_RENDER_DISTANCE"), config.renderDistance,
+                           kRenderDistanceMin, kRenderDistanceMax, reportDiagnostics);
+    settings.lodScale =
+        resolveDetailValue("KZ_LOD_SCALE", std::getenv("KZ_LOD_SCALE"), config.lodScale,
+                           kLodScaleMin, kLodScaleMax, reportDiagnostics);
+    return settings;
 }
 
 void kzPostInstall(PS2Runtime &runtime)
@@ -200,19 +303,27 @@ void kzPostInstall(PS2Runtime &runtime)
         std::printf("[kz] film grain switch: hook FAILED\n");
     g_lensBlur = envFlag("KZ_LENS_BLUR", cfg.lensBlur);
     g_log = std::getenv("KZ_POST_LOG") != nullptr;
-    g_renderDistance = cfg.renderDistance;
-    g_lodScale = cfg.lodScale;
-    if (const char *v = std::getenv("KZ_RENDER_DISTANCE"); v && *v)
-        g_renderDistance = static_cast<float>(std::atof(v));
-    if (const char *v = std::getenv("KZ_LOD_SCALE"); v && *v)
-        g_lodScale = static_cast<float>(std::atof(v));
-    if (g_renderDistance != 1.0f || g_lodScale != 1.0f)
+    const KzPostDetailSettings detail = kzPostResolveDetailSettings(cfg, true);
+    g_renderDistance = detail.renderDistance;
+    g_lodScale = detail.lodScale;
+    bool viewOk = true;
+    bool viewHooked = false;
+    if (g_renderDistance != 1.0f)
     {
-        const bool viewOk = hook(runtime, kZoneParams, &zoneParams, g_origZoneParams) &&
-                            hook(runtime, kLodScale, &lodScale, g_origLodScale);
-        std::printf("[kz] view distance: render x%.2f, LOD x%.2f (%s)\n", g_renderDistance, g_lodScale,
-                    viewOk ? "hooks installed" : "HOOK FAILED");
+        viewHooked = true;
+        const bool renderOk = hook(runtime, kFarPlaneApply, &farPlaneApply, g_origFarPlaneApply) &&
+                              hook(runtime, kFogParams, &fogParams, g_origFogParams);
+        if (!renderOk)
+            g_renderDistance = 1.0f;
+        viewOk = renderOk && viewOk;
     }
+    if (g_lodScale != 1.0f)
+    {
+        viewHooked = true;
+        viewOk = hook(runtime, kLodScale, &lodScale, g_origLodScale) && viewOk;
+    }
+    std::printf("[kz] view distance: render x%.2f, LOD x%.2f (%s)\n", g_renderDistance, g_lodScale,
+                !viewHooked ? "original; no hooks" : viewOk ? "selected hooks installed" : "HOOK FAILED");
     // Nothing to hook when every pass stays on.
     if (g_motionBlur && g_glow && g_lensBlur)
     {
@@ -224,4 +335,38 @@ void kzPostInstall(PS2Runtime &runtime)
                     hook(runtime, kLensBlur, &lensBlur, g_origLensBlur);
     std::printf("[kz] post-process passes: motion blur %s, glow %s, lens blur %s (%s)\n", g_motionBlur ? "on" : "off",
                 g_glow ? "on" : "off", g_lensBlur ? "on" : "off", ok ? "hooks installed" : "HOOK FAILED");
+}
+
+int kzPostSelfTest()
+{
+    int failures = 0;
+    const auto check = [&](bool condition, const char *label)
+    {
+        if (!condition)
+        {
+            std::fprintf(stderr, "[selftest] FAIL: %s\n", label);
+            ++failures;
+        }
+    };
+    check(resolveDetailValue("test", nullptr, 1.0f, 1.0f, 16.0f, false) == 1.0f,
+          "detail setting default");
+    check(resolveDetailValue("test", "2.5", 1.0f, 1.0f, 16.0f, false) == 2.5f,
+          "detail setting override");
+    check(resolveDetailValue("test", "100", 1.0f, 1.0f, 16.0f, false) == 16.0f,
+          "detail setting upper clamp");
+    check(resolveDetailValue("test", "-1", 1.0f, 0.25f, 16.0f, false) == 0.25f,
+          "detail setting lower clamp");
+    check(resolveDetailValue("test", "nan", 1.0f, 1.0f, 16.0f, false) == 1.0f &&
+              resolveDetailValue("test", "2oops", 1.0f, 1.0f, 16.0f, false) == 1.0f,
+          "invalid detail setting fallback");
+    float scaled = 0.0f;
+    check(scaledFinite(70.0f, 1.0f, scaled) && scaled == 70.0f,
+          "identity detail transform");
+    check(scaledFinite(-10.0f, 4.0f, scaled) && scaled == -40.0f,
+          "signed fog transform");
+    check(!scaledFinite(INFINITY, 4.0f, scaled), "non-finite detail rejection");
+    check(isRenderZoneFogCall(0x001C1C30u) && isRenderZoneFogCall(0x001C1D08u) &&
+              isRenderZoneFogCall(0x001EE260u) && !isRenderZoneFogCall(0x00151188u),
+          "RenderZone fog call-site filter");
+    return failures;
 }

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 import tempfile
 from collections import Counter
@@ -114,6 +115,15 @@ def validate(directory: Path, require_fire: bool) -> tuple[list[dict[str, Any]],
             raise ValueError("output_resolution dimensions must be positive integers")
         if effective_config.get("pipeline") != PIPELINE_ORDER:
             raise ValueError("effective pipeline order is missing or invalid")
+    for key, minimum in (("render_distance", 1.0), ("lod_scale", 0.25)):
+        value = effective_config.get(key)
+        if value is not None and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not minimum <= value <= 16.0
+        ):
+            raise ValueError(f"effective_config.{key} is outside its supported range")
 
     frames = [record for record in records if record.get("record") == "frame"]
     events = [record for record in records if record.get("record") == "event"]
@@ -328,6 +338,8 @@ def self_test() -> None:
                         },
                         "output_resolution": {"width": 1920, "height": 1080},
                         "pipeline": PIPELINE_ORDER,
+                        "render_distance": 1.0,
+                        "lod_scale": 1.0,
                     },
                     "testing": {"start_level": 0},
                 },

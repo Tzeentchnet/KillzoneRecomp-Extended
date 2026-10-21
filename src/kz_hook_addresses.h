@@ -8,6 +8,7 @@ namespace kz_hook
     inline constexpr uint32_t FileReadAsync = 0x0014D790u;
     inline constexpr uint32_t FilePoll = 0x0014DAD0u;
     inline constexpr uint32_t TimelineKick = 0x00150090u;
+    inline constexpr uint32_t FogParams = 0x00151180u;
     inline constexpr uint32_t TimelineKickCheck = 0x00151FC8u;
     inline constexpr uint32_t TimelineVblank = 0x00152018u;
     inline constexpr uint32_t UploadRecords = 0x0015A268u;
@@ -26,6 +27,7 @@ namespace kz_hook
     inline constexpr uint32_t PadButtonValue = 0x001B33B8u;
     inline constexpr uint32_t SetLevelFile = 0x001B89A8u;
     inline constexpr uint32_t TimelineFrameLimiter = 0x001BFF10u;
+    inline constexpr uint32_t FarPlaneApply = 0x001C1A2Cu;
     inline constexpr uint32_t LodScale = 0x001C2168u;
     inline constexpr uint32_t ProfileMaxDifficulty = 0x001D7118u;
     inline constexpr uint32_t ProfileLevelUnlocked = 0x001D7190u;
@@ -51,7 +53,6 @@ namespace kz_hook
     inline constexpr uint32_t MovieAudioFeed = 0x002E19C0u;
     inline constexpr uint32_t MovieAudioFull = 0x002E1A40u;
     inline constexpr uint32_t ListNodeAllocReturn = 0x002E7238u;
-    inline constexpr uint32_t ZoneParams = 0x00339C38u;
     inline constexpr uint32_t MpegGetPicture = 0x003CD750u;
     inline constexpr uint32_t MpegClearRefBuff = 0x003CD9F8u;
     inline constexpr uint32_t KeyboardModuleInit = 0x003D7490u;

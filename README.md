@@ -132,6 +132,14 @@ python .\tools\scripts\verify_capture_metadata.py .\work\run1 --compare .\work\r
 
 The summary is protected-content-safe: configuration, frame/event counts, dimensions and image hashes only.
 
+For deterministic graphics arms, set `KZ_SHOT_GUEST_INTERVAL=<vblanks>` (and optionally
+`KZ_SHOT_GUEST_FROM=<first-vblank>`) to schedule captures on the guest clock instead of wall time. Compare arms whose
+filenames differ by pairing their metadata:
+
+```powershell
+python .\tools\scripts\image_compare.py .\work\baseline .\work\variant --glob "gs_*.png" --align-metadata
+```
+
 Build scripts discover the repository from their own location. `KZ_ROOT` and `KZ_BUILD_ROOT` override the source and
 build roots; `KZ_VCVARS64` can point to `vcvars64.bat`, `KZ_CMAKE` can point to `cmake.exe`, `KZ_NINJA` can point to
 Ninja 1.13.2, and `KZ_LLVM_BIN` selects an LLVM `bin` directory. Scripts that read user-supplied content never search

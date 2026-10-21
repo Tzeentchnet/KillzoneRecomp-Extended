@@ -31,9 +31,15 @@ GFX-01, GFX-02, PROFILE-01, WIN-01 and WIN-03 are complete in
 
 ### GFX-03 - Qualify render distance, LOD and texture clarity
 
-- **Status:** in progress after M1 acceptance.
-- **First step:** inventory and verify the existing RenderDistance/LodScale hook signatures and all renderer-side
-  anisotropy, texture-replacement and sharpening surfaces before selecting bounded A/B arms.
+- **Status:** in progress. Inventory, hook correction and independent first-mission arms complete.
+- **Evidence so far:** baseline 1x/1x installs no detail hooks; render-distance 2x logs `70 -> 140` far and
+  `-10..70 -> -20..140` fog with no LOD calls; LOD 4x logs `1.000 -> 4.000` with no far/fog calls. All arms exited 0
+  with exact guest-clock captures and matching input-event counts. The manifest validates 55 hook signatures.
+- **Measurement limit:** a same-arm live repeat changed 80.377% of pixels (mean absolute RGB 13.2611), so live image
+  deltas are not accepted without a deterministic scene/state. Deterministic replay found anisotropy 0x/16x and
+  empty-directory texture replacement off/on byte-identical on the current trace; this is scene-specific.
+- **Next step:** add or identify a deterministic textured-angle/LOD scene, then run 1x/2x/4x campaign checkpoints
+  with packet/pool high-water and actor/streaming checks before narrowing the currently broad config ranges.
 
 ### AUDIO-01 - Combat audio clipping
 

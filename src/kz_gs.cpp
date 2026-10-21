@@ -2,6 +2,7 @@
 #include "kz_timing.h"
 #include "kz_patches.h"
 #include "kz_gpu.h"
+#include "kz_post.h"
 
 #include "kzgs.h"
 
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -127,6 +129,8 @@ namespace
         std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
         std::chrono::steady_clock::time_point nextShot = std::chrono::steady_clock::now();
         int shotIndex = 0;
+        uint64_t guestShotInterval = 0;
+        uint64_t nextGuestShot = 0;
         // KZ_SHOT_BURST=N: at every shot time the GS thread captures the next N presented frames (gb_*.png, internal resolution, or
         // as presented in KZ_WINDOW_SIZE with KZ_SHOT_BURST_PRESENT=1) without stalling the game, plus gb_*.csv with one line per
         // guest vblank during the capture (field, whether a frame was presented or skipped as unchanged, wall time).
@@ -314,6 +318,7 @@ namespace
         const bool skipIntro = envBool("KZ_SKIP_INTRO", c.skipIntro);
         const int startLevel = std::clamp(envInt("KZ_START_LEVEL", c.startLevel), 0, 11);
         const int startDifficulty = std::clamp(envInt("KZ_START_DIFFICULTY", c.startDifficulty), 0, 2);
+        const KzPostDetailSettings detail = kzPostResolveDetailSettings(c, false);
         const char *cardMode = std::getenv("KZ_MC_ROOT") && std::getenv("KZ_MC_ROOT")[0] != '\0'
                                    ? "explicit_isolated"
                                    : c.testMemoryCard ? "test" : "normal";
@@ -327,7 +332,7 @@ namespace
             "\"output_resolution\":{\"width\":%d,\"height\":%d},"
             "\"pipeline\":[\"gs_merge\",\"aa\",\"sharp_prescale_if_upscaling\","
             "\"crop_aspect\",\"cas\",\"present_filter\"],"
-            "\"aspect\":\"%s\",\"anisotropy\":%d,"
+            "\"aspect\":\"%s\",\"anisotropy\":%d,\"render_distance\":%.3f,\"lod_scale\":%.3f,"
             "\"aa\":\"%s\",\"fxaa\":%s,\"smaa_requested\":%s,\"smaa_available\":%s,"
             "\"smaa_effective\":%s,\"texture_replacement\":%s,"
             "\"bilinear_present\":%s,\"sharp_present\":%s,\"cas_sharpness\":%d,\"vsync\":%s,"
@@ -339,7 +344,8 @@ namespace
             renderScaleModeName(s.activeScale.mode), s.activeScale.configuredScale, s.activeScale.effectiveScale,
             kReferenceRenderHeight, kReferenceRenderHeight * k.upscale,
             s.windowWidth, s.windowHeight, aspectName(k.aspect),
-            k.anisotropy, effectiveAaName(k), effectiveFxaa(k) ? "true" : "false",
+            k.anisotropy, detail.renderDistance, detail.lodScale,
+            effectiveAaName(k), effectiveFxaa(k) ? "true" : "false",
             k.smaa ? "true" : "false", kzgsSmaaAvailable() ? "true" : "false",
             kzgsSmaaEffective() ? "true" : "false",
             k.loadTextureReplacements ? "true" : "false", k.bilinearPresent ? "true" : "false",
@@ -877,9 +883,22 @@ namespace
         if (!s.shotDir.empty())
         {
             const auto now = std::chrono::steady_clock::now();
-            if (now >= s.nextShot)
+            const uint64_t guestVsync = s.currentGuestVsync.load(std::memory_order_relaxed);
+            const bool guestScheduled = s.guestShotInterval > 0;
+            if ((guestScheduled && guestVsync >= s.nextGuestShot) ||
+                (!guestScheduled && now >= s.nextShot))
             {
-                s.nextShot = now + std::chrono::seconds(s.shotInterval);
+                if (guestScheduled)
+                {
+                    do
+                    {
+                        s.nextGuestShot += s.guestShotInterval;
+                    } while (s.nextGuestShot <= guestVsync);
+                }
+                else
+                {
+                    s.nextShot = now + std::chrono::seconds(s.shotInterval);
+                }
                 static const int burstN = std::getenv("KZ_SHOT_BURST") ? std::atoi(std::getenv("KZ_SHOT_BURST")) : 0;
                 static const long long burstFrom = std::getenv("KZ_SHOT_BURST_FROM") ? std::atoll(std::getenv("KZ_SHOT_BURST_FROM")) : 0;
                 static const long long burstTo = std::getenv("KZ_SHOT_BURST_TO") ? std::atoll(std::getenv("KZ_SHOT_BURST_TO")) : 1000000;
@@ -902,7 +921,13 @@ namespace
                     kzgsBurstArm(burstN, ww, wh);
                 }
                 if (burstN <= 0)
-                    saveShot(s, std::chrono::duration_cast<std::chrono::seconds>(now - s.start).count());
+                {
+                    const long long captureSeconds =
+                        guestScheduled && kzTimingRate() > 0
+                            ? static_cast<long long>(guestVsync / static_cast<uint64_t>(kzTimingRate()))
+                            : std::chrono::duration_cast<std::chrono::seconds>(now - s.start).count();
+                    saveShot(s, captureSeconds);
+                }
             }
         }
     }
@@ -1015,6 +1040,36 @@ void kzGsSetScreenshotSchedule(const std::string &dir, int intervalSeconds)
     GsState &s = gs();
     s.shotDir = dir;
     s.shotInterval = std::max(1, intervalSeconds);
+    s.guestShotInterval = 0;
+    s.nextGuestShot = 0;
+    const auto parsePositiveGuestVsync = [](const char *name, const char *value, uint64_t &result)
+    {
+        errno = 0;
+        char *end = nullptr;
+        const long long parsed = std::strtoll(value, &end, 10);
+        if (end == value || *end != '\0' || errno == ERANGE || parsed <= 0)
+        {
+            std::fprintf(stderr, "[kz-measure] %s must be a positive integer\n", name);
+            return false;
+        }
+        result = static_cast<uint64_t>(parsed);
+        return true;
+    };
+    if (const char *value = std::getenv("KZ_SHOT_GUEST_INTERVAL"); value && *value)
+    {
+        if (parsePositiveGuestVsync("KZ_SHOT_GUEST_INTERVAL", value, s.guestShotInterval))
+        {
+            s.nextGuestShot = s.guestShotInterval;
+            if (const char *from = std::getenv("KZ_SHOT_GUEST_FROM"); from && *from)
+            {
+                uint64_t first = 0;
+                if (parsePositiveGuestVsync("KZ_SHOT_GUEST_FROM", from, first))
+                    s.nextGuestShot = first;
+            }
+            std::cout << "[kz-measure] guest-vsync capture schedule: first " << s.nextGuestShot
+                      << ", interval " << s.guestShotInterval << std::endl;
+        }
+    }
     s.start = std::chrono::steady_clock::now();
     s.nextShot = s.start + std::chrono::seconds(s.shotInterval);
     if (!dir.empty())

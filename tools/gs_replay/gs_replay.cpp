@@ -154,7 +154,8 @@ int main(int argc, char **argv)
         std::fprintf(stderr,
                      "usage: kz_gs_replay <trace> <outdir> [--every N] [--upscale N] "
                      "[--renderer d3d11|d3d12|vulkan] [--fxaa] [--smaa] [--cas N] "
-                     "[--bilinear 0|1] [--sharp 0|1] [--crop L,T,R,B] [--present WxH] "
+                     "[--aniso N] [--tex-replace 0|1] [--bilinear 0|1] [--sharp 0|1] "
+                     "[--crop L,T,R,B] [--present WxH] "
                      "[--backbuffer] [--stats]\n");
         return 2;
     }
@@ -170,6 +171,7 @@ int main(int argc, char **argv)
         else if (a == "--upscale" && i + 1 < argc) upscale = std::atoi(argv[++i]);
         else if (a == "--stats") stats = true;
         else if (a == "--aniso" && i + 1 < argc) cfg.anisotropy = std::atoi(argv[++i]);
+        else if (a == "--tex-replace" && i + 1 < argc) cfg.loadTextureReplacements = std::atoi(argv[++i]) != 0;
         else if (a == "--fxaa") cfg.fxaa = true;
         else if (a == "--smaa") cfg.smaa = true;
         else if (a == "--backbuffer") backbuffer = true;

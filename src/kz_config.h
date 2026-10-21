@@ -41,7 +41,7 @@ struct KzConfig
 
     // Graphics
     KzRenderer renderer = KzRenderer::D3D11;
-    int upscale = 0; // internal resolution multiplier over 640x448; 0 = auto (match window height)
+    int upscale = 0; // integer GS render multiplier; 0 = auto from physical output height
     KzAspect aspect = KzAspect::Widescreen16x9;
     int anisotropy = 16;     // 0/2/4/8/16
     bool fxaa = false;       // post-process blur AA; off by default (supersampling via Upscale is the sharp AA)

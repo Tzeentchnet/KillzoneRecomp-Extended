@@ -94,3 +94,10 @@ few lines with a pointer to the evidence.
 - **Large hidden overlapped windows are work-area-clamped.** The first 1080p/1440p/4K kzgs matrix silently became
   1920x941/2297x941. Switch the test HWND to a borderless popup for unconstrained dimensions, assert the physical
   swap-chain size, then restore the ordinary style before minimize/restore coverage.
+- **A replacement wrapper cannot inspect a tail-dispatched guest return.** The original RenderZone wrapper called
+  `FUN_00339C38` and immediately read zero output because the generated owner returned after dispatching continuation
+  `0x339D30`. Hook finalized consumers instead: GFX-03 uses `0x1C1A2C` for far plane and call-site-gated `0x151180`
+  for fog. Require logs with real source/transformed values before accepting any output hook.
+- **Equal guest-vsync IDs do not guarantee equal gameplay scenes.** Cloned-card GFX-03 baseline repeats at identical
+  frame IDs still changed 80.377% of pixels because front-end/loading/tutorial progress is host-timing-sensitive.
+  Measure same-arm variance and use a deterministic state/trace before attributing live pixel deltas to a setting.

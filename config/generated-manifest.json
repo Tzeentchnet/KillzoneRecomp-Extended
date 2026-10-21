@@ -204,6 +204,13 @@
       "signature_sha256": "28eccc8624c27d66bdb83b2d55901cc8f581095b664ae495ae798c29e9ec80ab"
     },
     {
+      "symbol": "FogParams",
+      "kind": "hook",
+      "address": "0x00151180",
+      "signature_size": 16,
+      "signature_sha256": "12e981f8729cb19a88a408d348a0929008285e093518aa8b9811dafa5f9fcca4"
+    },
+    {
       "symbol": "TimelineKickCheck",
       "kind": "debug_hook",
       "address": "0x00151FC8",
@@ -328,6 +335,13 @@
       "address": "0x001BFF10",
       "signature_size": 20,
       "signature_sha256": "a5e51cbfe674f76540819265466481d6cea41d5246b418f7d681af07becc45c1"
+    },
+    {
+      "symbol": "FarPlaneApply",
+      "kind": "hook",
+      "address": "0x001C1A2C",
+      "signature_size": 16,
+      "signature_sha256": "294cd0764897d092872af984c1e300c1b6dfad44364fedc192c98f20ecff7fef"
     },
     {
       "symbol": "LodScale",
@@ -503,13 +517,6 @@
       "address": "0x002E7238",
       "signature_size": 128,
       "signature_sha256": "dff1a9f0a51940752558bae4cf777d09aa272d1b7ee77ddd03b5d6dc313584f5"
-    },
-    {
-      "symbol": "ZoneParams",
-      "kind": "hook",
-      "address": "0x00339C38",
-      "signature_size": 16,
-      "signature_sha256": "9a50fb46db3a589d0bf58a88fab69b0742985b120fc5d20ddafa7fe0e4012c7b"
     },
     {
       "symbol": "MpegGetPicture",

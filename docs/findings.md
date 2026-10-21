@@ -986,15 +986,20 @@ reflection data.
   gameplay dump: four zones with far = fog end = 65, 70, 50, 35 and fog start -10/-5, so the original view distance is 35-70 world units.
   `FUN_00339C38(manager, camera, out)` picks the zone around the camera (blending two at a boundary) and fills `out`: out[0] far plane
   (min of far and fog end when fog is on), byte out+4 fog enabled, out[2] fog start, out[3] fog end, out[4]/[5] densities, out[6] colour; returns 1 when a zone was found.
-- **Render distance option:** hook on `0x339C38` multiplies out[0], out[2], out[3] by the factor (clip and fog move together; scaling only the far plane would
-  hide the extra geometry in fog). Captured at the same frame (f20400 of the scripted run, `work/pp/view_distance_montage.png`): at 2x and 4x the
-  buildings and ruins behind the first hill, which are fully fogged at 1x, are visible; mean absolute difference to 1x 6.6 and 9.1 (of 255).
-  Frame rate: 1x 117.3, 2x 117.2, 4x 115.9 (-1.2 %).
+- **Render distance correction (2026-10-20):** the original wrapper on `0x339C38` tried to read outputs after calling
+  a recompiled guest function. That assumption is invalid: the generated owner tail-dispatches a continuation and
+  returns to the wrapper before the output is finalized. Its only newly instrumented call reported zeroes, so the
+  older screenshot and frame-rate attribution is withdrawn as acceptance evidence. The current implementation hooks
+  the finalized consumers instead: `0x1C1A2C` scales the camera far plane and `0x151180`, gated to the three
+  RenderZone fog call sites, scales fog start/end. A 2x first-mission run measured actual values
+  `70 -> 140` and `-10..70 -> -20..140`; both signatures are locked in the generated manifest.
 - **LOD:** the LOD selectors divide the distance by `ctx+0x1AC` (`FUN_003F4E70` static meshes, `FUN_003F4F10` skinned, `FUN_003EFAD8` multi-mesh, the grass and ~35
   other readers). `FUN_001C2168(f12 = fov, a0 = game object)` sets it to `obj[0x1C] * tan(refFov/2) / tan(fov/2)` (refFov 75 at 0x559540, obj = `*(0x559178)`, obj[0x1C] = 1.0
   in the dump), the setter `FUN_00151E60` also restores saved values, so the root is hooked instead: the hook on `0x1C2168` multiplies obj[0x1C] around the call.
   Other per-class distances exist as data: MeshResource "Maximum visible distance" (+0x1C, default -1 = none), Grass "Max View Distance"/"Max Animate Distance"
-  (default 20), LodStaticMeshResource/LodSkinnedMeshResource "LOD Info" tables. LOD scale 4x: frame rate 108.4 (-7.6 %), scene mean difference to 1x 4.5.
+  (default 20), LodStaticMeshResource/LodSkinnedMeshResource "LOD Info" tables. The 4x wrapper now logs actual
+  `1.000 -> 4.000` input transformations independently of the RenderZone controls. The earlier frame-rate and image
+  deltas remain preliminary, not range-qualification evidence.
 - Config: `[Graphics] RenderDistance=1..16` (default 1 = original), `LodScale=0.25..16` (default 1); env `KZ_RENDER_DISTANCE`, `KZ_LOD_SCALE`. Only the first mission was
   checked; the defaults stay at the original values because other levels' fog and portal setups were not looked at (indoor zones, boss areas).
 
@@ -1031,8 +1036,8 @@ projector texture size and distance could not be measured and nothing was change
   Config `[Graphics] TextureReplacement=1` (default on, harmless when the folder is empty), env `KZ_TEX_REPLACE`, `KZ_TEX_DUMP`; replay `--dump-textures`, `--replace-textures`.
 
 ### Defaults chosen
-SMAA on (verified, no cost), motion blur / glow / lens blur off, texture replacement on, render distance 1x and LOD 1x (verified in the first mission only; 2x costs 0.1 fps, 4x
-1.2 %, LOD 4x 7.6 %).
+SMAA on (verified, no cost), motion blur / glow / lens blur off, texture replacement on, render distance 1x and LOD
+1x. Elevated distance/LOD costs and supported campaign ranges remain under GFX-03 qualification.
 
 ## Quit to the front end: white screen (2026-10-01)
 **Symptom.** Movies on (`KZ_IPU` unset): start a mission, pause, Quit, confirm. The front end comes back without its background movie; in the player's runs the whole
@@ -1798,6 +1803,30 @@ An independent hardware synthetic run held the internal scene at exactly 1280x89
 swap chain through all four output sizes. Every final-back-buffer capture was nonblack and exact-sized. The test then
 restored an ordinary decorated window and passed minimize/restore, device-loss recovery and D3D12-to-D3D11 restart,
 showing that output history and renderer recreation do not silently rewrite the fixed internal scale.
+
+## GFX-03 control qualification in progress (2026-10-20)
+
+The inventory covers two guest controls (`RenderDistance`, `LodScale`) and three renderer controls (anisotropy,
+texture replacement and CAS). Default `RenderDistance=1`/`LodScale=1` installs no detail hooks. Elevated controls
+install independently: a 2x render-distance arm produced far/fog calls and no LOD calls; a 4x LOD arm produced LOD
+calls and no far/fog calls. Environment overrides now reject nonnumeric/non-finite values and clamp to the same
+1..16 / 0.25..16 bounds as the typed configuration.
+
+The first exact-clock scene matrix used one cloned card, identical input, six captures at guest-vsync
+1800/2160/2520/2880/3240/3600 and six matching fire transitions in each arm. All three arms exited 0. It is not valid
+visual acceptance: a same-arm baseline repeat changed 80.377% of pixels with mean absolute RGB 13.2611. Against the
+first baseline, 2x render distance changed 91.828% / 12.5122 and 4x LOD changed 89.304% / 19.4528. Exact guest clocks
+do not remove front-end, loading and tutorial progression variance, so no image delta below or near that repeat
+variance is attributed to a control.
+
+The deterministic four-frame GS replay does isolate renderer-only controls. On the current active-gameplay trace:
+
+- anisotropy 0x versus 16x is 4/4 byte-identical;
+- texture replacement off versus on with an empty replacement directory is 4/4 byte-identical;
+- CAS 30 remains independently measured by GFX-01 (19.243% changed versus off).
+
+The identical anisotropy arm is scene-specific, not proof that the control is ineffective globally. GFX-03 remains
+open for a deterministic textured-angle scene, campaign/checkpoint coverage and safe elevated distance/LOD ranges.
 
 ## Testing options (2026-10-17)
 

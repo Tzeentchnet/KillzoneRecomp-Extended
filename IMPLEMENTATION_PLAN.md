@@ -327,6 +327,10 @@ parallel after BASE-01, CFG-01 and TEST-01.
 - **Acceptance:** Each control at `1.0` is baseline-identical; approved elevated ranges pass the BYOD scene set and
   campaign checkpoints without cumulative bounds growth, missing actors, streaming failures or memory exhaustion.
 - **Stop:** Reduce the supported range instead of adding sentinel values or unbounded allocations.
+- **Status (2026-10-20):** In progress. Baseline distance/LOD installs no hooks; independent 2x/4x arms transform
+  real far/fog/LOD values and exit cleanly. The original RenderZone post-call wrapper was invalid and has been
+  replaced by manifest-validated consumer hooks. Same-arm live captures remain too variable for visual acceptance;
+  deterministic scene/campaign and high-water qualification is still open.
 
 #### GFX-04 - Temporal input feasibility contract
 
