@@ -1,5 +1,6 @@
 #include "kz_detail.h"
 
+#include "kz_config.h"
 #include "kz_gs.h"
 #include "kz_hook_addresses.h"
 
@@ -41,6 +42,9 @@
 //                             streamer state, heap walk, malloc exhaustion, grass budget, minimum stack pointer
 //   KZ_DETAIL_TOGGLE=<n>      scaling active only in odd n-vblank gameplay windows (same-process A/B captures)
 //   KZ_DETAIL_NOTOUCH=1       drop 0x189CB0 calls from resources whose tables are scaled
+//   KZ_DETAIL_GRASSCAP=<1501..4000> raise the main-thread-stack grass-record ceiling above 1500 - CONFIRMED UNSAFE
+//                             (crashes within seconds of grass rendering at an elevated view distance; kept only
+//                             for reproduction, see docs/findings.md "GFX-03 reinvestigation")
 //   KZ_DETAIL_HEAPCHECK=<csv> (with KZ_DETAIL_LOG) heap walk every 8 vblanks, free history and, with the experimental
 //                             PS2Recomp patch, host-write history; reports the first break and writes <csv> at exit
 // Render distance 2x combined with any elevated LOD class corrupts the guest heap (docs/findings.md); keep them apart.
@@ -78,9 +82,17 @@ namespace
     constexpr uint32_t kGrassMaxViewOffset = 0x134u;
     constexpr uint32_t kGrassInstanceCountOffset = 0x158u;
     constexpr int32_t kGrassInstanceCap = 1500;
+    constexpr uint32_t kGrassRecordCapClamp = kz_hook::GrassRecordCapClamp;
+    constexpr uint32_t kGrassRecordBytes = 80u; // the record size multiplied in by the same clamp (0x3EF214: a1=0x50)
+    // Diagnostic-only, over-the-existing-ceiling only: KZ_DETAIL_GRASSCAP=<1500..4000> raises the per-frame grass
+    // record count (and with it the main-thread-stack VLA the game allocates for it, record_count * 80 bytes) above
+    // the shipped 1500 ceiling. See docs/findings.md "GFX-03 reinvestigation" for the margin this was measured
+    // against; this is not wired to any product config key.
+    constexpr int32_t kGrassCapDiagnosticMax = 4000;
 
     constexpr uint32_t kRamMask = 0x01FFFFFFu;
     constexpr uint32_t kRamSize = 0x02000000u;
+    constexpr uint32_t kMainStackFloor = 0x00100000u; // SetupThread(stack=0x100000, size=0x40000); see findings.md
     constexpr float kDiagnosticScaleMax = 8.0f;
     constexpr uint32_t kMaxLodLevels = 8;
 
@@ -94,6 +106,8 @@ namespace
     PS2Runtime::RecompiledFunction g_origAabbDistance = nullptr;
     PS2Runtime::RecompiledFunction g_origLodStreamRequest = nullptr;
     PS2Runtime::RecompiledFunction g_origGrassRender = nullptr;
+    PS2Runtime::RecompiledFunction g_origGrassRecordCapClamp = nullptr;
+    int32_t g_grassCap = kGrassInstanceCap; // diagnostic ceiling; see KZ_DETAIL_GRASSCAP in kzDetailInstall
     PS2Runtime::RecompiledFunction g_origLodSelectSimple = nullptr;
     PS2Runtime::RecompiledFunction g_origLodSelectBlended = nullptr;
     PS2Runtime::RecompiledFunction g_origLodStaticInstanced = nullptr;
@@ -192,6 +206,7 @@ namespace
         std::memcpy(&v, rdram + (a & kRamMask), 4);
         return v;
     }
+    void wrU32(uint8_t *rdram, uint32_t a, uint32_t v) { std::memcpy(rdram + (a & kRamMask), &v, 4); }
 
     bool inRamRange(uint32_t address, uint32_t size)
     {
@@ -507,13 +522,15 @@ namespace
                     g_intervalMaxPacket / 1024.0, g_packetCapacity / 1024.0, g_maxPacket / 1024.0,
                     static_cast<unsigned long long>(g_packetOverflows));
         g_intervalMaxPacket = 0;
-        std::printf("[kz-detail]   grass calls %llu max instances %d cap hits %llu (total %llu), patches %llu; "
-                    "invalid bounds %llu; min sp 0x%08X (run 0x%08X)\n",
-                    static_cast<unsigned long long>(i.grassCalls), i.grassMaxCount,
+        std::printf("[kz-detail]   grass calls %llu max instances %d (cap %d) cap hits %llu (total %llu), "
+                    "patches %llu; invalid bounds %llu; min sp 0x%08X (run 0x%08X, margin %d KiB to 0x%08X floor)\n",
+                    static_cast<unsigned long long>(i.grassCalls), i.grassMaxCount, g_grassCap,
                     static_cast<unsigned long long>(i.grassCapHits),
                     static_cast<unsigned long long>(g_totalGrassCapHits),
                     static_cast<unsigned long long>(g_grassPatchWrites),
-                    static_cast<unsigned long long>(i.invalidBounds), i.minStack, g_minStack);
+                    static_cast<unsigned long long>(i.invalidBounds), i.minStack, g_minStack,
+                    g_minStack > kMainStackFloor ? static_cast<int>((g_minStack - kMainStackFloor) / 1024) : -1,
+                    kMainStackFloor);
         std::fflush(stdout);
         g_interval = Interval{};
     }
@@ -874,6 +891,35 @@ namespace
                         patch.scaled);
     }
 
+    // The grass walker (this function, 0x3EE6F8) recurses into itself several times (observed call sites 0x3EEAF8,
+    // 0x3EEB30, 0x3EEB6C, 0x3EEB9C) to cover one grass object's visible cells within a single outer invocation from
+    // its caller (0x3EF170..0x3EF290, "A"). A allocates exactly one main-thread-stack VLA sized
+    // min(local_count_estimate, 1500) * 80 bytes (see kGrassRecordCapClamp below), resets the object's shared
+    // per-frame record counter (+0x158) to 0, then makes ONE call to this function with ra fixed at 0x3EF258 -
+    // every recursive self-call returns somewhere else. Each recursion level increments +0x158 by 1 per record
+    // written and compares the NEW value against the hardcoded literal 1500 (two raw `slti` sites, 0x3EE75C and
+    // 0x3EF0DC, with no register holding the constant to redirect); once it reaches 1500 the whole call chain
+    // unwinds immediately, so no more instances are added anywhere in that object this frame.
+    //
+    // KZ_DETAIL_GRASSCAP=<1501..4000> raises the effective ceiling to N by pre-seeding the just-reset counter to
+    // (1500-N) on the one top-level entry (ra==0x3EF258) instead of leaving it at 0: it then takes N increments,
+    // not 1500, to reach the hardcoded 1500 the game checks against, so the existing abort logic fires at the new
+    // ceiling unmodified in theory. kGrassRecordCapClamp (below) separately raises the allocated buffer to match.
+    //
+    // CONFIRMED UNSAFE, empirically (2026-10-22): bisected with the buffer resize alone (safe, but - as expected -
+    // has no effect, since the walker still stops writing at the original 1500) versus the counter bias alone.
+    // The bias reproducibly crashes within the first grass draw after an elevated view distance brings the true
+    // cell count above 1500: a guest DirectJump to a garbage PC inside the EE scheduler itself, with the observed
+    // stack pointer roughly (new_cap-1500)*80 bytes deeper than normal - consistent with the larger buffer being
+    // used, then something past or within it being corrupted. This means `+0x158`'s value likely feeds a write
+    // address/index computation somewhere in the walker's vectorised (MMI) record-writing code, not only the
+    // increment-and-compare this comment describes; that computation was not fully traced. A literal ELF-level
+    // patch of the three embedded `1500` constants (requiring a full generated-code regeneration, not attempted)
+    // might avoid this specific failure mode since the counter would then count up from a normal 0, but that is
+    // unverified. Do not re-enable this path expecting it to work; it is kept only so a future session does not
+    // have to rediscover the crash from scratch. See docs/findings.md "GFX-03 reinvestigation".
+    constexpr uint32_t kGrassOuterCallerReturn = 0x003EF258u;
+
     void grassRender(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
     {
         if (entering(ctx, kGrassRender))
@@ -884,10 +930,14 @@ namespace
             const uint32_t grass = getRegU32(ctx, 4);
             if (inRamRange(grass, kGrassInstanceCountOffset + 4u))
             {
+                const int32_t bias = kGrassInstanceCap - g_grassCap; // <= 0; 0 when the cap is unchanged
+                if (bias != 0 && getRegU32(ctx, 31) == kGrassOuterCallerReturn)
+                    wrU32(rdram, grass + kGrassInstanceCountOffset, static_cast<uint32_t>(bias));
                 ++g_interval.grassCalls;
-                const int32_t count = static_cast<int32_t>(rdU32(rdram, grass + kGrassInstanceCountOffset));
+                const int32_t raw = static_cast<int32_t>(rdU32(rdram, grass + kGrassInstanceCountOffset));
+                const int32_t count = raw - bias; // undo the bias for reporting; identity when bias == 0
                 g_interval.grassMaxCount = std::max(g_interval.grassMaxCount, count);
-                if (count >= kGrassInstanceCap)
+                if (raw >= kGrassInstanceCap) // the game's own abort test; unaffected by the bias
                 {
                     ++g_interval.grassCapHits;
                     ++g_totalGrassCapHits;
@@ -899,6 +949,19 @@ namespace
             maybeSnapshot(rdram);
         }
         g_origGrassRender(rdram, ctx, rt);
+    }
+
+    // Raises the stack-VLA buffer allocated by the grass walker's caller to match KZ_DETAIL_GRASSCAP. Tail-dispatch
+    // continuation only (no `jal` anywhere targets 0x3EF220); reached with a0=1500 always freshly set by its sole
+    // caller immediately before. Overriding a0 here changes what `movz $v1,$a0,$v0` (the buffer-size clamp, already
+    // past the `slti $v0,$v1,0x5DC` comparison) assigns when the real cell count is >= 1500: v1 becomes the new
+    // ceiling instead of 1500, so `v1 * 80` (the next instruction) allocates enough stack for the raised cap.
+    void grassRecordCapClamp(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
+    {
+        if (entering(ctx, kGrassRecordCapClamp) && g_grassCap != kGrassInstanceCap &&
+            getRegU32(ctx, 4) == static_cast<uint32_t>(kGrassInstanceCap))
+            ctx->r[4] = _mm_set_epi64x(0, static_cast<int64_t>(g_grassCap));
+        g_origGrassRecordCapClamp(rdram, ctx, rt);
     }
 
     bool hook(PS2Runtime &rt, uint32_t addr, PS2Runtime::RecompiledFunction fn, PS2Runtime::RecompiledFunction &orig)
@@ -967,9 +1030,35 @@ namespace
     }
 }
 
+KzDetailScales kzDetailResolveConfigScales(const KzConfig &config, bool reportDiagnostics)
+{
+    KzDetailScales scales;
+    scales[KzDetailClass::StaticLod] = config.staticLodScale;
+    scales[KzDetailClass::InstancedLod] = config.staticLodScale; // static and instanced share one authored table
+    scales[KzDetailClass::SkinnedLod] = config.skinnedLodScale;
+    scales[KzDetailClass::VisibleCull] = config.visibleCullScale;
+    scales[KzDetailClass::Grass] = config.grassViewScale;
+    if (config.renderDistance > 1.0f)
+    {
+        bool anyElevated = false;
+        for (float v : scales.value)
+            anyElevated = anyElevated || v > 1.0f;
+        if (anyElevated)
+        {
+            if (reportDiagnostics)
+                std::fprintf(stderr,
+                             "[kz] elevated RenderDistance and per-class detail distance are unsafe together "
+                             "(docs/findings.md \"GFX-03 reinvestigation\"); using 1.0 for static/instanced/"
+                             "skinned/visible/grass detail distance\n");
+            scales = KzDetailScales{};
+        }
+    }
+    return scales;
+}
+
 void kzDetailInstall(PS2Runtime &runtime)
 {
-    g_scales = KzDetailScales{};
+    g_scales = kzDetailResolveConfigScales(kzConfig(), true);
     const char *logValue = std::getenv("KZ_DETAIL_LOG");
     g_log = logValue != nullptr;
     // KZ_DETAIL_LOG=<frames> (>= 30) sets the snapshot period; any other value keeps 600.
@@ -984,6 +1073,16 @@ void kzDetailInstall(PS2Runtime &runtime)
             g_togglePeriod = static_cast<uint64_t>(period);
         else
             std::fprintf(stderr, "[kz] KZ_DETAIL_TOGGLE=%s is invalid; scaling stays on\n", toggle);
+    }
+    g_grassCap = kGrassInstanceCap;
+    if (const char *cap = std::getenv("KZ_DETAIL_GRASSCAP"); cap && *cap)
+    {
+        const long long parsed = std::atoll(cap);
+        if (parsed > kGrassInstanceCap && parsed <= kGrassCapDiagnosticMax)
+            g_grassCap = static_cast<int32_t>(parsed);
+        else
+            std::fprintf(stderr, "[kz] KZ_DETAIL_GRASSCAP=%s is invalid (want %d..%d); cap stays %d\n", cap,
+                         kGrassInstanceCap + 1, kGrassCapDiagnosticMax, kGrassInstanceCap);
     }
     if (const char *diag = std::getenv("KZ_DETAIL_DIAG"); diag && *diag)
         parseDiagnosticScales(diag, g_scales, true);
@@ -1010,8 +1109,19 @@ void kzDetailInstall(PS2Runtime &runtime)
     }
     if (visibleScaled || g_log)
         ok = hook(runtime, kAabbDistance, &aabbDistance, g_origAabbDistance) && ok;
-    if (grassScaled || g_log)
+    const bool grassCapRaised = g_grassCap != kGrassInstanceCap;
+    if (grassScaled || grassCapRaised || g_log)
         ok = hook(runtime, kGrassRender, &grassRender, g_origGrassRender) && ok;
+    if (grassCapRaised)
+    {
+        ok = hook(runtime, kGrassRecordCapClamp, &grassRecordCapClamp, g_origGrassRecordCapClamp) && ok;
+        std::fprintf(stderr,
+                     "[kz] grass record cap: %d -> %d (CONFIRMED UNSAFE: the counter bias this relies on crashes "
+                     "within seconds of grass rendering with an elevated view distance - see docs/findings.md "
+                     "'GFX-03 reinvestigation'; kept only so a future session can reproduce it without re-deriving "
+                     "it from scratch, not for any other use)\n",
+                     kGrassInstanceCap, g_grassCap);
+    }
     g_noBoostedRequests = std::getenv("KZ_DETAIL_NOTOUCH") != nullptr;
     if (g_noBoostedRequests && !g_log)
         ok = hook(runtime, kLodStreamRequest, &lodStreamRequest, g_origLodStreamRequest) && ok;
@@ -1118,5 +1228,47 @@ int kzDetailSelfTest()
     check(!parseDiagnosticScales("static=x,lod=2,grass=100", rejected, false) &&
               rejected[KzDetailClass::StaticLod] == 1.0f && rejected[KzDetailClass::Grass] == kDiagnosticScaleMax,
           "detail diagnostic scale rejection and clamp");
+    // Grass record-cap bias: raising the cap to N pre-seeds the counter to (1500-N) so it takes N increments, not
+    // 1500, to reach the hardcoded 1500 the game's own abort check compares against; reporting undoes the bias.
+    {
+        const int32_t cap = 2200;
+        const int32_t bias = kGrassInstanceCap - cap;
+        check(bias == -700, "grass cap bias magnitude");
+        const int32_t rawAtCap = kGrassInstanceCap; // the value the game's own check fires at, unchanged
+        check(rawAtCap - bias == cap, "grass cap bias undoes to the new ceiling at the game's own abort point");
+        check(kGrassInstanceCap - kGrassInstanceCap == 0, "grass cap bias is zero when the cap is unchanged");
+    }
+    {
+        KzConfig original;
+        const KzDetailScales atOriginal = kzDetailResolveConfigScales(original, false);
+        check(atOriginal[KzDetailClass::StaticLod] == 1.0f && atOriginal[KzDetailClass::InstancedLod] == 1.0f &&
+                  atOriginal[KzDetailClass::SkinnedLod] == 1.0f && atOriginal[KzDetailClass::VisibleCull] == 1.0f &&
+                  atOriginal[KzDetailClass::Grass] == 1.0f,
+              "detail config resolution: original values at defaults");
+        KzConfig elevated;
+        elevated.staticLodScale = 2.0f;
+        elevated.skinnedLodScale = 1.5f;
+        elevated.visibleCullScale = 2.0f;
+        elevated.grassViewScale = 2.0f;
+        const KzDetailScales atElevated = kzDetailResolveConfigScales(elevated, false);
+        check(atElevated[KzDetailClass::StaticLod] == 2.0f && atElevated[KzDetailClass::InstancedLod] == 2.0f &&
+                  atElevated[KzDetailClass::SkinnedLod] == 1.5f && atElevated[KzDetailClass::VisibleCull] == 2.0f &&
+                  atElevated[KzDetailClass::Grass] == 2.0f,
+              "detail config resolution: elevated per-class values pass through, static mirrors instanced");
+        elevated.renderDistance = 2.0f;
+        const KzDetailScales atUnsafeCombination = kzDetailResolveConfigScales(elevated, false);
+        check(atUnsafeCombination[KzDetailClass::StaticLod] == 1.0f &&
+                  atUnsafeCombination[KzDetailClass::InstancedLod] == 1.0f &&
+                  atUnsafeCombination[KzDetailClass::SkinnedLod] == 1.0f &&
+                  atUnsafeCombination[KzDetailClass::VisibleCull] == 1.0f &&
+                  atUnsafeCombination[KzDetailClass::Grass] == 1.0f,
+              "detail config resolution: RenderDistance > 1 forces every per-class scale back to 1");
+        KzConfig renderDistanceAlone;
+        renderDistanceAlone.renderDistance = 2.0f;
+        const KzDetailScales atRenderDistanceAlone = kzDetailResolveConfigScales(renderDistanceAlone, false);
+        check(atRenderDistanceAlone[KzDetailClass::StaticLod] == 1.0f &&
+                  atRenderDistanceAlone[KzDetailClass::Grass] == 1.0f,
+              "detail config resolution: RenderDistance alone is not itself forced to anything");
+    }
     return failures;
 }

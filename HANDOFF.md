@@ -116,37 +116,50 @@ Safe parallel work:
 ## 7. Latest session record
 
 ```text
-Task: GFX-03 reinvestigation - per-consumer scene-detail scaling (diagnostic only)
-Owner/session: Claude Code, 2026-10-21/22
+Task: GFX-03 reinvestigation, then launcher exposure + grass-cap experiment
+Owner/session: Claude Code, 2026-10-21/22, branch gfx03-reinvestigation (off master @ 7afddb1)
 Machine: Windows 11 x64; MSVC and clang-cl presets; NVIDIA RTX 5070; disc image at E:\Git\Killzone\Killzone (USA).iso
-Status: complete as a diagnostic reinvestigation; no product/WORKDONE change. The withdrawn shared-context LOD
-  mechanism was replaced with a per-class mechanism (static/instanced/skinned LOD, visible-distance cull, grass)
-  that each pass independently up to 8x. RenderDistance=2 combined with any elevated LOD class still corrupts the
-  guest heap, reproducing the original no-go with cleaner evidence; the root cause is not isolated. RenderDistance
-  stays clamped 1..2 and LodScale stays fixed at 1.0.
-Files changed: src/kz_detail.{h,cpp} (new); src/kz_hook_addresses.h; src/kz_main.cpp; src/kz_post.cpp (character
-  LOD probe moved into kz_detail.cpp); config/generated-manifest.json (+7 debug hooks: LodStreamRequest, GrassRender,
-  LodStaticInstanced, LodSelectSimple, LodSelectBlended, AllocFailHandler, PacketFrameBegin); docs/findings.md;
-  TODO.md; LEARNINGS.md; patches/README.md; HANDOFF.md; patches/ps2recomp/experimental/
-  gfx03-host-write-rpc-diagnostics.diff (new, not applied; adds a null-by-default host-write observer and an
-  in-flight offloaded-RPC receive-buffer registry to the locked PS2Recomp checkout, gated by
+Status: both parts complete; no WORKDONE change (GFX-03 itself is not reopened - see below). Part 1 replaced the
+  withdrawn shared-context LOD mechanism with a per-class one (static/instanced/skinned LOD, visible-distance cull,
+  grass), each passing independently up to 8x in chapter 5; RenderDistance=2 combined with any elevated class still
+  corrupts guest memory, root cause not isolated. Part 2 (this continuation) shipped four of those per-class scales
+  as real [Graphics] config keys + launcher sliders (1..2, default 1), with RenderDistance>1 hard-forcing all four
+  back to 1 in both the config resolver and the live UI; separately investigated raising the grass instance cap
+  (1500), which reproducibly crashes and was not pursued further.
+Files changed (cumulative, both parts): src/kz_detail.{h,cpp} (new); src/kz_config.{h,cpp}; src/kz_launcher.cpp;
+  src/kz_hook_addresses.h; src/kz_main.cpp; src/kz_post.cpp (character LOD probe moved into kz_detail.cpp);
+  config/generated-manifest.json (+8 debug hooks: LodStreamRequest, GrassRender, LodStaticInstanced,
+  LodSelectSimple, LodSelectBlended, AllocFailHandler, PacketFrameBegin, GrassRecordCapClamp); docs/findings.md;
+  IMPLEMENTATION_PLAN.md; README.md; TODO.md; LEARNINGS.md; patches/README.md; HANDOFF.md;
+  patches/ps2recomp/experimental/gfx03-host-write-rpc-diagnostics.diff (new, not applied; null-by-default
+  host-write observer + in-flight offloaded-RPC receive-buffer registry on the locked PS2Recomp checkout, gated by
   PS2X_GUEST_RANGE_WRITE_OBSERVER so kz_detail.cpp degrades cleanly without it). The locked PS2Recomp submodule
-  itself is clean (patch not applied in the committed tree).
-Evidence: see docs/findings.md "GFX-03 reinvestigation" for the full consumer table, streaming/grass/stack
-  analysis, the render-distance-2x failure matrix, and every mechanism ruled out (stack, heap exhaustion, DMA
-  packet overflow, synchronous-IOP-only, late RPC copies into freed buffers, suppressed LOD stream requests).
+  itself is clean (patch not applied in the committed tree). Committed as one commit on gfx03-reinvestigation
+  (part 1); part 2 (this continuation) is uncommitted at hand-off - commit before anything else.
+Evidence: see docs/findings.md "GFX-03 reinvestigation" (part 1: consumer table, streaming/grass/stack analysis,
+  the render-distance-2x failure matrix, every mechanism ruled out) and "GFX-03 follow-up" (part 2: the new config
+  keys' validation - self-tests, a resolver unit test, and a live boot of both the safe and unsafe combinations
+  through an actual killzone.ini via KZ_CONFIG, plus a 45 s scripted chapter-5 gameplay pass; and the grass-cap
+  crash, bisected to its counter-bias half specifically, with the buffer-resize half confirmed safe-but-inert alone).
 Acceptance commands and exact results: win-clang-tests and win-msvc-tests builds PASS; ISO-free suites PASS
   13/13 each (MSVC and clang-cl); strict dependencies PASS 31/0/0; resume table PASS (132,656 dispatch entries,
-  100,661 resume cases, 31,995 generated targets); generated inventory PASS (63 hook signatures,
+  100,661 resume cases, 31,995 generated targets); generated inventory PASS (64 hook signatures,
   101,715 recompiler-resumable entries); full diff check PASS; product --selftest PASS 0 failures under both
-  compilers.
-Blocker and minimal reproducer: render distance 2x + per-class LOD >=4x on any tested class reliably reproduces
-  guest missing-target indirect calls or indefinite stalls within seconds of level load in chapter 5 (5.Fields1,
-  direct start + scripted input). Root-cause attribution stopped at a heap-corrupting write (rpcCopyToRdram
-  0xE1B950+0x70, 8 bytes past its chunk) with the known writer mechanism not yet identified.
-Next command: if resumed, apply the experimental patch and KZ_DETAIL_HEAPCHECK against a chapter-5 render2+LOD4
-  repro; walk forward from the next captured heap break to the write's caller, or compare against WIN-06's own
-  allocator-corruption findings for a shared first-fault signature.
+  compilers (covers the new config/resolver/launcher-preset self-tests too).
+Blocker and minimal reproducer: (part 1, unresolved) render distance 2x + per-class LOD >=4x on any tested class
+  reliably corrupts guest memory within seconds of level load in chapter 5 (direct start + scripted input); root
+  cause not found (a heap-corrupting rpcCopyToRdram write was observed, writer mechanism not identified). (Part 2,
+  resolved as a no-go, not a blocker) raising the grass instance cap via a shared-counter bias crashes the EE
+  scheduler; kept in kz_detail.cpp behind KZ_DETAIL_GRASSCAP purely as documented negative evidence, explicitly not
+  for use.
+Next command: if resumed on part 1's open question, apply the experimental patch and KZ_DETAIL_HEAPCHECK against a
+  chapter-5 render2+LOD4 repro; walk forward from the next captured heap break to the write's caller, or compare
+  against WIN-06's own allocator-corruption findings for a shared first-fault signature. If instead extending part
+  2 toward GFX-03's own original acceptance bar, run the full BYOD/campaign matrix (all chapters, longer soaks,
+  human visual review) on the four new sliders at 2x before treating that range as campaign-accepted, not just
+  chapter-5-safe. If pursuing the grass cap further, either trace the walker's MMI record-write address computation
+  fully, or attempt a literal ELF-level constant patch via a full generated-code regeneration (not attempted this
+  session; the private generated tree is 32k files and large/risky to redo blind).
 Safe parallel work: WPN-01 remains read-only and requires BYOD authorization. AUDIO-01 is paused where the
   2026-10-21 session left it (see git history for that record); this session did not touch it.
 ```

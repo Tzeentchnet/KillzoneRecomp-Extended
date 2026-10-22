@@ -66,6 +66,13 @@ struct KzConfig
     // View distance (docs/findings.md "Draw distance and LOD"). 1 = original.
     float renderDistance = 1.0f; // 1..2; farther views expose spawns and low-detail background geometry
     float lodScale = 1.0f;       // forced to 1: elevated values hang Escape in interactive gameplay
+    // Per-consumer model/scene detail distance (docs/findings.md "GFX-03 reinvestigation"). 1 = original. Each
+    // scales independently and was qualified only in isolation from RenderDistance > 1 (that combination corrupts
+    // guest memory); resolveDetailConfig() forces all four back to 1 whenever RenderDistance > 1.
+    float staticLodScale = 1.0f;   // static/instanced mesh LOD selection distance; 1..2
+    float skinnedLodScale = 1.0f;  // character (skinned mesh) LOD selection distance; 1..2
+    float visibleCullScale = 1.0f; // per-mesh "Maximum visible distance" cull; 1..2
+    float grassViewScale = 1.0f;   // grass "Max View Distance"; 1..2 (distant grass is still budget-capped)
 
     // Input
     float mouseSensitivity = 1.0f;

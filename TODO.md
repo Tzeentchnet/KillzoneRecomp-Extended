@@ -28,14 +28,20 @@ qualified the direct-start/skip-level diagnostic path, which exact `Shooterman` 
 superseded. BASE-01, CFG-01, TEST-01, GFX-01, GFX-02, GFX-03, GFX-04, GFX-05, PROFILE-01, WIN-01, WIN-03 and WIN-05 are complete in
 [`WORKDONE.md`](WORKDONE.md). DLSS-01 is qualification only; product integration is not in this queue.
 
-**GFX-03 reinvestigation (2026-10-22, diagnostic only, no WORKDONE change):** a follow-up session replaced the
-withdrawn shared-context LOD scaling with per-class scaling (`src/kz_detail.cpp`, `KZ_DETAIL_*` env vars, no
-product config key) to see whether the mechanism, not just the symptom, could be isolated. Each class
-(static/instanced/skinned LOD, grass, visible-distance cull) passes independently; `RenderDistance=2` combined
-with *any* elevated LOD class still corrupts the guest heap, reproducing the original no-go with cleaner evidence
-but still no identified root cause. See `docs/findings.md` "GFX-03 reinvestigation" for the full writeup, ruled-out
-mechanisms and the experimental PS2Recomp diagnostic patch. `RenderDistance`/`LodScale` product behaviour and
-launcher are unchanged.
+**GFX-03 reinvestigation and follow-up (2026-10-21/22, no WORKDONE change — GFX-03 itself is not reopened):** a
+session replaced the withdrawn shared-context LOD scaling with per-class scaling (`src/kz_detail.cpp`) to see
+whether the mechanism, not just the symptom, could be isolated. Each class (static/instanced/skinned LOD, grass,
+visible-distance cull) passes independently up to 8x in a chapter-5-only gate; `RenderDistance=2` combined with
+*any* elevated class still corrupts the guest heap, reproducing the original no-go with cleaner evidence but no
+identified root cause. A follow-up session then (a) exposed the four per-class scales as real `[Graphics]` config
+keys and launcher sliders, range `1..2`, with `RenderDistance > 1` hard-forcing all four back to `1.0` in both the
+config resolver and the live UI (shipped, validated via config self-tests, a resolver unit test, and a live boot +
+45 s scripted-gameplay check through an actual `killzone.ini`, not just diagnostic env vars), and (b) investigated
+raising the grass-instance cap above 1500, which reproducibly crashes (bisected to a specific sub-mechanism; the
+cap is NOT raised, no config exposure was added for it). See `docs/findings.md` "GFX-03 reinvestigation" and "GFX-03
+follow-up" for the full writeup, every ruled-out mechanism, and the experimental PS2Recomp diagnostic patch.
+Remaining gap before this could be considered against GFX-03's own original acceptance bar: no full BYOD/campaign
+matrix (chapter-5-only evidence so far), no human visual review of the four new sliders' output.
 
 ### AUDIO-01 - Combat audio clipping
 

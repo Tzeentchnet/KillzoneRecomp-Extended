@@ -61,6 +61,9 @@ namespace kz_hook
     inline constexpr uint32_t MpegClearRefBuff = 0x003CD9F8u;
     inline constexpr uint32_t KeyboardModuleInit = 0x003D7490u;
     inline constexpr uint32_t GrassRender = 0x003EE6F8u;
+    // Tail-dispatch continuation only (no `jal` target anywhere in the executable): the grass-record stack-VLA
+    // clamp. Reached with a0=1500 (the clamp ceiling) always set by its sole caller at 0x3EF170.
+    inline constexpr uint32_t GrassRecordCapClamp = 0x003EF220u;
     inline constexpr uint32_t LodStaticInstanced = 0x003EFAD8u;
     inline constexpr uint32_t LodSelectSimple = 0x003F4E70u;
     inline constexpr uint32_t LodSelectBlended = 0x003F4F10u;

@@ -2097,14 +2097,99 @@ not downscaled on load regardless of this setting.
   the patch is not applied. Used only to produce the heap-corruption evidence above; not part of the accepted
   submodule revision.
 
-### Disposition
+### Disposition (2026-10-21)
 
-No product or launcher change results from this reinvestigation. `RenderDistance` stays clamped to `1..2` and
-`LodScale` stays fixed at `1.0`; the earlier GFX-03 acceptance in `WORKDONE.md` is unaffected. The per-class
-mechanism and diagnostic tooling are retained for a future session that wants to pursue elevated per-class LOD
-(static/instanced/skinned/grass) as a narrower product feature than the withdrawn shared value — on the evidence
-above, static/instanced/skinned/grass alone each look safe, but the render-distance-2x interaction needs a found
-root cause, not just a wider no-go net, before any of them can ship together with elevated render distance.
+`RenderDistance` stays clamped to `1..2` and the shared `LodScale` stays fixed at `1.0`; the earlier GFX-03
+acceptance in `WORKDONE.md` is unaffected. The per-class mechanism and diagnostic tooling are retained for a
+follow-up that wants to pursue elevated per-class LOD (static/instanced/skinned/grass) as a narrower product
+feature than the withdrawn shared value — on the evidence above, static/instanced/skinned/grass alone each look
+safe, but the render-distance-2x interaction needs a found root cause, not just a wider no-go net, before any of
+them can ship together with elevated render distance. The follow-up session below did exactly that, narrower.
+
+## GFX-03 follow-up: launcher exposure and a grass-cap experiment (2026-10-22)
+
+A second session asked two questions: given the per-class mechanism above, what can be exposed in the launcher now,
+and can the grass instance cap be raised. The first is now shipped; the second is a confirmed no-go.
+
+### Per-class detail distance: exposed as `[Graphics]` settings
+
+Four new keys, `StaticLodScale`, `SkinnedLodScale`, `VisibleCullScale`, `GrassViewScale` (all `1.0` default, range
+`1..2`, matching `RenderDistance`'s existing range rather than the wider `1..8` the diagnostic session only tested
+in short isolation), drive `kz_detail.cpp`'s existing per-class scaling directly — no environment variable needed.
+`StaticLodScale` also scales the `InstancedLod` class (they share one authored threshold table, so there is nothing
+separate to expose). `kzDetailResolveConfigScales()` (`src/kz_detail.h`/`.cpp`, unit-tested) enforces the one
+established safety rule from the per-class investigation: whenever `RenderDistance > 1`, all four are forced back
+to `1.0` with a diagnostic, mirroring the existing `RenderDistance`/`LodScale` mutual exclusion in `kz_post.cpp`.
+The launcher's four new sliders (`1..2x`, "Detail" section) live-disable themselves while `RenderDistance` is above
+1x, and moving any of them above 1x snaps `RenderDistance` back to 1x, so the unsafe combination cannot be reached
+through the UI; a hand-edited `killzone.ini` combining both is still caught by the same resolver at load time
+(verified: `RenderDistance=2` with all four elevated boots with `RenderDistance=2, everything else forced to 1` and
+a stderr diagnostic naming the conflict — see "Validation" below).
+
+`KZ_DETAIL_DIAG`/`KZ_CHARACTER_LOD_PROBE` remain available on top of the config value for diagnosis (e.g. testing
+the wider `1..8` range, or deliberately reproducing the unsafe combination) and are not subject to the mutual
+exclusion — they are explicitly unsupported, exactly like the pre-existing `KZ_LOD_SCALE_DIAG`.
+
+**Validation performed:** config round-trip/clamp self-tests (`kz_config.cpp`), the resolver's unit tests
+(`kz_detail.cpp`), and a live boot of both combinations through an actual `killzone.ini` (`KZ_CONFIG=<path>`, not a
+diagnostic env var): `RenderDistance=1` with all four elevated applies exactly as configured
+(`static x2.00, instanced x2.00, skinned x1.50, visible x2.00, grass x2.00`); `RenderDistance=2` with all four
+elevated is forced back to 1.0 with the expected diagnostic and `RenderDistance` itself preserved. A 45-second
+scripted chapter-5 (`5.Fields1`) gameplay run through the safe combination's `killzone.ini` completed cleanly (exit
+0, gameplay limit reached at 2700 rendered frames, no missing-target).
+
+**What this is not:** the GFX-03 plan's own acceptance bar ("approved elevated ranges pass the BYOD scene set and
+campaign checkpoints... without cumulative bounds growth, missing actors, streaming failures or memory exhaustion")
+is not met by chapter-5-only, short, scripted evidence. This exposure ships a narrower, independently-reasoned
+feature — each class individually evidenced safe, explicit mutual exclusion with the one known-unsafe interaction —
+not a reopening of GFX-03's full original scope. A future session should still run the full BYOD/campaign matrix
+(all chapters, longer soaks, human visual review for the kind of spawn/pop-in reveal the original `RenderDistance`
+review caught) before calling the 1..2 per-class range itself campaign-accepted.
+
+### Grass instance cap: confirmed unsafe to raise this way
+
+The per-frame grass-record ceiling (1500 instances, `0x5DC` literal) is enforced at exactly three sites, all
+precisely traced from the generated C++ (not guessed from capstone's imperfect decoding of the R5900's 3-operand
+`mult`, which also writes a GPR that capstone mislabels): the buffer-size clamp in the walker's caller (`0x3EF210`/
+`0x3EF21C`, builds a single main-thread-stack VLA of `min(local_count_estimate, 1500) * 80` bytes, no nested VLAs -
+the walker (`0x3EE6F8`) recurses into itself to cover a grass object's cells but never allocates its own stack, just
+keeps filling the one buffer its caller made), a one-time pre-check (`0x3EE75C`), and a per-write recheck
+(`0x3EF0DC`) against the SAME hardcoded `1500` the walker's own shared per-object counter (`+0x158`) is compared to
+on every recursive entry. Only the first site loads the constant into a register (`a0`); the other two bake it
+directly into a `slti` immediate with nothing to redirect.
+
+Stack-margin telemetry (`KZ_DETAIL_LOG`'s minimum-observed-`sp` reporting, extended this session to report headroom
+against the known `0x100000` main-thread-stack floor) measured a real, empirical ~130 KiB of margin at the natural
+chapter-5 peak (~1385 instances, tightest observed `sp=0x1208D0`), comfortably more than the ~40 KiB a cap of 2000
+would cost — the stack-budget side of the question has a clear, favourable answer.
+
+The *mechanism* does not. `GrassRecordCapClamp` (new debug hook, `0x3EF220`, a tail-dispatch continuation with no
+`jal` anywhere targeting it — confirmed via a full-executable caller scan) safely raises the allocated buffer size
+by overriding the one register-held copy of `1500`. To make the walker actually *use* the bigger buffer, the other
+two hardcoded sites need to effectively compare against the new ceiling instead; since neither holds the constant
+in a redirectable register, the attempted fix pre-seeds the freshly-reset `+0x158` counter to `(1500-N)` on the
+walker's one true top-level entry (identified by its fixed return address, `0x3EF258` - every recursive self-call
+returns elsewhere) instead of leaving it at `0`, so it takes `N` increments instead of `1500` to reach the
+unmodified hardcoded check.
+
+This reproducibly crashes. Bisected cleanly: the buffer-resize half alone (`KZ_DETAIL_GRASSCAP_NOBIAS`, temporary)
+is safe but inert, exactly as predicted (the walker still stops writing at the original 1500, so no overflow and no
+visible effect). The counter-bias half, active, crashes within the first grass draw after an elevated view
+distance pushes the true cell count above 1500: a guest `DirectJump` to a garbage PC inside the EE scheduler
+itself, with the observed stack pointer roughly `(new_cap-1500)*80` bytes deeper than normal — consistent with the
+larger buffer being used, then something past or within it corrupted. The most likely explanation is that
+`+0x158`'s value feeds a write address/index computation somewhere in the walker's vectorised (MMI) record-writing
+code in addition to the increment-and-compare traced above; that computation was not fully traced through
+capstone's imprecise EE decoding. A literal ELF-level patch of all three embedded `1500` constants (so the counter
+counts up from a normal `0` instead of a biased negative start) might avoid this specific failure mode, but that
+requires a full generated-code regeneration cycle (not attempted — the private generated tree is 32k files and a
+failed attempt would be expensive to recover from) and is unverified.
+
+**Disposition:** not pursued further. The confirmed-unsafe bias mechanism is kept in `kz_detail.cpp` behind
+`KZ_DETAIL_GRASSCAP` (now documented as confirmed-unsafe, both in code comments and its own runtime warning) purely
+so a future session does not have to rediscover the crash from scratch. `GrassViewScale` above ships without any
+cap change: past the 1500-instance budget, grass further out is thinned by the game's own existing logic rather
+than rendered at the new distance, which is a real but minor visual limitation, not a safety issue.
 
 ## GFX-04 temporal-input feasibility: no-go (2026-10-21)
 
