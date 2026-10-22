@@ -124,6 +124,10 @@ namespace
         cfg.lensBlur = false;
         cfg.renderDistance = 2.0f;
         cfg.lodScale = 1.0f;
+        cfg.staticLodScale = 1.0f;
+        cfg.skinnedLodScale = 1.0f;
+        cfg.visibleCullScale = 1.0f;
+        cfg.grassViewScale = 1.0f;
     }
 
     void onFileChosen(void *userdata, const char *const *files, int)
@@ -425,12 +429,49 @@ namespace
                             "Pushes the fog back. 2x is the supported maximum; farther views expose enemy spawns "
                             "and low-detail background geometry.");
                         ImGui::SliderFloat("##renderdist", &cfg.renderDistance, 1.0f, 2.0f, "%.1fx");
-                        row("Model detail distance",
-                            "Unavailable: elevated model LOD hangs Escape in interactive gameplay.");
+                        row("Model detail distance (combined)",
+                            "Unavailable: scaling every model/scene distance together hangs Escape in interactive "
+                            "gameplay. The four controls below scale each one independently and are safe alone.");
                         cfg.lodScale = 1.0f;
                         ImGui::BeginDisabled();
                         ImGui::SliderFloat("##lod", &cfg.lodScale, 1.0f, 1.0f, "Unavailable (1x)");
                         ImGui::EndDisabled();
+                        {
+                            // docs/findings.md "GFX-03 reinvestigation": each of these four passed independently up
+                            // to 8x, but only chapter 5 and short runs; raise them 1 step at a time. Elevated view
+                            // distance plus any of these corrupts guest memory, so they lock out together.
+                            const bool conflictsWithViewDistance = cfg.renderDistance > 1.0f;
+                            if (conflictsWithViewDistance)
+                            {
+                                cfg.staticLodScale = 1.0f;
+                                cfg.skinnedLodScale = 1.0f;
+                                cfg.visibleCullScale = 1.0f;
+                                cfg.grassViewScale = 1.0f;
+                                ImGui::BeginDisabled();
+                            }
+                            row("Static model detail", "Static and instanced mesh LOD selection distance.");
+                            ImGui::SliderFloat("##staticlod", &cfg.staticLodScale, 1.0f, 2.0f, "%.1fx");
+                            row("Character detail", "Skinned (character) mesh LOD selection distance.");
+                            ImGui::SliderFloat("##skinnedlod", &cfg.skinnedLodScale, 1.0f, 2.0f, "%.1fx");
+                            row("Visibility cull distance", "Per-mesh \"maximum visible distance\" cull.");
+                            ImGui::SliderFloat("##visiblecull", &cfg.visibleCullScale, 1.0f, 2.0f, "%.1fx");
+                            row("Grass view distance",
+                                "Distant grass is still capped by a fixed per-frame instance budget, so this may "
+                                "thin out rather than extend once that budget is reached.");
+                            ImGui::SliderFloat("##grassview", &cfg.grassViewScale, 1.0f, 2.0f, "%.1fx");
+                            if (conflictsWithViewDistance)
+                            {
+                                ImGui::EndDisabled();
+                                ImGui::TextDisabled(
+                                    "Unavailable while View distance is above 1x (the combination is unsafe).");
+                            }
+                            else if (cfg.staticLodScale > 1.0f || cfg.skinnedLodScale > 1.0f ||
+                                    cfg.visibleCullScale > 1.0f || cfg.grassViewScale > 1.0f)
+                            {
+                                ImGui::TextDisabled("View distance is locked to 1x while any of these are above 1x.");
+                                cfg.renderDistance = 1.0f;
+                            }
+                        }
                         row("Sharpening", "Extra edge contrast on the final picture (30 % by default).");
                         ImGui::SliderInt("##sharpen", &cfg.sharpen, 0, 100, cfg.sharpen == 0 ? "Off" : "%d%%");
                         ImGui::EndTable();
@@ -737,6 +778,10 @@ int kzLauncherSelfTest()
     cfg.lensBlur = true;
     cfg.renderDistance = 1.0f;
     cfg.lodScale = 4.0f;
+    cfg.staticLodScale = 2.0f;
+    cfg.skinnedLodScale = 2.0f;
+    cfg.visibleCullScale = 2.0f;
+    cfg.grassViewScale = 2.0f;
     cfg.masterVolume = 37;
     cfg.startLevel = 7;
 
@@ -753,6 +798,9 @@ int kzLauncherSelfTest()
           "validated preset PS2 effects");
     check(cfg.renderDistance == 2.0f && cfg.lodScale == 1.0f,
           "validated preset detail bounds");
+    check(cfg.staticLodScale == 1.0f && cfg.skinnedLodScale == 1.0f && cfg.visibleCullScale == 1.0f &&
+              cfg.grassViewScale == 1.0f,
+          "validated preset resets per-class detail distance even if the stress case elevated it");
     check(cfg.masterVolume == 37 && cfg.startLevel == 7,
           "validated preset preserves unrelated settings");
     return failures;

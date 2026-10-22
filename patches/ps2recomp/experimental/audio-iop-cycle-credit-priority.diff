@@ -1,21 +1,70 @@
 diff --git a/ps2xIOP/src/iop_subsystem.cpp b/ps2xIOP/src/iop_subsystem.cpp
-index 6a1952e..3bcba61 100644
+index 6a1952e..62dc68b 100644
 --- a/ps2xIOP/src/iop_subsystem.cpp
 +++ b/ps2xIOP/src/iop_subsystem.cpp
-@@ -266,6 +266,12 @@ namespace ps2x::iop
- #endif
-             void *timer = nullptr;
- #if defined(_WIN32)
+@@ -57,6 +57,38 @@ namespace ps2x::iop
+             return !(v[0] == '0' || v[0] == 'n' || v[0] == 'N' || v[0] == 'f' || v[0] == 'F');
+         }
+ 
++#if defined(_WIN32)
++        // The native PC port has cores to spare that the original hardware never had: this thread does fixed
++        // real-time work (SPU2 mixing) that must never wait behind the EE/render thread's load, so on a machine
++        // with enough logical processors it gets one physically reserved for it instead of just a priority hint.
++        // kz_main.cpp (the host executable, not this submodule) excludes the same bits from the main/EE thread's
++        // affinity by running the identical bit selection over the same process-wide GetProcessAffinityMask result;
++        // the two sides never communicate directly, they just compute the same deterministic answer independently.
++        DWORD_PTR reservedCoreMaskForProcess()
++        {
++            DWORD_PTR processMask = 0, systemMask = 0;
++            if (!GetProcessAffinityMask(GetCurrentProcess(), &processMask, &systemMask) || processMask == 0)
++                return 0;
++            int bits = 0;
++            for (DWORD_PTR m = processMask; m; m >>= 1)
++                bits += static_cast<int>(m & 1);
++            if (bits < 6) // leave small machines alone; reserving a whole core only pays off with headroom to spare
++                return 0;
++            DWORD_PTR reserved = 0;
++            int need = 2; // both logical processors of (assumed) one physical core, so no SMT sibling steals it
++            for (int i = static_cast<int>(sizeof(DWORD_PTR) * 8) - 1; i >= 0 && need > 0; --i)
++            {
++                const DWORD_PTR bit = static_cast<DWORD_PTR>(1) << i;
++                if (processMask & bit)
++                {
++                    reserved |= bit;
++                    --need;
++                }
++            }
++            return reserved;
++        }
++#endif
++
+         // Threaded mode granularity. The IOP thread runs the IOP in chunks of kChunkEeCycles (4096 IOP cycles, ~110 us
+         // of IOP time) so EE-side callers waiting for the lock get in quickly, and only wakes for work when at least
+         // kMinBacklogEeCycles (2048 IOP cycles, ~55 us) of EE time are unconsumed.
+@@ -272,12 +304,39 @@ namespace ps2x::iop
+                 if (const auto setDesc = reinterpret_cast<SetDesc>(GetProcAddress(kernel, "SetThreadDescription")))
+                     setDesc(GetCurrentThread(), L"ps2x IOP+SPU2");
+             }
++            // Default off pending less noisy validation: a same-day A/B batch found this made the audio-loss
++            // counters dramatically worse once, but a later content-independent lag-stat comparison in the same
++            // batch found no clear further benefit over priority+cycle-credit alone either. Possible explanation
++            // for the regression: the reserved core may collide with the GPU driver's own worker/submit threads,
++            // which can also prefer high-numbered logical processors. Needs a topology-aware core choice (or a
++            // driver-thread survey) before defaulting on. See docs/findings.md "GFX-03 x AUDIO-01 interaction".
++            if (envFlag("PS2X_IOP_THREAD_AFFINITY", false))
++            {
++                const DWORD_PTR reserved = reservedCoreMaskForProcess();
++                if (reserved && !SetThreadAffinityMask(GetCurrentThread(), reserved))
++                    std::fprintf(stderr, "[iop-thread] SetThreadAffinityMask failed: %lu\n",
++                                 static_cast<unsigned long>(GetLastError()));
++            }
 +            if (envFlag("PS2X_IOP_THREAD_PRIORITY", true) &&
 +                !SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL))
 +            {
 +                std::fprintf(stderr, "[iop-thread] SetThreadPriority failed: %lu\n",
 +                             static_cast<unsigned long>(GetLastError()));
 +            }
-             if (const HMODULE kernel = GetModuleHandleW(L"kernel32.dll"))
-             {
-                 using SetDesc = HRESULT(WINAPI *)(HANDLE, PCWSTR);
-@@ -276,8 +282,16 @@ namespace ps2x::iop
+             // CREATE_WAITABLE_TIMER_HIGH_RESOLUTION = 0x2 (Windows 10 1803+); falls back to Sleep(1) if unsupported.
              timer = CreateWaitableTimerExW(nullptr, nullptr, 0x00000002u, TIMER_ALL_ACCESS);
  #endif
              uint64_t consumedLocal = 0;
@@ -32,7 +81,7 @@ index 6a1952e..3bcba61 100644
              while (!stopRequested.load(std::memory_order_acquire))
              {
                  const uint64_t target = published.load(std::memory_order_acquire);
-@@ -287,7 +301,7 @@ namespace ps2x::iop
+@@ -287,7 +346,7 @@ namespace ps2x::iop
                      if (rpcPending.load(std::memory_order_acquire) != 0u)
                      {
                          std::lock_guard<std::recursive_mutex> lock(execMutex);
@@ -41,7 +90,7 @@ index 6a1952e..3bcba61 100644
                      }
                      else
                      {
-@@ -305,8 +319,13 @@ namespace ps2x::iop
+@@ -305,8 +364,13 @@ namespace ps2x::iop
                      {
                          std::lock_guard<std::recursive_mutex> lock(execMutex);
                          const uint64_t t0 = nowNs();

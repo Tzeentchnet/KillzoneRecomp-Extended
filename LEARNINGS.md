@@ -1,6 +1,6 @@
 # LEARNINGS - lessons for the next session
 
-**Last updated:** 2026-10-21
+**Last updated:** 2026-10-22
 
 Short, reusable lessons about working on this repository: what tripped a session up, which checks catch it, and
 which tools answer a question fastest. Evidence and measurements live in [`docs/findings.md`](docs/findings.md); task
@@ -170,3 +170,48 @@ few lines with a pointer to the evidence.
   retained allocator diagnostics caught Chapter 6 cleanup freeing resource-record fields as heap chunks through the
   same cleanup chain already studied by STAB-01. Localize the baseline arm before blaming an elevated graphics
   setting, and do not claim a shared first writer merely because the downstream corruption class matches.
+- **One shared context field with twenty readers is not one setting.** `ctx+0x1AC` fans out into static/instanced/
+  skinned LOD selection, the mesh visible-distance cull, grass view distance, scope zoom and ~15 unclassified
+  per-class gates. Scaling it to probe "LOD" conflates all of them; a call-site-gated hook on the shared AABB-distance
+  helper (`0x2C8178`) plus per-selector threshold-table patching isolates each consumer without touching the others.
+  `src/kz_detail.cpp` is the reusable per-class harness; by 2026-10-22 it also drives four real `[Graphics]` config
+  keys directly (no env var needed for the shipped path), with `KZ_DETAIL_*` remaining as a diagnostic override.
+- **A streamed LOD system degrades gracefully even when the selector is wrong.** Elevated per-class LOD distance
+  (static/instanced/skinned/grass, up to 8x) passed independently because the draw path only ever shows the nearest
+  *resident* level (`0x3FF318`/`0x3EF648`, residency check `0x189C08`); a selection the streamer hasn't loaded yet
+  just keeps showing the old level while `0x189CB0` stamps it for background loading. Don't assume a wrong LOD
+  selection is unsafe without checking whether the consumer actually requires the data to be present.
+- **Rule out stack, heap, packet-buffer and known race mechanisms with sampled telemetry before calling a crash
+  "allocator corruption" by resemblance alone.** Render distance 2x + elevated LOD reproduces WIN-06-like symptoms
+  (stale-pointer indirect calls, the same `0x2E7B38` cleanup chain, the same streamer object address), but minimum
+  stack pointer, heap used/free/top, DMA packet high-water and an in-flight offloaded-RPC registry all stayed normal
+  in the failing runs this session measured. Matching downstream symptoms is not the same as a shared first cause;
+  see WIN-06's own inability to pin one across 7-10 ten-run batches.
+- **`ps2TraceGuestRangeWrite`/`ps2TraceGuestWrite` are real, if currently no-op, hook points.** Turning the range-write
+  one into a null-by-default observer callback (`patches/ps2recomp/experimental/gfx03-host-write-rpc-diagnostics.diff`)
+  cost one relaxed atomic load per host-side guest-RAM write and found a corrupting `rpcCopyToRdram` write within one
+  session, instead of the page-protection watch's larger timing perturbation.
+- **Capstone mis-decodes the R5900's own instruction extensions; trust the generated C++ over raw disassembly for
+  EE-specific opcodes.** `mult $ac3, $v1, $a1` in capstone's output looked like a register-naming artifact; the
+  generated code showed it is really EE's 3-operand `MULT` writing the low 32 bits of the product straight into
+  `$v1` (rd), not just HI/LO. Re-deriving a mechanism from `generated/*.cpp` instead of hand-decoding raw words
+  caught this before it caused a wrong implementation.
+- **A clean caller-return-address check correctly isolates "the one true top-level call" among several recursive
+  self-calls to the same function.** The grass walker (`0x3EE6F8`) recurses into itself at four internal call sites;
+  gating a one-time side effect (seeding a shared counter) on `ra == 0x3EF258` (the *only* return address its actual
+  outer caller uses; every recursive self-call returns elsewhere) fires exactly once per object per frame, not once
+  per recursion level. Same pattern as the LOD selector hooks' caller-return gating, reused successfully here.
+- **Bisect a crashing hook into independently-testable halves before concluding "unsafe" covers the whole idea.**
+  A grass-cap raise needed both a buffer-size increase (one register at a clean dispatch-table entry, confirmed
+  safe alone) and a shared-counter bias (to make the walker's unmodifiable hardcoded comparisons use the new
+  ceiling). Splitting them behind a temporary env var in one extra build-and-run cycle cleanly isolated the crash to
+  the bias half, instead of discarding the whole mechanism or, worse, shipping the untested combination.
+- **A main-thread-stack VLA sized by `min(count, N)*record_size`, with the comparison baked as a raw immediate in
+  at least two places, cannot be safely re-targeted by pre-seeding the counted field unless every place that field
+  is read is confirmed to be *only* an increment-and-compare.** Pre-seeding grass's shared per-object record counter
+  to retarget hardcoded `slti ..., 0x5DC` checks crashed reproducibly (a guest `DirectJump` to a garbage PC inside
+  the EE scheduler, stack pointer offset consistent with the larger buffer being in use) — the field likely also
+  feeds a write-address/index computation in the walker's vectorised (MMI) record-writing code that was not fully
+  traced. Prefer a literal ELF-level constant patch (requires full generated-code regeneration) over a runtime bias
+  trick for this class of problem; the regeneration was not attempted this session given the generated tree's size
+  and fragility, so that alternative remains unverified too.

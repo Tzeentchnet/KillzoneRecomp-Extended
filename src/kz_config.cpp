@@ -399,6 +399,10 @@ namespace
         c.lensBlur = reader.boolean("Graphics", "LensBlur", c.lensBlur);
         c.renderDistance = reader.number("Graphics", "RenderDistance", c.renderDistance, 1.0f, 2.0f);
         c.lodScale = reader.number("Graphics", "LodScale", c.lodScale, 1.0f, 1.0f);
+        c.staticLodScale = reader.number("Graphics", "StaticLodScale", c.staticLodScale, 1.0f, 2.0f);
+        c.skinnedLodScale = reader.number("Graphics", "SkinnedLodScale", c.skinnedLodScale, 1.0f, 2.0f);
+        c.visibleCullScale = reader.number("Graphics", "VisibleCullScale", c.visibleCullScale, 1.0f, 2.0f);
+        c.grassViewScale = reader.number("Graphics", "GrassViewScale", c.grassViewScale, 1.0f, 2.0f);
         c.mouseSensitivity = reader.number("Input", "MouseSensitivity", c.mouseSensitivity, 0.05f, 20.0f);
         c.invertY = reader.boolean("Input", "InvertY", c.invertY);
         c.rawMouse = reader.boolean("Input", "RawMouse", c.rawMouse);
@@ -519,7 +523,9 @@ namespace
           << "\nSharpen=" << c.sharpen << "\nNoiseFilter=" << (c.noiseFilter ? 1 : 0)
           << "\nMotionBlur=" << (c.motionBlur ? 1 : 0) << "\nGlow=" << (c.glow ? 1 : 0)
           << "\nLensBlur=" << (c.lensBlur ? 1 : 0) << "\nRenderDistance=" << c.renderDistance
-          << "\nLodScale=" << c.lodScale << '\n';
+          << "\nLodScale=" << c.lodScale << "\nStaticLodScale=" << c.staticLodScale
+          << "\nSkinnedLodScale=" << c.skinnedLodScale << "\nVisibleCullScale=" << c.visibleCullScale
+          << "\nGrassViewScale=" << c.grassViewScale << '\n';
         writeExtras("Graphics", false);
         o << "\n[Input]\nMouseSensitivity=" << c.mouseSensitivity << "\nInvertY=" << (c.invertY ? 1 : 0)
           << "\nRawMouse=" << (c.rawMouse ? 1 : 0) << "\nAimMode=" << (c.holdAim ? "Hold" : "Toggle")
@@ -579,6 +585,8 @@ namespace
                a.bilinear == b.bilinear && a.sharpScaling == b.sharpScaling && a.sharpen == b.sharpen &&
                a.noiseFilter == b.noiseFilter && a.motionBlur == b.motionBlur && a.glow == b.glow &&
                a.lensBlur == b.lensBlur && a.renderDistance == b.renderDistance && a.lodScale == b.lodScale &&
+               a.staticLodScale == b.staticLodScale && a.skinnedLodScale == b.skinnedLodScale &&
+               a.visibleCullScale == b.visibleCullScale && a.grassViewScale == b.grassViewScale &&
                a.mouseSensitivity == b.mouseSensitivity && a.invertY == b.invertY && a.rawMouse == b.rawMouse &&
                a.holdAim == b.holdAim && a.stickDeadzone == b.stickDeadzone &&
                a.masterVolume == b.masterVolume && a.isoPath == b.isoPath &&
@@ -769,6 +777,22 @@ int kzConfigSelfTest()
     check(renderDistance.config.renderDistance == 2.0f, "render-distance safety clamp");
     check(hasDiagnostic(renderDistance, DiagnosticLevel::Warning, "Graphics", "RenderDistance", "4"),
           "render-distance clamp diagnostic");
+
+    const std::filesystem::path detailScalesPath = root / "detail-scales.ini";
+    check(writeText(detailScalesPath,
+                    "[Config]\nVersion=2\n[Graphics]\nStaticLodScale=8\nSkinnedLodScale=1.5\n"
+                    "VisibleCullScale=0\nGrassViewScale=2\n"),
+          "write per-class detail-scale fixture");
+    const ConfigLoadResult detailScales = loadConfigFile(detailScalesPath);
+    check(detailScales.config.staticLodScale == 2.0f && detailScales.config.skinnedLodScale == 1.5f &&
+              detailScales.config.visibleCullScale == 1.0f && detailScales.config.grassViewScale == 2.0f,
+          "per-class detail-scale safety clamp (1..2)");
+    check(hasDiagnostic(detailScales, DiagnosticLevel::Warning, "Graphics", "StaticLodScale", "8") &&
+              hasDiagnostic(detailScales, DiagnosticLevel::Warning, "Graphics", "VisibleCullScale", "0"),
+          "per-class detail-scale clamp diagnostics");
+    check(saveConfigFile(detailScalesPath, detailScales.config, false), "save per-class detail-scale fixture");
+    check(sameConfig(detailScales.config, loadConfigFile(detailScalesPath).config),
+          "per-class detail-scale round-trip");
 
     const std::filesystem::path malformedPath = root / "malformed.ini";
     check(writeText(malformedPath,

@@ -6,7 +6,7 @@
 **Supported game build:** Killzone NTSC-U, SCUS-97402
 **Primary platform:** Windows 10/11 x64
 **Primary renderer:** Direct3D 12
-**Last revised:** 2026-10-20
+**Last revised:** 2026-10-22
 
 This plan supersedes the earlier portability-first roadmap. Work already completed under that roadmap remains valid
 evidence in [`WORKDONE.md`](WORKDONE.md), but macOS, Metal, new mod loading, Blender integration, AI/navigation
@@ -98,7 +98,7 @@ recorded here as the comparison baseline. The ISO path is intentionally excluded
 | `Graphics` filtering/AA | `Anisotropy=16`, `FXAA=0`, `SMAA=1`, `SmaaThreshold=0.2`, `Bilinear=1` |
 | `Graphics` presentation | `SharpScaling=1`, `Sharpen=30`, `TextureReplacement=1` |
 | `Graphics` game effects | `NoiseFilter=0`, `MotionBlur=0`, `Glow=0`, `LensBlur=0` |
-| `Graphics` scene range | `RenderDistance=1`, `LodScale=1` |
+| `Graphics` scene range | `RenderDistance=1`, `LodScale=1`, `StaticLodScale=1`, `SkinnedLodScale=1`, `VisibleCullScale=1`, `GrassViewScale=1` |
 | `Input` | `MouseSensitivity=1`, `InvertY=0`, `RawMouse=1`, `AimMode=Hold`, `StickDeadzone=0.15` |
 | `Audio` | `MasterVolume=100` |
 | `Testing` | `UnlockAllLevels=0`, `SkipIntro=0`, `StartLevel=0`, `StartDifficulty=0`, `TestMemoryCard=0`, `DefaultProfile=Shooterman` |
@@ -336,7 +336,19 @@ parallel after BASE-01, CFG-01 and TEST-01.
   deterministic positive
   cases: base-mip-only restores the distant docking bulkhead pattern, and 16x anisotropy changes oblique corridor
   surfaces. Four-way replay confirms mip mode and anisotropy remain effective together. Exact `Shooterman` plus
-  native campaign selection is the supported map-access path; no further GFX-03 implementation is planned.
+  native campaign selection is the supported map-access path.
+- **Follow-up (2026-10-22):** the shared `LodScale` mechanism above conflated static, instanced and skinned LOD
+  selection, the mesh visible-distance cull and the grass view distance into one value. A per-class mechanism
+  (`src/kz_detail.cpp`) separated them; each passed independently up to 8x in a chapter-5-only, short-run gate, but
+  `RenderDistance > 1` combined with *any* of them still corrupts guest memory (same symptom class as WIN-06,
+  root cause not found). Four new `[Graphics]` keys (`StaticLodScale`, `SkinnedLodScale`, `VisibleCullScale`,
+  `GrassViewScale`; 1..2, default 1) now expose the per-class mechanism in the launcher, with that one unsafe
+  combination hard-blocked (forced back to 1 whenever `RenderDistance > 1`, both in the config resolver and live in
+  the launcher UI). This is a narrower, independently-reasoned feature on thinner evidence than this task's own
+  acceptance bar above (chapter 5 only; no full BYOD/campaign matrix); it does not retroactively claim that bar was
+  met. See `docs/findings.md` "GFX-03 follow-up" for the full evidence, including a grass-instance-cap experiment
+  that reproduced a crash and was not pursued further (kept as documented negative evidence only). No further
+  GFX-03 implementation is planned beyond this exposure.
 
 #### GFX-04 - Temporal input feasibility contract
 
@@ -563,7 +575,7 @@ This plan records the requested direction but does not substitute for named rele
 |---|---|
 | Product direction | Graphics/gameplay focus requested 2026-10-20 |
 | Windows/runtime owner | M0 and M1 accepted 2026-10-20; direct-start STAB-01 diagnostic retired 2026-10-21 |
-| Graphics owner | GFX-01 through GFX-05 complete; GFX-04/DLSS-01 technical no-go retained |
+| Graphics owner | GFX-01 through GFX-05 complete; GFX-04/DLSS-01 technical no-go retained; GFX-03 per-class follow-up exposed in the launcher 2026-10-22 on chapter-5-only evidence, pending a full BYOD/campaign gate |
 | Gameplay owner | Pending WPN-01 evidence |
 | Test/release owner | Pending hardware and campaign matrices |
 | Legal/distribution owner | Existing LEGAL-01 disposition retained; any DLSS artifact requires separate review |

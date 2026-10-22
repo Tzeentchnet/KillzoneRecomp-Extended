@@ -102,6 +102,14 @@ use `MXL=0` and are therefore identical in both modes.
 farther exposes enemy spawns and low-polygon background geometry that the original fog was designed to hide. Higher
 configuration or `KZ_RENDER_DISTANCE` values are reported and clamped to 2x.
 
+`[Graphics] StaticLodScale`, `SkinnedLodScale`, `VisibleCullScale`, `GrassViewScale` (each `1.0..2.0`, default `1.0`)
+independently scale static/instanced mesh LOD distance, character (skinned) LOD distance, the per-mesh maximum
+visible-distance cull, and grass view distance. Each was qualified safe on its own (docs/findings.md "GFX-03
+reinvestigation"), but combined with `RenderDistance` above `1.0` the game corrupts its own memory; the launcher
+and the config loader both force all four back to `1.0` whenever `RenderDistance` is `1.5` or `2.0`. Past its own
+budget (about 1500 instances per frame), distant grass is thinned rather than extended — `GrassViewScale` does not
+change that budget.
+
 `[Testing] DefaultProfile=Shooterman` controls only the profile typed by Start in when the selected testing card is
 isolated and empty. It never renames an existing profile and is ignored for the normal memory card. Automation may
 override it with `KZ_DEFAULT_PROFILE`; supported names are 1-32 characters using letters, digits, spaces, `-`, `_`
@@ -343,5 +351,6 @@ Killzone is a trademark of Sony Interactive Entertainment; this project is not a
 The owner-approved distribution disposition is recorded under LEGAL-01 in [`WORKDONE.md`](WORKDONE.md). Retail and
 generated game-derived content remain BYOD-only, unresolved third-party components and proprietary SDKs are excluded
 from release artifacts, and every release candidate still requires notices, corresponding-source review, an SBOM,
-secret and protected-content scans, and a package-allowlist audit. The repository remains private unless the owner
-separately authorizes publication.
+secret and protected-content scans, and a package-allowlist audit. The source repository was made public on
+2026-10-22 by owner decision; a pre-built binary artifact is a separate, not-yet-gated step and still needs the
+checks above before distribution.

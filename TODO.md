@@ -1,7 +1,7 @@
 # TODO - current milestone queue
 
 **Milestone:** M2 - Safe graphics and weapon controls
-**Last updated:** 2026-10-21
+**Last updated:** 2026-10-22
 
 The durable queue of open work. Definitions, dependencies, acceptance commands and stop conditions are in
 [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md); verified completions are in [`WORKDONE.md`](WORKDONE.md). A task
@@ -28,6 +28,21 @@ qualified the direct-start/skip-level diagnostic path, which exact `Shooterman` 
 superseded. BASE-01, CFG-01, TEST-01, GFX-01, GFX-02, GFX-03, GFX-04, GFX-05, PROFILE-01, WIN-01, WIN-03 and WIN-05 are complete in
 [`WORKDONE.md`](WORKDONE.md). DLSS-01 is qualification only; product integration is not in this queue.
 
+**GFX-03 reinvestigation and follow-up (2026-10-21/22, no WORKDONE change — GFX-03 itself is not reopened):** a
+session replaced the withdrawn shared-context LOD scaling with per-class scaling (`src/kz_detail.cpp`) to see
+whether the mechanism, not just the symptom, could be isolated. Each class (static/instanced/skinned LOD, grass,
+visible-distance cull) passes independently up to 8x in a chapter-5-only gate; `RenderDistance=2` combined with
+*any* elevated class still corrupts the guest heap, reproducing the original no-go with cleaner evidence but no
+identified root cause. A follow-up session then (a) exposed the four per-class scales as real `[Graphics]` config
+keys and launcher sliders, range `1..2`, with `RenderDistance > 1` hard-forcing all four back to `1.0` in both the
+config resolver and the live UI (shipped, validated via config self-tests, a resolver unit test, and a live boot +
+45 s scripted-gameplay check through an actual `killzone.ini`, not just diagnostic env vars), and (b) investigated
+raising the grass-instance cap above 1500, which reproducibly crashes (bisected to a specific sub-mechanism; the
+cap is NOT raised, no config exposure was added for it). See `docs/findings.md` "GFX-03 reinvestigation" and "GFX-03
+follow-up" for the full writeup, every ruled-out mechanism, and the experimental PS2Recomp diagnostic patch.
+Remaining gap before this could be considered against GFX-03's own original acceptance bar: no full BYOD/campaign
+matrix (chapter-5-only evidence so far), no human visual review of the four new sliders' output.
+
 ### AUDIO-01 - Combat audio clipping
 
 - **Status:** in progress. Paired hands-on captures localize the audible loss to the host SPU2 output path. The
@@ -50,6 +65,48 @@ superseded. BASE-01, CFG-01, TEST-01, GFX-01, GFX-02, GFX-03, GFX-04, GFX-05, PR
 - **Next step:** if AUDIO-01 resumes, apply the experimental patch in an isolated branch, add a repeated interactive
   stability gate before any priority change, and require zero callback-path loss in a combat soak. Do not raise the
   reserve further without a fresh latency decision.
+- **GFX-03 interaction (2026-10-22) - retracted same day:** an initial Escape A/B looked like it showed the
+  per-class detail sliders worsening this cutout (44 -> 249 loss events). A same-day follow-up found that number is
+  within normal run-to-run noise: three repeats of the identical `elevated` config (same binary, same script) gave
+  249, 0 and 0 loss events. The scripted input (`KZ_INPUT_SCRIPT`, open-loop gameplay-relative timestamps) drifts
+  into different actual combat content each run under real-time host jitter, so single-run audio-loss comparisons
+  cannot currently distinguish "the setting changed the outcome" from "the character walked into a different fight
+  this time." GFX-03 x AUDIO-01 interaction is unconfirmed either way - see `docs/findings.md` "GFX-03 x AUDIO-01
+  interaction" and its retraction. The preset-default decision is unchanged (sliders stay opt-in only), not because
+  elevated settings were cleared, but because nothing reliable justifies changing it yet.
+- **Scheduling fix (2026-10-22):** resumed the preserved `audio-iop-cycle-credit-priority.diff` (RPC cycle-credit
+  accounting + `THREAD_PRIORITY_ABOVE_NORMAL` for the IOP+SPU2 thread, `PS2X_IOP_THREAD_PRIORITY`, default on) and
+  tried adding a new CPU-affinity reservation on top (`PS2X_IOP_THREAD_AFFINITY` / `KZ_RESERVE_AUDIO_CORE`: reserve
+  one physical core exclusively for the IOP+SPU2 thread, excluded from the main/EE/render thread's mask -
+  "take advantage of the native PC port," since the PS2 never had a spare core to dedicate). The affinity half
+  showed no clear benefit over priority+cycle-credit alone and one inconclusive run suggested it might actively
+  hurt (possibly colliding with the GPU driver's own worker threads on high-numbered logical processors), so it is
+  **defaulted off** (`PS2X_IOP_THREAD_AFFINITY`/`KZ_RESERVE_AUDIO_CORE` default `false`); the code stays behind the
+  flag for a future topology-aware attempt rather than being deleted.
+  Priority+cycle-credit alone validated with a 6-run interleaved multi-trial on the elevated LOD config using
+  `PS2X_IOP_THREAD_STATS=1`'s max-backlog-lag (content-independent, unlike counting audio-loss events): unfixed
+  trials hit 160/542/742 ms max lag with up to 81,594 underrun-silence frames; the matching fixed trials hit
+  150/18/18 ms with 0 underrun frames in 2 of 3. The fix never did meaningfully worse than its paired unfixed trial
+  and twice prevented a bad one. See `docs/findings.md` "AUDIO-01 scheduling fix" for the full table and method.
+  **Status: reverted the same day.** The hands-on session this status note was waiting on happened immediately
+  after: with `PS2X_IOP_THREAD_PRIORITY` on, playing Escape's firefight with the elevated LOD config froze the
+  game (force-close required) near the end of the battle, with little combat/audio active - not an exception
+  (`KZ_CRASH_TRACE` would not have caught a hang anyway) and not what a backlog-driven audio dropout looks like.
+  This reproduces the earlier-rejected "highest priority locks interactive gameplay" finding closely enough that
+  `ABOVE_NORMAL` is judged equally unsafe, not just the literal highest level - likely the IOP+SPU2 thread winning
+  the race to reacquire `execMutex` every time it releases it, starving the main/EE/render/input thread. Headless
+  scripted soaks never exercise real input-polling/render-present contention on that lock, which is why the
+  content-independent lag-stat validation looked clean. The whole attempt (priority, affinity and the RPC
+  cycle-credit accounting that was only ever tested together with priority, never alone) was reverted out of the
+  working tree ahead of a public test build, not just defaulted off - `ext/PS2Recomp/ps2xIOP/src/iop_subsystem.cpp`
+  is back to the clean locked commit and the paired `src/kz_main.cpp` affinity helper is deleted. Net: AUDIO-01 is
+  back to its exact pre-session state (the shipped 120 ms/320 ms buffer mitigation only), with two independent
+  thread-priority attempts now rejected for the same reason. The full diff is preserved at
+  `patches/ps2recomp/experimental/audio-iop-cycle-credit-priority.diff` for a future session, not applied anywhere.
+  See `docs/findings.md` "Hands-on finding: the priority boost reproduces the earlier rejection" for the full
+  writeup. A future attempt should treat priority elevation for this thread as unsafe at any level and look
+  elsewhere (restructure the lock to be fair regardless of priority, or move SPU2 mixing off the EE-shared-lock
+  path).
 
 ## Paused work from the superseded portability roadmap
 

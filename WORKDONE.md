@@ -269,10 +269,16 @@ risk. Do not edit an entry's evidence after the fact. If a later run disagrees, 
   review approves the resulting artifact.
 - **Artifact controls:** every release candidate needs an SBOM, dependency notices, corresponding-source review,
   secret scan, protected-content scan and package-allowlist audit. Failure or an unresolved result blocks release.
-- **Repository visibility:** `origin` remains private. LEGAL-01 completion does not authorize a visibility change;
-  publication requires a separate explicit repository-owner decision.
+- **Repository visibility:** made public on 2026-10-22 by direct repository-owner instruction (the separate explicit
+  decision this entry originally required). Scope is source-repository publication only - testers clone and build
+  against their own disc image (BYOD), unchanged by this decision. A pre-built binary artifact handed to testers
+  remains out of scope: it still requires the SBOM, dependency notices, corresponding-source review and secret/
+  protected-content scans below, none of which are implemented yet. Preceding the visibility change, an audit of
+  the full history of both `master` and `gfx03-reinvestigation` (tracked files, largest-ever blobs, retail
+  filenames, media files, secret patterns, personal path/username leakage) found nothing to remediate - see the
+  2026-10-22 session transcript for the method; no corrective commit was needed.
 - **Residual gate:** this closes the Phase 0 human-disposition dependency. It is not approval of a release artifact;
-  the per-artifact checks in the plan's release gate remain mandatory.
+  the per-artifact checks in the plan's release gate remain mandatory before any built binary is distributed.
 
 ## Re-verification: Windows regression set, 2026-10-20
 

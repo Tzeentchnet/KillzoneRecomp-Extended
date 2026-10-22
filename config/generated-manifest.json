@@ -197,6 +197,13 @@
       "signature_sha256": "51a7d76d3d04ef24feab1ed2db041aabf2fadb4aebad5dd90652c0cfc1dd7171"
     },
     {
+      "symbol": "PacketFrameBegin",
+      "kind": "debug_hook",
+      "address": "0x0014FD90",
+      "signature_size": 16,
+      "signature_sha256": "834fcba450a9ec176ab79e3365c077d0105d2a5f43440130966e77a5804d8437"
+    },
+    {
       "symbol": "TimelineKick",
       "kind": "debug_hook",
       "address": "0x00150090",
@@ -286,6 +293,13 @@
       "address": "0x001759F8",
       "signature_size": 16,
       "signature_sha256": "36e1388619f7cef542f2e9658264dfecf93eac82e8e2c9482317cb2bf096a27f"
+    },
+    {
+      "symbol": "LodStreamRequest",
+      "kind": "debug_hook",
+      "address": "0x00189CB0",
+      "signature_size": 16,
+      "signature_sha256": "9ef25a35bfc9dae0b6c570b24fd3d4a4fb2639add52625f5051f948fc7f7d4d3"
     },
     {
       "symbol": "LensBlur",
@@ -526,6 +540,13 @@
       "signature_sha256": "dff1a9f0a51940752558bae4cf777d09aa272d1b7ee77ddd03b5d6dc313584f5"
     },
     {
+      "symbol": "AllocFailHandler",
+      "kind": "debug_hook",
+      "address": "0x0030A180",
+      "signature_size": 24,
+      "signature_sha256": "b851eb7efe5414bf8426fb7259dce2eeb9f58f19498b4bff3f389f1e0cf5c87e"
+    },
+    {
       "symbol": "MpegGetPicture",
       "kind": "hook",
       "address": "0x003CD750",
@@ -545,6 +566,41 @@
       "address": "0x003D7490",
       "signature_size": 16,
       "signature_sha256": "e13de07c0e7d3abfeedea84c6b2fcd8bd204ef79fd54cba6f21ec9452f793210"
+    },
+    {
+      "symbol": "GrassRender",
+      "kind": "debug_hook",
+      "address": "0x003EE6F8",
+      "signature_size": 16,
+      "signature_sha256": "7360a013f2e7af04eeefd1896feac61ce8b214243924fd9b6978c8ab5712562a"
+    },
+    {
+      "symbol": "GrassRecordCapClamp",
+      "kind": "debug_hook",
+      "address": "0x003EF220",
+      "signature_size": 16,
+      "signature_sha256": "5d70835eb01105901de6e5e6b88f495442ee9e5ff7f2a0b654eadf2ca6df9c31"
+    },
+    {
+      "symbol": "LodStaticInstanced",
+      "kind": "debug_hook",
+      "address": "0x003EFAD8",
+      "signature_size": 16,
+      "signature_sha256": "f882ae965ea58f4673cbdaca712304736f343d44f59432f72d3b9822ce784767"
+    },
+    {
+      "symbol": "LodSelectSimple",
+      "kind": "debug_hook",
+      "address": "0x003F4E70",
+      "signature_size": 24,
+      "signature_sha256": "d4cdd341955b9776bd7485b2bff68109190c0135781e6b3a2f2c8b4259d2fafa"
+    },
+    {
+      "symbol": "LodSelectBlended",
+      "kind": "debug_hook",
+      "address": "0x003F4F10",
+      "signature_size": 24,
+      "signature_sha256": "599df40ee2ae59ec993852ce1eff1c591fe58da18d646f686ccc4a3ae4fce4d5"
     },
     {
       "symbol": "Vector36ResizeReturn",

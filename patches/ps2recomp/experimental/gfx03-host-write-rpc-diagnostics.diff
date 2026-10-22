@@ -1,0 +1,164 @@
+diff --git a/ps2xRuntime/include/ps2_runtime.h b/ps2xRuntime/include/ps2_runtime.h
+index 4b9242c..5ccbeeb 100644
+--- a/ps2xRuntime/include/ps2_runtime.h
++++ b/ps2xRuntime/include/ps2_runtime.h
+@@ -255,6 +255,30 @@ inline void ps2TraceGuestWrite(uint8_t *rdram,
+     // TODO we dont need this anymore so on next release it will be deleted
+ }
+ 
++// Diagnostic observer for host-side writes into guest RAM (HLE stubs, IOP host transfers). May be called from the
++// IOP thread. Null (the default) costs one relaxed load. Hosts test PS2X_GUEST_RANGE_WRITE_OBSERVER before using it.
++#define PS2X_GUEST_RANGE_WRITE_OBSERVER 1
++using Ps2GuestRangeWriteObserver = void (*)(uint32_t guestAddr, uint32_t size, const char *op);
++inline std::atomic<Ps2GuestRangeWriteObserver> &ps2GuestRangeWriteObserver()
++{
++    static std::atomic<Ps2GuestRangeWriteObserver> observer{nullptr};
++    return observer;
++}
++
++// Diagnostic: describes an offloaded (threaded-IOP) nowait SifCallRpc whose receive buffer overlaps [lo, hi) and whose
++// result has not been copied back yet. Returns false when none does.
++struct Ps2RpcInFlightInfo
++{
++    uint32_t clientPtr = 0;
++    uint32_t sid = 0;
++    uint32_t rpcNum = 0;
++    uint32_t receiveBuffer = 0;
++    uint32_t receiveSize = 0;
++    uint32_t callerRa = 0;
++    uint64_t ageMicroseconds = 0;
++};
++bool ps2RpcFindInFlightReceive(uint32_t lo, uint32_t hi, Ps2RpcInFlightInfo &out);
++
+ inline void ps2TraceGuestRangeWrite(uint8_t *rdram,
+                                     uint32_t guestAddr,
+                                     uint32_t size,
+@@ -262,11 +286,9 @@ inline void ps2TraceGuestRangeWrite(uint8_t *rdram,
+                                     const R5900Context *ctx)
+ {
+     (void)rdram;
+-    (void)guestAddr;
+-    (void)size;
+-    (void)op;
+     (void)ctx;
+-    // TODO we dont need this anymore so on next release it will be deleted
++    if (const Ps2GuestRangeWriteObserver observer = ps2GuestRangeWriteObserver().load(std::memory_order_relaxed))
++        observer(guestAddr, size, op);
+ }
+ 
+ class PS2Runtime
+diff --git a/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp b/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp
+index 3dc8e0d..5e7a5ca 100644
+--- a/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp
+@@ -3,6 +3,8 @@
+ #include "../../ps2_iop_transport.h"
+ #include "../../ps2_iop_async.h"
+ #include <chrono>
++#include <mutex>
++#include <vector>
+ #include <cstdio>
+ #include <cstdlib>
+ 
+@@ -400,8 +402,68 @@ namespace ps2_syscalls
+             uint32_t sendBuf = 0, sendSize = 0, receiveBuffer = 0, receiveSize = 0;
+             uint32_t endFunction = 0, endParameter = 0, completionSemaphore = 0, gp = 0;
+             uint32_t callerPc = 0, callerRa = 0;
++            uint64_t inFlightId = 0;
+         };
+ 
++        // Diagnostic registry of offloaded nowait calls whose receive copy is still pending (ps2RpcFindInFlightReceive).
++        struct InFlightRpc
++        {
++            uint64_t id = 0;
++            Ps2RpcInFlightInfo info{};
++            std::chrono::steady_clock::time_point submitted{};
++        };
++        std::mutex g_inFlightMutex;
++        std::vector<InFlightRpc> g_inFlight;
++        uint64_t g_nextInFlightId = 1;
++
++        uint64_t registerInFlight(const OffloadedRpc &call)
++        {
++            std::lock_guard<std::mutex> lock(g_inFlightMutex);
++            InFlightRpc entry;
++            entry.id = g_nextInFlightId++;
++            entry.info.clientPtr = call.clientPtr;
++            entry.info.sid = call.sid;
++            entry.info.rpcNum = call.rpcNum;
++            entry.info.receiveBuffer = call.receiveBuffer & 0x1FFFFFFFu;
++            entry.info.receiveSize = call.receiveSize;
++            entry.info.callerRa = call.callerRa;
++            entry.submitted = std::chrono::steady_clock::now();
++            g_inFlight.push_back(entry);
++            return entry.id;
++        }
++
++        bool findInFlightReceive(uint32_t lo, uint32_t hi, Ps2RpcInFlightInfo &out)
++        {
++            std::lock_guard<std::mutex> lock(g_inFlightMutex);
++            const auto now = std::chrono::steady_clock::now();
++            for (const InFlightRpc &entry : g_inFlight)
++            {
++                const uint32_t begin = entry.info.receiveBuffer;
++                const uint32_t end = begin + entry.info.receiveSize;
++                if (entry.info.receiveSize == 0u || end <= lo || begin >= hi)
++                    continue;
++                out = entry.info;
++                out.ageMicroseconds = static_cast<uint64_t>(
++                    std::chrono::duration_cast<std::chrono::microseconds>(now - entry.submitted).count());
++                return true;
++            }
++            return false;
++        }
++
++        void unregisterInFlight(uint64_t id)
++        {
++            std::lock_guard<std::mutex> lock(g_inFlightMutex);
++            for (size_t i = 0; i < g_inFlight.size(); ++i)
++            {
++                if (g_inFlight[i].id == id)
++                {
++                    g_inFlight[i] = g_inFlight.back();
++                    g_inFlight.pop_back();
++                    return;
++                }
++            }
++        }
++
+         void finishOffloadedRpc(PS2Runtime *runtime, uint8_t *rdram, const OffloadedRpc &call,
+                                 const ps2x::iop::RpcResult &iopResult)
+         {
+@@ -435,6 +497,7 @@ namespace ps2_syscalls
+                     zeroedFallback = true;
+                 }
+             }
++            unregisterInFlight(call.inFlightId);
+ 
+             auto completeClient = [=](bool callbackCompleted)
+             {
+@@ -741,6 +804,7 @@ namespace ps2_syscalls
+                 offloaded.gp = getRegU32(ctx, 28);
+                 offloaded.callerPc = ctx->pc;
+                 offloaded.callerRa = getRegU32(ctx, 31);
++                offloaded.inFlightId = registerInFlight(offloaded);
+                 if (ps2IopRpcSubmit(request,
+                                     [runtime, rdram, offloaded](const ps2x::iop::RpcResult &result)
+                                     { finishOffloadedRpc(runtime, rdram, offloaded, result); }))
+@@ -748,6 +812,7 @@ namespace ps2_syscalls
+                     setReturnS32(ctx, 0);
+                     return;
+                 }
++                unregisterInFlight(offloaded.inFlightId);
+             }
+             const uint64_t iopT0 = callTimer.t0 ? SifCallRpcTimer::now() : 0u;
+             iopResult = PS2IopTransport::handleRpc(runtime, rdram, ctx, request);
+@@ -1215,3 +1280,8 @@ namespace ps2_syscalls
+         setReturnS32(ctx, static_cast<int32_t>(queuePtr));
+     }
+ }
++
++bool ps2RpcFindInFlightReceive(uint32_t lo, uint32_t hi, Ps2RpcInFlightInfo &out)
++{
++    return ps2_syscalls::findInFlightReceive(lo, hi, out);
++}

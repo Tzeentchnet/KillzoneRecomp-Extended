@@ -709,7 +709,25 @@ resulting tree to equal the pinned submodule tree.
   for a future fault that does involve a critical section; not adopted without evidence of benefit.
 - **experimental/audio-iop-cycle-credit-priority.diff** (not applied; `git apply --directory=ext/PS2Recomp`) -
   charges offloaded RPC execution against future published IOP budget instead of advancing the same interval twice,
-  and raises the Windows IOP/SPU2 worker one priority level. In AUDIO-01 probes, cycle credit held IOP lead near 6 ms
-  instead of 9.8 seconds; combined with a 160 ms reserve, the automated 117-second run recorded 800 underrun frames
-  and no skips. The hands-on run was canceled, while a separate highest-priority experiment locked gameplay. Keep
-  this patch experimental until repeated interactive stability and zero-loss combat gates pass.
+  and raises the Windows IOP/SPU2 worker one priority level (`PS2X_IOP_THREAD_PRIORITY`, default on -
+  `THREAD_PRIORITY_ABOVE_NORMAL`, not the "highest" level that previously locked gameplay). Revalidated 2026-10-22
+  with a 6-run interleaved multi-trial (unfixed/fixed alternating) on the elevated-LOD combat config, using
+  `PS2X_IOP_THREAD_STATS=1`'s content-independent max-backlog-lag: unfixed hit 160/542/742 ms max lag across the
+  three trials, the paired fixed runs hit 150/18/18 ms, never doing worse and twice preventing a real dropout (see
+  `docs/findings.md` "AUDIO-01 scheduling fix"). The same revalidation added a CPU-affinity reservation
+  (`PS2X_IOP_THREAD_AFFINITY` / `KZ_RESERVE_AUDIO_CORE` in `src/kz_main.cpp`, both default **off**): one physical
+  core reserved for the IOP+SPU2 thread, excluded from the EE/render thread's mask. It showed no clear benefit over
+  priority+cycle-credit alone and one run suggested it might collide with the GPU driver's own worker threads, so it
+  stays off by default pending a topology-aware core choice. Still not promoted to product code: needs a real
+  hands-on interactive session (the earlier "highest priority" failure mode was specifically interactive lockup,
+  which headless automation can't rule out even for the gentler `ABOVE_NORMAL`) before repeated-stability and
+  zero-loss combat gates can be called satisfied.
+- **experimental/gfx03-host-write-rpc-diagnostics.diff** (not applied; `git apply --directory=ext/PS2Recomp`) -
+  turns the existing no-op `ps2TraceGuestRangeWrite` hook into a null-by-default observer callback
+  (`ps2GuestRangeWriteObserver`) that HLE stubs and the IOP host bridge already call on every guest-RAM write, and
+  adds a diagnostic registry of in-flight offloaded (threaded-IOP) nowait `SifCallRpc` receive buffers
+  (`ps2RpcFindInFlightReceive`). Both are gated behind `#define PS2X_GUEST_RANGE_WRITE_OBSERVER 1` so
+  `src/kz_detail.cpp` compiles and degrades cleanly without the patch. Used during the GFX-03 reinvestigation
+  (`docs/findings.md`, "GFX-03 reinvestigation") to attribute a heap-corrupting write and to rule out late RPC
+  copies into freed buffers as the render-distance-2x-plus-elevated-LOD failure mechanism. No measured benefit or
+  cost to product behaviour; kept only as a diagnostic aid for a future session.

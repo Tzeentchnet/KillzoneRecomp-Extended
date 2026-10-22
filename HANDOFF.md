@@ -1,6 +1,6 @@
 # KillzoneRecomp session handoff
 
-**Last updated:** 2026-10-20
+**Last updated:** 2026-10-22
 **Workspace:** `D:\Github` (also holds the superseded `plan.md` and `KillzoneRecomp_Master_PRD.md`, history only)
 **Implementation repository:** `D:\Github\KillzoneRecomp-Extended`
 **Branch / last substantive commit:** `master` / see `git log` (2026-10-20 session commits)
@@ -116,15 +116,52 @@ Safe parallel work:
 ## 7. Latest session record
 
 ```text
-Task: AUDIO-01 localization and bounded host mitigation
-Owner/session: Copilot SDK in VS Code, 2026-10-21
-Machine: Windows 11 x64; MSVC and clang-cl presets; SDL/WASAPI default output device
-Status: in progress. Paired hands-on captures localize the cuts to SPU2 ring starvation/catch-up on the host path. The committed 120/320 ms reserve/high-water mitigation reduces severity with no noticeable action latency but does not eliminate large combat dropouts.
-Files changed for AUDIO-01: src/kz_audio.{h,cpp}; ext/kzspu2/{include/kzspu2.h,src/kzspu2.cpp,README.md}; tools/scripts/summarize_audio_diag.py; patches/ps2recomp/experimental/audio-iop-cycle-credit-priority.diff; README.md; TODO.md; docs/findings.md; LEARNINGS.md; patches/README.md; HANDOFF.md. Captures remain ignored under work/. The locked PS2Recomp submodule is clean.
-Evidence: Escape baseline 184.04 s: 317,863 underrun frames, 254,851 skipped frames, 1,104 loss rows, many audible cuts. Hope 220.45 s: 161,858 / 166,077, 466 rows, a few cuts. SDL callbacks stayed near 10 ms with zero producer overflow, submit failure or diagnostic loss. A focused audible enemy-wave cut aligned with IOP backlog reaching 954.27 ms.
-Mitigation / decisions: reserve 40 -> 120 ms and high water 150 -> 320 ms; firing/reload latency was not noticeable and cuts fell from many to a few. Synchronous IOP was worse. Highest worker priority locked gameplay. RPC cycle credit fixed 9.8-second IOP lead but not the dropout. The unaccepted above-normal-priority / cycle-credit candidate is preserved as an experimental patch only.
-Acceptance commands and exact results: final MSVC and clang-cl builds PASS; ISO-free suites PASS 13/13 each; strict dependencies PASS 31/0/0; resume table PASS (132,656 dispatch entries, 100,661 resume cases, 31,995 generated targets); generated inventory PASS (56 hooks, 101,715 recompiler-resumable entries); full diff check PASS. Clang-cl reports only the existing unused-flag and MSVC CRT deprecation warnings.
-Blocker and minimal reproducer: Escape enemy-wave combat still produces an audible large cut with the 120 ms mitigation. AUDIO-01 cannot move to WORKDONE without a stable zero-loss combat soak.
-Next command: if resumed, apply `patches/ps2recomp/experimental/audio-iop-cycle-credit-priority.diff` in an isolated branch, add repeated interactive stability coverage, and reject any priority change that locks once.
-Safe parallel work: WPN-01 remains read-only and requires BYOD authorization. AUDIO-01 is paused after this documented push.
+Task: GFX-03 reinvestigation (prior continuation) + AUDIO-01 scheduling fix attempt, tried and reverted (this
+  continuation) + preparing for a public test release
+Owner/session: Claude Code, 2026-10-21/22, branch gfx03-reinvestigation (off master @ 7afddb1)
+Machine: Windows 11 x64 (AMD Ryzen 7 9800X3D, 8C/16T); MSVC and clang-cl presets; NVIDIA RTX 5070; disc image at
+  E:\Git\Killzone\Killzone (USA).iso
+Status: GFX-03 part of this branch unchanged from the prior record below. This continuation investigated a
+  human-reported audio cutout while running the branch's elevated per-class LOD sliders in Escape, pivoted (at the
+  user's explicit request) to an AUDIO-01 scheduling fix using native-PC spare cores, validated it looked good
+  through headless automated soaks, then a hands-on session caught it causing an interactive freeze (force-close
+  required) - reproducing an already-documented rejection of IOP-thread priority elevation. The whole attempt
+  (priority boost, RPC cycle-credit accounting, CPU-affinity reservation) is REVERTED, not just defaulted off:
+  ext/PS2Recomp is back to the clean locked commit, src/kz_main.cpp's paired affinity helper is deleted. AUDIO-01
+  is back to its exact pre-session state (the already-shipped 120 ms/320 ms buffer mitigation only). The full
+  attempt is preserved as a diff, not applied anywhere, at patches/ps2recomp/experimental/audio-iop-cycle-credit-priority.diff.
+  Also found and self-corrected a measurement methodology bug along the way (see Evidence) - a documented
+  retraction, not a deleted mistake.
+Files changed (this continuation, final state): docs/findings.md (+"GFX-03 x AUDIO-01 interaction", its retraction,
+  and "AUDIO-01 scheduling fix" with its own hands-on-freeze finding and revert); TODO.md (AUDIO-01 entry extended
+  and closed back out); patches/README.md (audio-iop-cycle-credit-priority.diff entry updated);
+  patches/ps2recomp/experimental/audio-iop-cycle-credit-priority.diff (regenerated to match the final attempted
+  code before revert); this file. ext/PS2Recomp and src/kz_main.cpp have NO net change versus before this
+  continuation - every edit to them was reverted in the same continuation. work/audio_lod_check/ holds every run's
+  config, script, logs and callback.csv (gitignored, not committed, kept for anyone continuing this locally).
+Evidence: see docs/findings.md "GFX-03 x AUDIO-01 interaction" for the retracted noise finding (first A/B looked
+  like elevated LOD caused 44 -> 249 audio-loss events; three repeats of the identical config later landed at 249,
+  0 and 0 - pure run-to-run noise from an open-loop KZ_INPUT_SCRIPT drifting into different actual combat content
+  each run), and "AUDIO-01 scheduling fix" for the fix attempt: a clean 6-run interleaved multi-trial using
+  PS2X_IOP_THREAD_STATS=1's content-independent max-backlog-lag looked genuinely good (unfixed 160/542/742 ms max
+  lag vs. fixed 150/18/18 ms, never worse and twice clearly better) - but headless automation does no real
+  window/input-polling, so it never exercised the lock-contention pattern that live play does, and a hands-on
+  session froze near the end of an Escape firefight with little combat/audio active, not an exception. That matches
+  "highest priority locks interactive gameplay," already rejected earlier in AUDIO-01's history, closely enough
+  that THREAD_PRIORITY_ABOVE_NORMAL is judged equally unsafe for this thread, not just the literal highest level.
+Acceptance commands and exact results: full regression set from HANDOFF.md section 4 not yet run this continuation
+  - run it before treating this branch as release-ready. Each source edit in this continuation was individually
+  rebuilt and exit-0 verified (tools\scripts\build_ps2recomp.bat, tools\scripts\cmake_preset.ps1 -Preset
+  win-msvc-rel -Action build) but the full iso-free test suites under both compilers were not re-run after the
+  final revert.
+Blocker and minimal reproducer: none outstanding from this continuation - the regression it found is reverted out,
+  not parked behind a flag. The prior continuation's own open blocker (render distance 2x + per-class LOD >=4x
+  corrupting guest memory) is untouched; see the record it replaced, preserved via git history.
+Next command: run the full regression set (section 4) before pushing/releasing. If resuming AUDIO-01 later, do not
+  retry thread-priority elevation for the IOP+SPU2 thread in any form - two independent attempts (highest, then
+  above-normal) have both caused interactive lockups; look at restructuring the lock to be fair regardless of
+  priority, or moving SPU2 mixing off the EE-shared-lock path instead. GFX-03's elevated per-class LOD sliders stay
+  opt-in only pending a non-noisy answer to whether they worsen AUDIO-01 (currently unconfirmed either way, not
+  cleared) - see TODO.md GFX-03 entry, unchanged by this continuation.
+Safe parallel work: WPN-01 remains read-only and requires BYOD authorization.
 ```
