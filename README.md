@@ -351,5 +351,6 @@ Killzone is a trademark of Sony Interactive Entertainment; this project is not a
 The owner-approved distribution disposition is recorded under LEGAL-01 in [`WORKDONE.md`](WORKDONE.md). Retail and
 generated game-derived content remain BYOD-only, unresolved third-party components and proprietary SDKs are excluded
 from release artifacts, and every release candidate still requires notices, corresponding-source review, an SBOM,
-secret and protected-content scans, and a package-allowlist audit. The repository remains private unless the owner
-separately authorizes publication.
+secret and protected-content scans, and a package-allowlist audit. The source repository was made public on
+2026-10-22 by owner decision; a pre-built binary artifact is a separate, not-yet-gated step and still needs the
+checks above before distribution.
