@@ -2711,3 +2711,138 @@ is therefore not complete.
 First-pass captures should use `KZ_AUDIO_DIAG` without `KZ_AUDIO_WAV`: the callback ledger writes on a background
 thread, while the raw WAV tap necessarily writes from the producer thread and can perturb the boundary being
 measured. Add the WAV only for a targeted producer-side comparison.
+
+## GFX-03 x AUDIO-01 interaction (2026-10-22)
+
+A human report of full multi-second audio cutout in Escape's first firefight while running `StaticLodScale=2`,
+`SkinnedLodScale=2`, `VisibleCullScale=2` prompted a controlled A/B to check whether the per-class detail sliders
+(branch `gfx03-reinvestigation`) worsen the AUDIO-01 combat cutout.
+
+**Method.** Two scripted 220 s runs from `5.Fields1` (`KZ_START_LEVEL=5`), identical `KZ_INPUT_SCRIPT` (continuous
+forward movement, periodic turns, `R1` fire pulses every second from t=12s), identical isolated test card, D3D12,
+`RenderDistance=1` in both arms. Baseline: all four class scales at 1 (shipped default). Elevated: `StaticLodScale`/
+`SkinnedLodScale`/`VisibleCullScale` at 2 (`GrassViewScale` left at 1). `KZ_AUDIO_DEVICE=1` forced the real output
+device open under `PS2X_HEADLESS=1` (it defaults off there, see `kz_audio.h`) with `[Audio] MasterVolume=0` so the
+callback path ran for real without sounding on the host. `KZ_AUDIO_DIAG` captured the schema-1 callback CSV for
+each arm; a first attempt at this A/B omitted `KZ_AUDIO_DEVICE=1` and produced header-only CSVs (no data rows) in
+both arms — recorded here so the mistake isn't repeated.
+
+**Result**, via `summarize_audio_diag.py` over the full ~220 s span of each trace:
+
+| Run | Callbacks | Underrun silence | Skipped (high-water) | Loss events |
+|---|---:|---:|---:|---:|
+| Baseline (scales=1) | 22,020 | 19,799 frames / 0.41 s | 13,451 frames / 0.28 s | 44 |
+| Elevated (scales=2) | 22,016 | 76,508 frames / 1.59 s | 45,838 frames / 0.95 s | 249 |
+
+Both arms show zero `producer_dropped` and zero SDL query/submit failures in both traces, so this is not SPU2
+channel exhaustion or running out of audio memory. At first pass this looked like a real, reproducible interaction
+(elevated detail multiplying underrun silence ~3.9x, skipped catch-up frames ~3.4x, loss events ~5.7x) consistent
+with the existing AUDIO-01 mechanism — but see the retraction below. **Do not cite the 44-vs-249 table above as a
+finding.**
+
+### Retraction: single-run comparisons are not valid here (2026-10-22, same day)
+
+A same-day follow-up session, prioritizing a scheduling fix for AUDIO-01, ran repeat trials of the *same* `elevated`
+config (unfixed) to validate a candidate fix and found the "elevated" arm alone landed at 249 loss events once and
+0 loss events twice more, all three with the identical `killzone.ini`, identical `KZ_INPUT_SCRIPT`, same binary,
+same machine. That is larger than the 44-vs-249 gap this section opened with.
+
+Root cause: `KZ_INPUT_SCRIPT`'s `g<t>:...` events are open-loop (fixed button presses at fixed gameplay-relative
+timestamps, not reacting to game state). Real-time host scheduling jitter — thermal/boost variance, background
+load, anything — shifts exactly when each press lands by small amounts; over 200+ seconds of forward movement and
+turns with no feedback correction, that drift compounds into the character being in a measurably different place
+doing measurably different things by t=100-200s in each nominally-identical run. The audio-loss metrics are counting
+real combat/content events, which this harness does not reproducibly control for. **The GFX-03 x AUDIO-01
+interaction is therefore unconfirmed, not ruled out** — a real effect of this size could easily be hiding inside
+this much noise, but this methodology cannot currently tell the difference between "settings changed the outcome"
+and "the character walked into a different fight this time."
+
+**Decision reverted accordingly.** The preset-default decision in the first version of this section ("not promoted,
+pending an AUDIO-01 fix") is suspended, not confirmed or denied — it was reasoned from data that didn't hold up.
+`StaticLodScale=2`/`SkinnedLodScale=2`/`VisibleCullScale=2` remain opt-in only (unchanged from before this
+investigation) simply because nothing here yet justifies changing the default either way.
+
+A follow-up in the same session switched to a lower-noise signal (`PS2X_IOP_THREAD_STATS=1`'s backlog/lag
+measurement, which reflects host scheduling pressure directly rather than through a content-dependent audio-loss
+proxy) to get a usable read without requiring dozens of repeat trials per config; see "AUDIO-01 scheduling fix"
+below for what that found.
+
+## AUDIO-01 scheduling fix: IOP+SPU2 priority + RPC cycle-credit, native-PC affinity attempt (2026-10-22)
+
+Prioritized at the user's request, explicitly to use the native PC port's spare cores rather than stay inside the
+PS2's original single-core-sharing constraints. Starting point: the preserved, never-hands-on-validated
+`patches/ps2recomp/experimental/audio-iop-cycle-credit-priority.diff` (RPC cycle-credit accounting +
+`THREAD_PRIORITY_ABOVE_NORMAL` for the IOP+SPU2 thread, `ext/PS2Recomp/ps2xIOP/src/iop_subsystem.cpp`).
+
+**Affinity attempt, parked.** Added a new mechanism beyond the preserved patch: reserve one physical core
+(2 logical processors, the top bits of `GetProcessAffinityMask`) exclusively for the IOP+SPU2 thread
+(`PS2X_IOP_THREAD_AFFINITY`), with the main/EE/render thread's own mask excluding those same bits
+(`KZ_RESERVE_AUDIO_CORE` in `src/kz_main.cpp`, computed independently from the same process-wide mask so the two
+sides agree without passing state between the submodule and the host executable). One early A/B made this look like
+it made things much worse (334 loss events vs. baseline's 44); a later same-session lag-stat comparison in one
+run-batch found no clear benefit over priority+cycle-credit alone (526 ms vs. 558 ms max lag - within noise).
+Given the measurement-noise problem documented above, neither result is trustworthy alone, and the plausible
+failure mode (the reserved core colliding with the GPU driver's own worker/submit threads, which can also default
+to high-numbered logical processors) is real enough that this is **defaulted off**
+(`PS2X_IOP_THREAD_AFFINITY`/`KZ_RESERVE_AUDIO_CORE` default `false`) pending a topology-aware core choice or a
+driver-thread survey. The code stays behind the flag rather than being deleted, since the underlying idea (a
+dedicated real-time core for fixed audio work, something the original hardware never had either) may still be
+worth revisiting with a smarter core pick.
+
+**Priority + cycle-credit, kept on.** Validated with a 6-run interleaved multi-trial (`unfixed, fixed, unfixed,
+fixed, unfixed, fixed`, elevated LOD config, same 220 s combat script, `PS2X_IOP_THREAD_STATS=1` for the
+content-independent max-backlog-lag signal instead of counting audio-loss events):
+
+| Trial | Max IOP lag, unfixed | Max IOP lag, fixed | Underrun frames, unfixed | Underrun frames, fixed |
+|---|---:|---:|---:|---:|
+| 1 | 160 ms | 150 ms | 2,304 | 3,214 |
+| 2 | 542 ms | 18 ms | 34,178 | 0 |
+| 3 | 742 ms | 18 ms | 81,594 | 0 |
+
+The fixed arm never does meaningfully worse than its paired unfixed trial, and in the two trials where unfixed's
+backlog spiraled into the hundreds of ms (and produced real audio loss), fixed capped it at ~18 ms and produced
+zero loss. Trial 1 (both low) suggests the scripted run did not hit sustained heavy combat before the host clock
+drifted elsewhere, consistent with the open-loop-script noise problem above - but critically, the fix never
+*caused* a bad trial, and twice prevented one. This is the shape of evidence this headless methodology can
+realistically produce (a handful of trials, each expensive, with real content-timing noise) rather than a
+statistically tight result, but three-for-three same-direction is a meaningfully stronger signal than the single-run
+comparisons earlier in this document.
+
+**Current defaults in the rebuilt binary (superseded - see hands-on finding immediately below):**
+`PS2X_IOP_THREAD_PRIORITY=1` (on), `PS2X_IOP_THREAD_AFFINITY=0` / `KZ_RESERVE_AUDIO_CORE=0` (off). Not yet promoted
+to the PS2Recomp submodule's own repo (stays as a dirty, uncommitted `ext/PS2Recomp` checkout plus the matching
+`src/kz_main.cpp` change) - per explicit instruction, validate locally and ask before pushing anything to the
+external PS2Recomp remote or bumping the locked gitlink.
+
+### Hands-on finding: the priority boost reproduces the earlier rejection (2026-10-22, same day)
+
+The hands-on session this section's defaults were waiting on happened the same day, with `PS2X_IOP_THREAD_PRIORITY`
+defaulted on: playing Escape's first firefight with `StaticLodScale=2`/`SkinnedLodScale=2`/`VisibleCullScale=2`, the
+game froze and required a force-close near the end of the battle, with comparatively little combat/audio active at
+the time - not what a backlog-driven audio dropout would look like, and not an exception (`KZ_CRASH_TRACE=1` would
+not have caught it regardless; that handler only fires on a structured exception, never on a hang). This matches
+the already-documented rejection of highest-priority IOP scheduling ("locked interactive Escape") closely enough
+that `THREAD_PRIORITY_ABOVE_NORMAL` is judged equally unsafe, not just the literal highest level: raising the
+IOP+SPU2 thread's priority above the main/EE/render thread's own most likely lets it win the race to reacquire
+`execMutex` every time it releases it, starving the thread that pumps input and rendering - livelock, not deadlock,
+which is consistent with "froze" rather than an immediate hard stop.
+
+Why the 220 s headless scripted soaks (including the 6-run multi-trial two sections up) never hit this: automated
+runs use `PS2X_HEADLESS=1`, no real window, no real input polling loop competing for the same lock the way live
+mouse/keyboard/render-present handling does - the content-independent lag-stat signal that validated the fix was
+real, but it was never exposed to the specific contention pattern that live play creates. This is the exact gap the
+"still outstanding" note above was already flagging before this session had a chance to hit it.
+
+**Reverted, not just defaulted off.** Ahead of preparing a public test build, the whole attempt was removed from
+the working tree rather than left in place behind a now-permanently-off flag: `ext/PS2Recomp/ps2xIOP/src/iop_subsystem.cpp`
+was checked out back to the locked commit (priority, affinity *and* the RPC cycle-credit accounting all gone - the
+multi-trial above only ever tested credit together with the priority change, never credit alone against a clean
+baseline, so there was no standalone benefit established worth keeping), and the paired `src/kz_main.cpp` affinity
+helper was deleted outright (it was inert on its own once its submodule counterpart was gone, and its comments
+referencing that counterpart would otherwise go stale). AUDIO-01 is therefore back to its exact pre-session
+state - the already-shipped 120 ms/320 ms buffer mitigation only - with two independent scheduling-priority
+attempts now rejected for the same interactive-lockup reason. The full diff from this attempt remains available at
+`patches/ps2recomp/experimental/audio-iop-cycle-credit-priority.diff` for a future session that wants to pick it
+back up; it is not applied anywhere in the committed tree. A future attempt should assume priority-based fixes for
+this thread are unsafe at any elevation and look elsewhere (e.g. restructuring the lock itself to be fair regardless
+of priority, or moving SPU2 mixing off the EE-shared-lock path entirely).

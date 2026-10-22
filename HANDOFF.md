@@ -116,50 +116,52 @@ Safe parallel work:
 ## 7. Latest session record
 
 ```text
-Task: GFX-03 reinvestigation, then launcher exposure + grass-cap experiment
+Task: GFX-03 reinvestigation (prior continuation) + AUDIO-01 scheduling fix attempt, tried and reverted (this
+  continuation) + preparing for a public test release
 Owner/session: Claude Code, 2026-10-21/22, branch gfx03-reinvestigation (off master @ 7afddb1)
-Machine: Windows 11 x64; MSVC and clang-cl presets; NVIDIA RTX 5070; disc image at E:\Git\Killzone\Killzone (USA).iso
-Status: both parts complete; no WORKDONE change (GFX-03 itself is not reopened - see below). Part 1 replaced the
-  withdrawn shared-context LOD mechanism with a per-class one (static/instanced/skinned LOD, visible-distance cull,
-  grass), each passing independently up to 8x in chapter 5; RenderDistance=2 combined with any elevated class still
-  corrupts guest memory, root cause not isolated. Part 2 (this continuation) shipped four of those per-class scales
-  as real [Graphics] config keys + launcher sliders (1..2, default 1), with RenderDistance>1 hard-forcing all four
-  back to 1 in both the config resolver and the live UI; separately investigated raising the grass instance cap
-  (1500), which reproducibly crashes and was not pursued further.
-Files changed (cumulative, both parts): src/kz_detail.{h,cpp} (new); src/kz_config.{h,cpp}; src/kz_launcher.cpp;
-  src/kz_hook_addresses.h; src/kz_main.cpp; src/kz_post.cpp (character LOD probe moved into kz_detail.cpp);
-  config/generated-manifest.json (+8 debug hooks: LodStreamRequest, GrassRender, LodStaticInstanced,
-  LodSelectSimple, LodSelectBlended, AllocFailHandler, PacketFrameBegin, GrassRecordCapClamp); docs/findings.md;
-  IMPLEMENTATION_PLAN.md; README.md; TODO.md; LEARNINGS.md; patches/README.md; HANDOFF.md;
-  patches/ps2recomp/experimental/gfx03-host-write-rpc-diagnostics.diff (new, not applied; null-by-default
-  host-write observer + in-flight offloaded-RPC receive-buffer registry on the locked PS2Recomp checkout, gated by
-  PS2X_GUEST_RANGE_WRITE_OBSERVER so kz_detail.cpp degrades cleanly without it). The locked PS2Recomp submodule
-  itself is clean (patch not applied in the committed tree). Committed as one commit on gfx03-reinvestigation
-  (part 1); part 2 (this continuation) is uncommitted at hand-off - commit before anything else.
-Evidence: see docs/findings.md "GFX-03 reinvestigation" (part 1: consumer table, streaming/grass/stack analysis,
-  the render-distance-2x failure matrix, every mechanism ruled out) and "GFX-03 follow-up" (part 2: the new config
-  keys' validation - self-tests, a resolver unit test, and a live boot of both the safe and unsafe combinations
-  through an actual killzone.ini via KZ_CONFIG, plus a 45 s scripted chapter-5 gameplay pass; and the grass-cap
-  crash, bisected to its counter-bias half specifically, with the buffer-resize half confirmed safe-but-inert alone).
-Acceptance commands and exact results: win-clang-tests and win-msvc-tests builds PASS; ISO-free suites PASS
-  13/13 each (MSVC and clang-cl); strict dependencies PASS 31/0/0; resume table PASS (132,656 dispatch entries,
-  100,661 resume cases, 31,995 generated targets); generated inventory PASS (64 hook signatures,
-  101,715 recompiler-resumable entries); full diff check PASS; product --selftest PASS 0 failures under both
-  compilers (covers the new config/resolver/launcher-preset self-tests too).
-Blocker and minimal reproducer: (part 1, unresolved) render distance 2x + per-class LOD >=4x on any tested class
-  reliably corrupts guest memory within seconds of level load in chapter 5 (direct start + scripted input); root
-  cause not found (a heap-corrupting rpcCopyToRdram write was observed, writer mechanism not identified). (Part 2,
-  resolved as a no-go, not a blocker) raising the grass instance cap via a shared-counter bias crashes the EE
-  scheduler; kept in kz_detail.cpp behind KZ_DETAIL_GRASSCAP purely as documented negative evidence, explicitly not
-  for use.
-Next command: if resumed on part 1's open question, apply the experimental patch and KZ_DETAIL_HEAPCHECK against a
-  chapter-5 render2+LOD4 repro; walk forward from the next captured heap break to the write's caller, or compare
-  against WIN-06's own allocator-corruption findings for a shared first-fault signature. If instead extending part
-  2 toward GFX-03's own original acceptance bar, run the full BYOD/campaign matrix (all chapters, longer soaks,
-  human visual review) on the four new sliders at 2x before treating that range as campaign-accepted, not just
-  chapter-5-safe. If pursuing the grass cap further, either trace the walker's MMI record-write address computation
-  fully, or attempt a literal ELF-level constant patch via a full generated-code regeneration (not attempted this
-  session; the private generated tree is 32k files and large/risky to redo blind).
-Safe parallel work: WPN-01 remains read-only and requires BYOD authorization. AUDIO-01 is paused where the
-  2026-10-21 session left it (see git history for that record); this session did not touch it.
+Machine: Windows 11 x64 (AMD Ryzen 7 9800X3D, 8C/16T); MSVC and clang-cl presets; NVIDIA RTX 5070; disc image at
+  E:\Git\Killzone\Killzone (USA).iso
+Status: GFX-03 part of this branch unchanged from the prior record below. This continuation investigated a
+  human-reported audio cutout while running the branch's elevated per-class LOD sliders in Escape, pivoted (at the
+  user's explicit request) to an AUDIO-01 scheduling fix using native-PC spare cores, validated it looked good
+  through headless automated soaks, then a hands-on session caught it causing an interactive freeze (force-close
+  required) - reproducing an already-documented rejection of IOP-thread priority elevation. The whole attempt
+  (priority boost, RPC cycle-credit accounting, CPU-affinity reservation) is REVERTED, not just defaulted off:
+  ext/PS2Recomp is back to the clean locked commit, src/kz_main.cpp's paired affinity helper is deleted. AUDIO-01
+  is back to its exact pre-session state (the already-shipped 120 ms/320 ms buffer mitigation only). The full
+  attempt is preserved as a diff, not applied anywhere, at patches/ps2recomp/experimental/audio-iop-cycle-credit-priority.diff.
+  Also found and self-corrected a measurement methodology bug along the way (see Evidence) - a documented
+  retraction, not a deleted mistake.
+Files changed (this continuation, final state): docs/findings.md (+"GFX-03 x AUDIO-01 interaction", its retraction,
+  and "AUDIO-01 scheduling fix" with its own hands-on-freeze finding and revert); TODO.md (AUDIO-01 entry extended
+  and closed back out); patches/README.md (audio-iop-cycle-credit-priority.diff entry updated);
+  patches/ps2recomp/experimental/audio-iop-cycle-credit-priority.diff (regenerated to match the final attempted
+  code before revert); this file. ext/PS2Recomp and src/kz_main.cpp have NO net change versus before this
+  continuation - every edit to them was reverted in the same continuation. work/audio_lod_check/ holds every run's
+  config, script, logs and callback.csv (gitignored, not committed, kept for anyone continuing this locally).
+Evidence: see docs/findings.md "GFX-03 x AUDIO-01 interaction" for the retracted noise finding (first A/B looked
+  like elevated LOD caused 44 -> 249 audio-loss events; three repeats of the identical config later landed at 249,
+  0 and 0 - pure run-to-run noise from an open-loop KZ_INPUT_SCRIPT drifting into different actual combat content
+  each run), and "AUDIO-01 scheduling fix" for the fix attempt: a clean 6-run interleaved multi-trial using
+  PS2X_IOP_THREAD_STATS=1's content-independent max-backlog-lag looked genuinely good (unfixed 160/542/742 ms max
+  lag vs. fixed 150/18/18 ms, never worse and twice clearly better) - but headless automation does no real
+  window/input-polling, so it never exercised the lock-contention pattern that live play does, and a hands-on
+  session froze near the end of an Escape firefight with little combat/audio active, not an exception. That matches
+  "highest priority locks interactive gameplay," already rejected earlier in AUDIO-01's history, closely enough
+  that THREAD_PRIORITY_ABOVE_NORMAL is judged equally unsafe for this thread, not just the literal highest level.
+Acceptance commands and exact results: full regression set from HANDOFF.md section 4 not yet run this continuation
+  - run it before treating this branch as release-ready. Each source edit in this continuation was individually
+  rebuilt and exit-0 verified (tools\scripts\build_ps2recomp.bat, tools\scripts\cmake_preset.ps1 -Preset
+  win-msvc-rel -Action build) but the full iso-free test suites under both compilers were not re-run after the
+  final revert.
+Blocker and minimal reproducer: none outstanding from this continuation - the regression it found is reverted out,
+  not parked behind a flag. The prior continuation's own open blocker (render distance 2x + per-class LOD >=4x
+  corrupting guest memory) is untouched; see the record it replaced, preserved via git history.
+Next command: run the full regression set (section 4) before pushing/releasing. If resuming AUDIO-01 later, do not
+  retry thread-priority elevation for the IOP+SPU2 thread in any form - two independent attempts (highest, then
+  above-normal) have both caused interactive lockups; look at restructuring the lock to be fair regardless of
+  priority, or moving SPU2 mixing off the EE-shared-lock path instead. GFX-03's elevated per-class LOD sliders stay
+  opt-in only pending a non-noisy answer to whether they worsen AUDIO-01 (currently unconfirmed either way, not
+  cleared) - see TODO.md GFX-03 entry, unchanged by this continuation.
+Safe parallel work: WPN-01 remains read-only and requires BYOD authorization.
 ```
