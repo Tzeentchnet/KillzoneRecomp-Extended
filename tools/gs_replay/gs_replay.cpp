@@ -180,7 +180,7 @@ int main(int argc, char **argv)
                      "usage: kz_gs_replay <trace> <outdir> [--every N] [--upscale N] "
                      "[--renderer d3d11|d3d12|vulkan] [--fxaa] [--smaa] [--cas N] "
                      "[--aniso N] [--mip ps2|base] [--tex-replace 0|1] [--bilinear 0|1] [--sharp 0|1] "
-                     "[--crop L,T,R,B] [--present WxH] [--from N] [--to N] "
+                     "[--aspect 4:3|16:9|stretch] [--crop L,T,R,B] [--present WxH] [--from N] [--to N] "
                      "[--backbuffer] [--stats]\n");
         return 2;
     }
@@ -236,6 +236,21 @@ int main(int argc, char **argv)
         }
         else if (a == "--adapter" && i + 1 < argc) cfg.adapter = argv[++i];
         else if (a == "--fix-dy") fixDy = true;
+        else if (a == "--aspect" && i + 1 < argc)
+        {
+            const std::string mode = argv[++i];
+            if (mode == "4:3")
+                cfg.aspect = KzgsAspect::Ratio4_3;
+            else if (mode == "16:9")
+                cfg.aspect = KzgsAspect::Ratio16_9;
+            else if (mode == "stretch")
+                cfg.aspect = KzgsAspect::Stretch;
+            else
+            {
+                std::fprintf(stderr, "invalid --aspect value: %s\n", mode.c_str());
+                return 2;
+            }
+        }
         else if (a == "--renderer" && i + 1 < argc)
         {
             const std::string r = argv[++i];

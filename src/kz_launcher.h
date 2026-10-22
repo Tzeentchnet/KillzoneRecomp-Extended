@@ -8,3 +8,6 @@ bool kzRunLauncher(KzConfig &cfg);
 
 // Renders one launcher frame offscreen and writes it to `pngPath` (automated screenshot / verification). Returns success.
 bool kzLauncherScreenshot(KzConfig &cfg, const char *pngPath);
+
+// Verifies launcher-only presets without opening a window.
+int kzLauncherSelfTest();

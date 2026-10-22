@@ -8,6 +8,9 @@
 //   KZ_AUDIO=off          no SPU2 (the IOP keeps its old stub, i.e. silence)
 //   KZ_AUDIO_DEVICE=0|1   force the output device off/on (default: on, except with PS2X_HEADLESS=1)
 //   KZ_AUDIO_WAV=<path>   also write the mixed output (before master volume) to a 48 kHz stereo WAV
+//   KZ_AUDIO_DIAG=<path>  write schema-1 SPU2/ring/SDL callback diagnostics as CSV
+//   KZ_AUDIO_BUFFER_MS=n  diagnostic initial/reserve target (10..400 ms; default 120)
+//   KZ_AUDIO_HIGH_MS=n    diagnostic high-water threshold (above reserve, up to 480 ms; default 320)
 //   KZ_AUDIO_STATS=<sec>  print level/timing stats every <sec> seconds (default 5 when KZ_AUDIO_WAV is set)
 //   KZ_AUDIO_PACE=0       no real-time pacing of the SPU2 clock (see kz_audio.cpp "pacing")
 //   KZ_AUDIO_TRACE=<n>    log the first n SPU2 register writes plus every KON/KOFF/ATTR write, DMA and IRQ

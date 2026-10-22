@@ -104,6 +104,28 @@ namespace
         bool quit = false;
     };
 
+    void applyValidatedGraphicsPreset(KzConfig &cfg)
+    {
+        cfg.renderer = KzRenderer::D3D12;
+        cfg.vsync = true;
+        cfg.upscale = 0;
+        cfg.aspect = KzAspect::Widescreen16x9;
+        cfg.anisotropy = 16;
+        cfg.mipmapMode = KzMipmapMode::HighestDetail;
+        cfg.fxaa = false;
+        cfg.smaa = false;
+        cfg.textureReplacement = false;
+        cfg.bilinear = true;
+        cfg.sharpScaling = true;
+        cfg.sharpen = 30;
+        cfg.noiseFilter = false;
+        cfg.motionBlur = false;
+        cfg.glow = false;
+        cfg.lensBlur = false;
+        cfg.renderDistance = 2.0f;
+        cfg.lodScale = 1.0f;
+    }
+
     void onFileChosen(void *userdata, const char *const *files, int)
     {
         auto *st = static_cast<LauncherState *>(userdata);
@@ -294,6 +316,13 @@ namespace
                     ImGui::AlignTextToFramePadding();
                     ImGui::TextDisabled("Presets:");
                     ImGui::SameLine();
+                    if (ImGui::Button("Validated enhancements"))
+                        applyValidatedGraphicsPreset(cfg);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Measured stock-game test setup: D3D12, V-Sync on, auto render scale, 16x anisotropy,\n"
+                                          "base-mip detail, replacement textures off, clean PS2 effects,\n"
+                                          "2x view distance and 30%% sharpening.");
+                    ImGui::SameLine();
                     if (ImGui::Button("Sharp and clean"))
                     {
                         cfg.fxaa = false; cfg.smaa = true; cfg.sharpScaling = true; cfg.bilinear = true; cfg.anisotropy = 16;
@@ -318,11 +347,13 @@ namespace
                         const char *scales[] = {"Auto (from output height)", "1x (native GS)", "2x", "3x (about 1080p)", "4x (about 1440p)",
                                                 "5x", "6x (about 4K)", "7x", "8x"};
                         ImGui::Combo("##upscale", &cfg.upscale, scales, IM_ARRAYSIZE(scales));
-                        row("Aspect ratio");
+                        row("Aspect ratio",
+                            "16:9 uses the game's native widescreen FOV and HUD. 4:3 preserves the original layout. "
+                            "Stretch fills the window by distorting the picture.");
                         enumCombo<KzAspect>("##aspect", cfg.aspect,
                                             {{KzAspect::Widescreen16x9, "16:9 widescreen (native)"},
                                              {KzAspect::Classic4x3, "4:3 original"},
-                                             {KzAspect::Stretch, "Stretch to window"}});
+                                            {KzAspect::Stretch, "Stretch to window (distorts)"}});
                         row("Output scaling filter", "How the rendered picture is fitted to the output. This does not change internal render scale.");
                         int scaling = cfg.sharpScaling ? 0 : 1;
                         const char *scalings[] = {"Sharp (crisp pixels)", "Smooth (softer)"};
@@ -390,8 +421,10 @@ namespace
                     section("Detail");
                     if (beginRows("detail"))
                     {
-                        row("View distance", "Pushes the fog back. 2x costs almost nothing.");
-                        ImGui::SliderFloat("##renderdist", &cfg.renderDistance, 1.0f, 4.0f, "%.1fx");
+                        row("View distance",
+                            "Pushes the fog back. 2x is the supported maximum; farther views expose enemy spawns "
+                            "and low-detail background geometry.");
+                        ImGui::SliderFloat("##renderdist", &cfg.renderDistance, 1.0f, 2.0f, "%.1fx");
                         row("Model detail distance",
                             "Unavailable: elevated model LOD hangs Escape in interactive gameplay.");
                         cfg.lodScale = 1.0f;
@@ -671,4 +704,56 @@ bool kzLauncherScreenshot(KzConfig &cfg, const char *pngPath)
     }
     closeSession(s);
     return ok;
+}
+
+int kzLauncherSelfTest()
+{
+    int failures = 0;
+    const auto check = [&](bool condition, const char *label)
+    {
+        if (!condition)
+        {
+            std::fprintf(stderr, "[selftest] FAIL: launcher %s\n", label);
+            ++failures;
+        }
+    };
+
+    KzConfig cfg;
+    cfg.renderer = KzRenderer::Vulkan;
+    cfg.vsync = false;
+    cfg.upscale = 8;
+    cfg.aspect = KzAspect::Classic4x3;
+    cfg.anisotropy = 0;
+    cfg.mipmapMode = KzMipmapMode::PS2;
+    cfg.fxaa = true;
+    cfg.smaa = true;
+    cfg.textureReplacement = true;
+    cfg.bilinear = false;
+    cfg.sharpScaling = false;
+    cfg.sharpen = 0;
+    cfg.noiseFilter = true;
+    cfg.motionBlur = true;
+    cfg.glow = true;
+    cfg.lensBlur = true;
+    cfg.renderDistance = 1.0f;
+    cfg.lodScale = 4.0f;
+    cfg.masterVolume = 37;
+    cfg.startLevel = 7;
+
+    applyValidatedGraphicsPreset(cfg);
+    check(cfg.renderer == KzRenderer::D3D12 && cfg.vsync && cfg.upscale == 0 &&
+              cfg.aspect == KzAspect::Widescreen16x9,
+          "validated preset output contract");
+    check(cfg.anisotropy == 16 && cfg.mipmapMode == KzMipmapMode::HighestDetail &&
+              !cfg.textureReplacement && cfg.bilinear,
+          "validated preset texture controls");
+    check(!cfg.fxaa && !cfg.smaa && cfg.sharpScaling && cfg.sharpen == 30,
+          "validated preset presentation controls");
+    check(!cfg.noiseFilter && !cfg.motionBlur && !cfg.glow && !cfg.lensBlur,
+          "validated preset PS2 effects");
+    check(cfg.renderDistance == 2.0f && cfg.lodScale == 1.0f,
+          "validated preset detail bounds");
+    check(cfg.masterVolume == 37 && cfg.startLevel == 7,
+          "validated preset preserves unrelated settings");
+    return failures;
 }

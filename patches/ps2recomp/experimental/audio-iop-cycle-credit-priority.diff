@@ -1,0 +1,59 @@
+diff --git a/ps2xIOP/src/iop_subsystem.cpp b/ps2xIOP/src/iop_subsystem.cpp
+index 6a1952e..3bcba61 100644
+--- a/ps2xIOP/src/iop_subsystem.cpp
++++ b/ps2xIOP/src/iop_subsystem.cpp
+@@ -266,6 +266,12 @@ namespace ps2x::iop
+ #endif
+             void *timer = nullptr;
+ #if defined(_WIN32)
++            if (envFlag("PS2X_IOP_THREAD_PRIORITY", true) &&
++                !SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL))
++            {
++                std::fprintf(stderr, "[iop-thread] SetThreadPriority failed: %lu\n",
++                             static_cast<unsigned long>(GetLastError()));
++            }
+             if (const HMODULE kernel = GetModuleHandleW(L"kernel32.dll"))
+             {
+                 using SetDesc = HRESULT(WINAPI *)(HANDLE, PCWSTR);
+@@ -276,8 +282,16 @@ namespace ps2x::iop
+             timer = CreateWaitableTimerExW(nullptr, nullptr, 0x00000002u, TIMER_ALL_ACCESS);
+ #endif
+             uint64_t consumedLocal = 0;
++            uint64_t rpcCycleCreditEe = 0;
+             uint64_t lastStatNs = nowNs();
+             uint64_t statRunNs = 0;
++            const auto runQueuedRpcsAccounted = [this, &rpcCycleCreditEe]() {
++                const uint64_t before = emulator.cycles();
++                runQueuedRpcs();
++                const uint64_t after = emulator.cycles();
++                if (after > before)
++                    rpcCycleCreditEe += (after - before) * 8u;
++            };
+             while (!stopRequested.load(std::memory_order_acquire))
+             {
+                 const uint64_t target = published.load(std::memory_order_acquire);
+@@ -287,7 +301,7 @@ namespace ps2x::iop
+                     if (rpcPending.load(std::memory_order_acquire) != 0u)
+                     {
+                         std::lock_guard<std::recursive_mutex> lock(execMutex);
+-                        runQueuedRpcs();
++                        runQueuedRpcsAccounted();
+                     }
+                     else
+                     {
+@@ -305,8 +319,13 @@ namespace ps2x::iop
+                     {
+                         std::lock_guard<std::recursive_mutex> lock(execMutex);
+                         const uint64_t t0 = nowNs();
+-                        emulator.runEeCycles(chunk);
+-                        runQueuedRpcs();
++                        uint64_t run = chunk;
++                        const uint64_t credited = std::min(run, rpcCycleCreditEe);
++                        run -= credited;
++                        rpcCycleCreditEe -= credited;
++                        if (run != 0)
++                            emulator.runEeCycles(run);
++                        runQueuedRpcsAccounted();
+                         const uint64_t dt = nowNs() - t0;
+                         runNs.fetch_add(dt, std::memory_order_relaxed);
+                         statRunNs += dt;

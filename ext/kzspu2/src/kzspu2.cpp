@@ -25,7 +25,7 @@ namespace
 	std::atomic<uint64_t> s_ringWrite{0};
 	std::atomic<uint64_t> s_ringRead{0};
 	uint64_t s_framesMixed = 0;
-	uint64_t s_framesDropped = 0;
+	std::atomic<uint64_t> s_framesDropped{0};
 
 	// Staging block filled by spu2Output(), flushed to the tap and the ring.
 	constexpr uint32_t kBlockFrames = 256;
@@ -63,7 +63,7 @@ namespace
 			s_ring[slot * 2 + 1] = s_block[i * 2 + 1];
 		}
 		s_ringWrite.store(w + n, std::memory_order_release);
-		s_framesDropped += frames - n;
+		s_framesDropped.fetch_add(frames - n, std::memory_order_relaxed);
 	}
 
 	// PCSX2 SPU2 time runs off psxRegs.cycle. The host's cycle never goes backwards; tolerate it anyway.
@@ -259,7 +259,7 @@ bool kzspu2Init(const KzSpu2Config& config)
 	s_ringWrite.store(0);
 	s_ringRead.store(0);
 	s_framesMixed = 0;
-	s_framesDropped = 0;
+	s_framesDropped.store(0, std::memory_order_relaxed);
 	kzspu2::g_irqCount = 0;
 	kzspu2::g_dmaIrqCount[0] = kzspu2::g_dmaIrqCount[1] = 0;
 
@@ -407,12 +407,17 @@ uint32_t kzspu2SkipFrames(uint32_t frames)
 	return n;
 }
 
+uint64_t kzspu2DroppedFrames()
+{
+	return s_framesDropped.load(std::memory_order_relaxed);
+}
+
 KzSpu2Status kzspu2GetStatus(bool resetPeak)
 {
 	KzSpu2Status s{};
 	s.iopCycle = psxRegs.cycle;
 	s.framesMixed = s_framesMixed;
-	s.framesDropped = s_framesDropped;
+	s.framesDropped = s_framesDropped.load(std::memory_order_relaxed);
 	s.irqCount = kzspu2::g_irqCount;
 	s.dmaCount[0] = kzspu2::g_dmaIrqCount[0];
 	s.dmaCount[1] = kzspu2::g_dmaIrqCount[1];

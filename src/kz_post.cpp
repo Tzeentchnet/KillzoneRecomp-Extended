@@ -56,7 +56,7 @@ namespace
     constexpr uint32_t kRamMask = 0x01FFFFFFu;
     constexpr uint32_t kRamSize = 0x02000000u;
     constexpr float kRenderDistanceMin = 1.0f;
-    constexpr float kRenderDistanceMax = 16.0f;
+    constexpr float kRenderDistanceMax = 2.0f;
     constexpr float kLodScaleMin = 1.0f;
     constexpr float kLodScaleMax = 1.0f;
 
@@ -545,11 +545,14 @@ namespace
     // strength (+0x284, from the active preset) is above 2/255, so it is zeroed on entry.
     void postRender(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
     {
-        if (ctx->pc == kPostRender && !g_grain)
+        if (ctx->pc == kPostRender)
         {
-            const uint32_t obj = getRegU32(ctx, 4);
-            if (obj >= 0x00100000u && obj < 0x02000000u)
-                wrF(rdram, obj + kNoiseStrengthOffset, 0.0f);
+            if (!g_grain)
+            {
+                const uint32_t obj = getRegU32(ctx, 4);
+                if (obj >= 0x00100000u && obj < 0x02000000u)
+                    wrF(rdram, obj + kNoiseStrengthOffset, 0.0f);
+            }
         }
         g_origPostRender(rdram, ctx, rt);
     }
@@ -755,6 +758,8 @@ int kzPostSelfTest()
           "detail setting override");
     check(resolveDetailValue("test", "100", 1.0f, 1.0f, 16.0f, false) == 16.0f,
           "detail setting upper clamp");
+    check(resolveDetailValue("KZ_RENDER_DISTANCE", "4", 1.0f, kRenderDistanceMin, kRenderDistanceMax, false) == 2.0f,
+          "render-distance safety cap");
     check(resolveDetailValue("test", "-1", 1.0f, 0.25f, 16.0f, false) == 0.25f,
           "detail setting lower clamp");
     check(resolveDetailValue("test", "nan", 1.0f, 1.0f, 16.0f, false) == 1.0f &&

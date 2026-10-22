@@ -1,7 +1,7 @@
 # TODO - current milestone queue
 
 **Milestone:** M2 - Safe graphics and weapon controls
-**Last updated:** 2026-10-20
+**Last updated:** 2026-10-21
 
 The durable queue of open work. Definitions, dependencies, acceptance commands and stop conditions are in
 [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md); verified completions are in [`WORKDONE.md`](WORKDONE.md). A task
@@ -16,60 +16,40 @@ owns edits; `[SERIAL]` waits on dependencies or the integration owner; `[HUMAN]`
 
 | # | ID | Task | Machine | Label | Status | Blocked by |
 |---|---|---|---|---|---|---|
-| 1 | GFX-03 | Qualify render distance, LOD and texture clarity | Windows | `[SERIAL]` | in progress | - |
-| 2 | WPN-01 | Discover and measure the player weapon model | Windows | `[READ-PARALLEL]` | not started | BYOD authorization |
-| 3 | AUDIO-01 | Reproduce combat audio clipping | Windows | `[READ-PARALLEL]` | in progress | - |
-| 4 | STAB-01 | Resolve chapter 11 repeated-load corruption (legacy WIN-06) | Windows | `[SERIAL]` | blocked | deferred by project decision |
-| 5 | WPN-02 / WPN-03 | Global recoil, spread and recovery controls | Windows | `[SERIAL]` | blocked | WPN-01 |
-| 6 | GFX-04 | Temporal input feasibility contract | Windows | `[SERIAL]` | not started | - |
-| 7 | DLSS-01 | DLSS 5 qualification and go/no-go decision | Windows | `[HUMAN]` | blocked | GFX-04, SDK/legal access |
+| 1 | WPN-01 | Discover and measure the player weapon model | Windows | `[READ-PARALLEL]` | not started | BYOD authorization |
+| 2 | AUDIO-01 | Reproduce combat audio clipping | Windows | `[READ-PARALLEL]` | in progress | - |
+| 3 | WPN-02 / WPN-03 | Global recoil, spread and recovery controls | Windows | `[SERIAL]` | blocked | WPN-01 |
 
-GFX-03 is the active serial task. WPN-01 and AUDIO-01 may be investigated in their independent lanes.
-STAB-01 investigation is deferred by project decision but remains a release blocker. BASE-01, CFG-01, TEST-01,
-GFX-01, GFX-02, PROFILE-01, WIN-01 and WIN-03 are complete in
+The active graphics lane is complete through GFX-05. WPN-01 and AUDIO-01 are the remaining Windows enhancement lanes.
+GFX-03, GFX-04 and GFX-05 are complete in [`WORKDONE.md`](WORKDONE.md); GFX-04 returned a technical no-go for temporal
+reconstruction, so DLSS-01 is retired unless the renderer/input contract is fundamentally revised. STAB-01/WIN-06 is
+retired from the release plan because it
+qualified the direct-start/skip-level diagnostic path, which exact `Shooterman` plus native campaign selection has
+superseded. BASE-01, CFG-01, TEST-01, GFX-01, GFX-02, GFX-03, GFX-04, GFX-05, PROFILE-01, WIN-01, WIN-03 and WIN-05 are complete in
 [`WORKDONE.md`](WORKDONE.md). DLSS-01 is qualification only; product integration is not in this queue.
-
-### GFX-03 - Qualify render distance, LOD and texture clarity
-
-- **Status:** in progress. Safety checkpoint `9007d9a` remains the product baseline: mipmap controls are implemented
-  and elevated model LOD is withdrawn. A character-only selector probe is diagnostic and not exposed.
-- **Evidence so far:** baseline 1x/1x installs no detail hooks; render-distance 2x logs `70 -> 140` far and
-  `-10..70 -> -20..140` fog with no LOD calls. The original LOD entry wrapper restored its temporary value before
-  the generated continuation consumed it; the final setter hook now logs `1.436 -> 5.742` at 4x. Escape passes with
-  either render distance 2x or LOD 4x alone.
-- **Safety bound:** Escape with render distance 2x plus LOD 4x froze in the first hands-on run and 2/3 automated
-  repeats; another elevated pair reached a guest missing-target. LOD 4x then froze again in hands-on testing even at
-  view distance 1x despite passing the headless gate. `LodScale` is therefore clamped to 1x and labeled unavailable;
-  elevated render/fog distance remains independently selectable.
-- **Character probe:** `KZ_CHARACTER_LOD_PROBE=4` changes only the point-to-AABB distance returned to the skinned LOD
-  selectors. The earlier 90,000-call / 44.03% result is withdrawn: gating only helper return `0x3F4F84` also admitted
-  the `+0x2C` static-resource caller. The corrected filter requires the `+0x30` skinned outer returns (`0x3FF3FC`
-  simple, `0x3FF4F0` blended), so static meshes and the shared camera context are untouched.
-- **Exact resource:** the visible corpse is three skinned parts centered near `(-461.80, 113.65, 34.96)`, authored
-  threshold 3.0. Unzoomed baseline metric `4.424` selects level 1; rifle zoom metric `2.072` selects level 0. A
-  radius-1 targeted 4x run changed 495 of the first 10,000 skinned selections and exited normally. Cross-run corpse
-  ROI means were repeat 3.3385 versus probe 3.7330/6.5207, but the same-process activation edge (4.4227) stayed below
-  baseline temporal variance (8.8006). The visual effect is not robust enough for exposure or safety qualification.
-- **Measurement limit:** gameplay-relative input/capture (`g` time prefix) reduced a same-arm live repeat from mean
-  absolute RGB 13.2611 to 0.9629, but 56.513% of pixels still changed. A relative-offset-150 baseline/probe pair
-  measured 1.7778 / 65.260%; paused repeats and probe arms overlapped at 0.207 versus 0.243-0.302 mean. These deltas
-  do not yet justify a product control.
-- **Mipmaps:** the first-mission trace has 130 `TEX1` writes and no mip-enabled state (`MXL=0`). The docking trace has
-  148 mip-enabled states (`MXL=3`, K -2.8125..0); base-only versus PS2 mode changed one of 25 dense captures
-  (2.87% of that frame, aggregate mean 0.115%). Config schema 2 and the launcher expose `PS2 transitions` versus
-  `Highest detail (base mip only)`.
-- **Next step:** retain character LOD as a documented no-go for this milestone unless offline mesh comparison finds
-  a materially different authored pair and a live same-process transition clears temporal variance. Continue
-  render-distance, mipmap and texture-detail campaign qualification; do not run character-probe hands-on/campaign
-  gates or expose a replacement control.
 
 ### AUDIO-01 - Combat audio clipping
 
-- **Status:** in progress. Reproduced by the human baseline owner in the two baseline runs and again during the safe
-  GFX-03 Escape retest.
-- **Reproducer:** first mission during action-heavy firefights on speakers. Gunfire/effects and dialogue truncate by
-  about 100 ms several times per fight.
-- **Next step:** correlate SPU2 production, host callback delivery and output queue depth around truncated events.
+- **Status:** in progress. Paired hands-on captures localize the audible loss to the host SPU2 output path. The
+  callback ledger and summarizer are complete. The committed mitigation reduces severity but does not satisfy the
+  no-cut combat acceptance.
+- **Reproducer:** Escape, action-heavy firefights, speakers, VSync on. Gunfire/effects and dialogue truncate by about
+  100 ms several times per fight. Hope is a lower-severity comparison, not a clean negative arm: the paired run heard
+  a few cuts across background audio, scripted dialogue and combat chatter.
+- **Evidence:** the Escape baseline produced 317,863 underrun-silence frames and skipped 254,851 catch-up frames over
+  184 seconds; Hope produced 161,858 / 166,077 over 220 seconds. SDL requests stayed near 10 ms, with zero SPU2 ring
+  overflow, stream-submit failure or diagnostic-record loss. During a focused audible combat cut the IOP worker's
+  published-cycle backlog reached 954.27 ms while the audio callback remained timely.
+- **Mitigation retained:** the host reserve is 120 ms (was 40) and high water is 320 ms (was 150), with diagnostic
+  overrides `KZ_AUDIO_BUFFER_MS` / `KZ_AUDIO_HIGH_MS`. Hands-on firing/reload latency was not noticeable and cuts fell
+  from many to a few, but a large combat dropout still reproduced.
+- **Rejected / parked:** highest IOP thread priority locked interactive gameplay; synchronous IOP was worse in the
+  long gate. RPC cycle-credit accounting held IOP lead near 6 ms instead of 9.8 seconds but did not eliminate a
+  hands-on dropout. The combined cycle-credit / above-normal-priority candidate is preserved, not applied, at
+  `patches/ps2recomp/experimental/audio-iop-cycle-credit-priority.diff`.
+- **Next step:** if AUDIO-01 resumes, apply the experimental patch in an isolated branch, add a repeated interactive
+  stability gate before any priority change, and require zero callback-path loss in a combat soak. Do not raise the
+  reserve further without a fresh latency decision.
 
 ## Paused work from the superseded portability roadmap
 
@@ -137,72 +117,31 @@ a plan revision.
 - **Status:** blocked on native MAC-01 acceptance. After MAC-01, it may run alongside VU-02.
 - **Acceptance:** `ctest --preset macos-arm64 --output-on-failure -R '^kzgs_metal_golden$'`
 
-## Existing Windows baseline work
-
-### 9. WIN-02 - Unlock All Campaign Levels launcher option
-
-- **Status:** in progress; implemented 2026-10-17 (launcher Testing tab, `[Testing] UnlockAllLevels`, `KZ_UNLOCK_ALL`).
-  The unlock state is the profile's per-level record, read only through three PlayerProfile script methods; the option
-  replaces those queries in memory and never writes the profile (`docs/findings.md` "Testing options").
-- **Evidence so far (win-clang-rel, headless):** an ordinary fresh profile opened level select on chapter 11 and
-  reached chapter 11 gameplay; memory-card files hashed identical before and after four unlock-on runs; with the option
-  off no hook is installed; `--selftest` covers the INI round trip and default. The 2026-10-19 Windows regression set
-  passed under both compilers; generated inventory PASS reports 47 hook signatures.
-- **Next command:** hands-on enabled/disabled check, including an existing save.
-
-### 10. WIN-05 - Testing start-up options
-
-- **Status:** in progress; implemented 2026-10-17. Skip intro (logos screen and cinematic), Start in chapter 1-11 with
-  difficulty (autopilot through the game's own menus, creates a `Tester` profile on an empty card), Test memory card
-  (`testcard` folder next to `killzone.ini`).
-- **Evidence so far:** autopilot reached chapter 1 gameplay (Normal) from a populated card and chapter 3 (Hard) from an
-  empty card after creating and saving `Tester`; `SetLevelFile` confirmed `1.Trenches`, `3.Station`, `11.OTS`. The
-  2026-10-19 Windows regression set passed 12/12 under both compilers; a fresh isolated card again saved `Tester` and
-  reached chapter 1 gameplay at 120 Hz on D3D12.
-- **Known issue:** WIN-06 also reproduces after the full intro; the shortcut is no longer considered its common cause.
-- **Next command:** a hands-on run of the Test memory card option; then resolve WIN-06.
-
-### STAB-01 (legacy WIN-06) - Chapter 11 repeated-load corruption
-
-- **Status:** blocked (deferred by project decision on 2026-10-20). A full-intro run reached `11.OTS` at 225.7 s and
-  hit the same missing-target failure, ruling out the testing shortcut as the common cause. The defect is not waived:
-  STAB-01 remains required for M4 and release acceptance.
-- **Gate:** `tools\scripts\win06_gate.ps1 -Runs 10 -Name <name> -Card work\win04_20261019_card -Iso <image>
-  -Elf game\SCUS_974.02` (D3D12, skipped intro, fresh card copy per run, pass/fail summary). Acceptance is 10/10.
-- **Ruled out (ten-run batches, win-clang-rel, D3D12):**
-  - VIF1 MPG address wrap (`0030`, kept as a correctness fix): 8/10.
-  - Movie/MPEG/IPU path: `KZ_IPU=off`, so no movie, decoder or stream callback exists at all: 8/10.
-  - Interrupts delivered inside guest `di`/`ei` (the scheduler ignores Status.EIE): only 0-2 benign deliveries per
-    run, and enforcing the mask gave 8/10. Kept as `patches/ps2recomp/experimental/ee-di-interrupt-gate.diff`.
-  - Threaded IOP: `PS2X_IOP_THREAD=0` (synchronous IOP on the EE thread) gave 4/10 (`win06_iopsync_*`).
-  - Earlier sessions: scratchpad-to-RAM DMA into low RAM.
-- **Current localization:** cleanup `0x2E7B38 -> 0x2E7440 -> 0x2E8170` freed node `0x01F0FF00` for owner
-  `0x007E1EC0`, while live parent `0x01281020` retained that allocation in its embedded vector field
-  `parent+0x5C = 0x0128107C`. Seven guest-vsyncs later vector resize `0x4299F4` called realloc on the freed pointer,
-  repeating at least three times. A separate successful watched run showed the allocator returning a different block
-  ten vsyncs after free even though its header had been overwritten with live float data. Later consequences remain
-  the multi-megabyte wrapped realloc copy, corrupt vtables, bad DMA records, timer/pool overwrites and renderer crashes.
-- **Latest gate evidence:** `win06_watch5` and `win06_watch6` were 4/5; watched batches can also complete despite
-  allocator invariant breaks. Two clean watched batches and one uninstrumented batch reached 10/10, but the next
-  uninstrumented batch was 7/10 (one hang, one host exception, one missing target). The new resize-owner hook then
-  produced three independent 7/10 batches, including host GS faults, missing targets and mixed-size corruption runs.
-  The third batch had no allocator/owner marker before its failures, so this hook is deliberately not a universal
-  corruption detector. A low-overhead list-node provenance arm (`win06_listoverlap1`) was 8/10 with no list/vector
-  overlap marker. Its corrupt run instead caught `malloc(0x600)` returning non-chunk `0x01F101A0`; allocator
-  descriptor word `0x0055EC6C` changed from the candidate chunk base to `0x600` during the call. A single-word
-  hardware-watch arm (`win06_heapword1`) was 7/10 and reproduced the same collapse with `malloc(0x400)` returning
-  `0x01F10020`, but emitted no usable writer event.
-- **Renderer hardening:** x64 crash registers proved that the GS palette crash was an inverted alpha-index range:
-  its unsigned width wrapped to `0xFFFFFFC7`. The pinned PCSX2 guard now falls back to the full palette range and
-  skips a separate null depth-target optimization; `kzgs_palette_guard` passes. This removed host exceptions, but
-  `win06_gsguard` remained 8/10: one severe texture-corruption run and one EE `pc=ra=0x50` run. A guarded watched
-  batch was 10/10, so the watch perturbs the timing and does not close the task.
-- **Current decision:** defer further investigation. Do not guard the allocator, skip bad frees, clear stale fields
-  generically or hide corrupt pointers. The diagnostic hooks remain available for a future bounded investigation;
-  reactivation should start from the allocator candidate/bin state rather than assuming the earlier ownership alias
-  is the universal first fault. Acceptance still requires an uninstrumented 10/10 gate with visually clean captures.
-
 ## Retired integration gate
+
+### WIN-02 - unlock-query convenience hooks
+
+- **Status:** superseded by the exact `Shooterman` profile on 2026-10-21; not a release blocker.
+- **Reason:** `Shooterman` exposes every campaign map and difficulty through native profile queries and menus. The
+  non-persistent unlock hooks remain available as a diagnostic convenience but are not the supported all-map path.
+
+### STAB-01 / WIN-06 - direct-start repeated-load diagnostic
+
+- **Status:** retired by product decision on 2026-10-21; not a release, milestone or GFX-03 blocker.
+- **Reason:** the investigation qualified failures reached through the direct-start/skip-level diagnostic. Exact
+  `Shooterman` already unlocks every campaign map through the game's native profile queries and menu flow, so the
+  project no longer needs that diagnostic path for release acceptance.
+- **Evidence retention:** allocator, cleanup-list, wrapped-write and renderer-hardening evidence remains in
+  [`docs/findings.md`](docs/findings.md). `win06_gate.ps1` and the optional hooks remain diagnostic tools, not gates.
+- **Scope:** this is a retirement, not a claim that the diagnostic path's corruption was fixed.
+
+### DLSS-01 - stopped by GFX-04
+
+- **Status:** retired by the 2026-10-21 GFX-04 technical no-go.
+- **Reason:** gameplay exposes no stable depth target, camera matrices, motion vectors or separate HUD/reactive mask.
+  Optical-flow substitution is outside the accepted contract. No SDK or NVIDIA binary is required or committed.
+- **Reopen only if:** a future renderer or guest integration supplies validated color, depth, motion, UI/reactive and
+  history-reset inputs without broad draw guessing.
 
 ### P0-EXIT - superseded
 

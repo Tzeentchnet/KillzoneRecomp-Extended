@@ -1,6 +1,6 @@
 # LEARNINGS - lessons for the next session
 
-**Last updated:** 2026-10-20
+**Last updated:** 2026-10-21
 
 Short, reusable lessons about working on this repository: what tripped a session up, which checks catch it, and
 which tools answer a question fastest. Evidence and measurements live in [`docs/findings.md`](docs/findings.md); task
@@ -41,8 +41,8 @@ few lines with a pointer to the evidence.
 - **Prefer A/B switches over theories.** `KZ_IPU=off` removes every movie and showed that WIN-06 is not caused by
   MPEG/IPU decoding. Native skips after 2 or 30 seconds also failed, but a full-intro run later reproduced the same
   fault, so startup lifecycle was correlation rather than the common cause.
-- **Baseline claims need the same ten-run gate as a fix.** Six clean full-intro runs were not enough to establish a
-  zero-failure baseline; the next measured full-intro run failed after reaching chapter 11.
+- **The retired direct-start diagnostic needed the same ten-run gate as a fix.** Six clean full-intro runs were not
+  enough to establish a zero-failure baseline; the next measured full-intro run failed after reaching chapter 11.
 
 - **Page-protection watch for "who wrote this guest word":** `KZ_WIN06_WATCH=1` (`src/kz_win06_watch.cpp`) shows
   the pattern: read-only host pages, a vectored handler that snapshots the page and single-steps the store, a diff on
@@ -65,13 +65,31 @@ few lines with a pointer to the evidence.
 - **Re-run old renderer defects before changing code.** WIN-01's historical D3D11 all-zero output no longer
   reproduced on the same RTX 5070/driver: the hardware golden, actual swap-chain capture and original 90-second
   scenario all rendered. Close stale findings with current evidence instead of adding speculative backend workarounds.
+- **Never write diagnostic files from the SDL audio callback.** AUDIO-01 uses a bounded SPSC record queue and a
+  background CSV writer; the callback only samples counters and publishes one fixed-size record. Record diagnostic
+  queue loss explicitly, and reject incomplete captures before drawing timing conclusions.
+- **A cumulative audio counter needs an event timeline before it suggests a fix.** The normal high-water path can
+  discard roughly 100 ms in one callback, matching the reported symptom, but the same one-time skip appears in
+  non-combat startup runs. Correlate a heard cutout to a narrow callback window and the raw pre-ring WAV before
+  changing pacing or buffering.
+- **Capture the callback boundary before enabling the raw WAV tap.** `KZ_AUDIO_DIAG` publishes fixed-size records to
+  a background writer; `KZ_AUDIO_WAV` necessarily writes from the SPU2 producer thread. Use callback-only captures
+  for continuity counts, then add the WAV in a targeted rerun if producer-side waveform evidence is still needed.
+- **IOP lead and IOP backlog are separate audio failure modes.** Offloaded RPCs can double-count emulated time and
+  grow lead by seconds, while a combat wave can still leave the worker nearly one second behind published EE time.
+  Fixing lead alone did not eliminate callback starvation.
+- **Do not promote thread priority from an automated audio win alone.** Highest IOP/SPU2 priority reduced backlog in
+  headless gates but locked interactive Escape. Preserve such candidates under `patches/ps2recomp/experimental/`
+  until a repeated interactive stability gate passes.
 
 ## Gates and automation
 
-- **WIN-06 gate:** `tools\scripts\win06_gate.ps1 -Runs 10 -Name <name> -Card work\win04_20261019_card -Iso <image>
+- **Retired WIN-06 diagnostic gate:** `tools\scripts\win06_gate.ps1 -Runs 10 -Name <name> -Card work\win04_20261019_card -Iso <image>
   -Elf game\SCUS_974.02 [-EnvSet "A=1|B=2"]`. It pins D3D12 and gives each skipped-intro run a fresh card; a run fails
   on a non-zero exit, a guest `missing-target`, a host exception, a missing chapter 11 level file, or mixed capture
-  sizes. The default is 35 seconds; run batches sequentially because parallel runs change timing.
+  sizes. The default is 35 seconds; run batches sequentially because parallel runs change timing. This tool now
+  qualifies only the direct-start diagnostic path. Supported all-map testing uses exact `Shooterman` and native
+  campaign selection, so this gate is not part of release acceptance.
 - **Alternative code generators need their own dispatch closure.** For `PS2X_CODEGEN_DSP=0`, collect literal legacy
   tail targets, direct-dispatch targets, and `jr $ra` resume PCs; scanning only DSP tail helpers and switch labels
   leaves deterministic boot-time missing targets.
@@ -108,6 +126,23 @@ few lines with a pointer to the evidence.
 - **Check TEX1 before blaming mipmaps.** The first gameplay trace had 130 TEX1 writes with MXL=0, so every mip mode
   was necessarily identical. A docking trace with 148 MXL=3 states changed only one of 25 dense frames in base-only
   mode. Record MXL/MMIN/K counts and exact affected frames before adding or evaluating a mip control.
+- **Qualify texture controls with a four-way deterministic replay.** On the docking trace, anisotropy 0x/16x and PS2
+  versus base-only mipmapping each have a positive visual case, and both remain active in the combined arm. Replaying
+  the 0x baseline byte-identically separates real sampler changes from capture drift; interaction is expected where
+  base-only changes anisotropic-sampler eligibility.
+- **A cached PS2 depth target is not a temporal depth contract.** Loading held a stable `PSMZ24` target for 20 frames,
+  but 20 consecutive gameplay frames had no depth target and reused the same GS address as color. Always correlate
+  target type with the displayed framebuffer and actual scene before proposing a depth input.
+- **The GS boundary is too late for motion reconstruction.** kzgs receives post-transform `XYZ` plus texture/color/fog
+  attributes, not camera matrices, object identity or previous transforms. Global jitter would also move HUD and
+  sprites. Do not label optical flow or draw matching as engine motion vectors.
+- **Separate engine aspect from presentation aspect.** Killzone's 16:9 setting changes engine FOV/HUD through the
+  native widescreen flag, while kzgs controls pillarbox/fill at presentation. A replay can prove presentation geometry
+  but cannot turn a widescreen trace into true 4:3 engine evidence; use matched live arms for that.
+- **Stretch is not ultrawide support.** At 3440x1440, 16:9 preserves geometry with pillarboxes; stretch fills the
+  output and changes 96.938% of pixels by widening the whole frame. Label the distortion explicitly.
+- **Keep VSync on in the accepted interactive baseline.** Ultrawide 4:3/16:9/scope testing remained correct with
+  VSync on; turning it off still causes egregious tearing. The validated preset and fresh defaults now enable it.
 - **Equal guest-vsync IDs do not guarantee equal gameplay scenes.** Cloned-card GFX-03 baseline repeats at identical
   frame IDs still changed 80.377% of pixels because front-end/loading/tutorial progress is host-timing-sensitive.
   Measure same-arm variance and use a deterministic state/trace before attributing live pixel deltas to a setting.
@@ -121,3 +156,17 @@ few lines with a pointer to the evidence.
   stationary but moved its metric from 4.424 to 2.072 across the authored threshold 3.0, selecting level zero before
   the probe. Attribute runtime bounds and thresholds first; then test unzoomed and require a reversible same-process
   delta above temporal noise.
+- **Campaign gates need fresh cards and memory peaks, not screenshots alone.** The GFX-03 matrix clones one card per
+  chapter/arm, checks chapter reachability, hook effects, frame shape and exceptions, and samples process memory every
+  250 ms. Chapters 1/5/10 showed no consistent working-set growth at render distance 2x.
+- **Fog is also an authored visibility boundary.** Render distance 2x is acceptable, but pushing farther reveals
+  enemy spawns and low-poly backgrounds. Clamp the user/config/environment range to the visually safe maximum instead
+  of treating low runtime cost as permission for an unbounded slider.
+- **Fixed wall-time memory peaks require aligned game state.** Chapter 6 produced a false-looking 426.7/808.0 MiB
+  comparison. Counting presented gameplay frames catches the real issue: repeated baseline missing-target stalls and
+  one 2x host crash prevented either arm from completing an aligned duration. Do not attribute memory deltas until
+  both arms pass the same state-relative gate.
+- **A failing graphics checkpoint can belong to the baseline stability lane.** With render-distance hooks absent, the
+  retained allocator diagnostics caught Chapter 6 cleanup freeing resource-record fields as heap chunks through the
+  same cleanup chain already studied by STAB-01. Localize the baseline arm before blaming an elevated graphics
+  setting, and do not claim a shared first writer merely because the downstream corruption class matches.

@@ -197,7 +197,7 @@ struct KzgsBurstFrame
 	std::vector<uint8_t> rgba;
 	int width = 0, height = 0;
 	int field = 0;
-	std::string tcInfo; // texture cache render targets when the frame was presented
+	std::string tcInfo; // display mapping and texture-cache render/depth targets when the frame was presented
 	int scanmask = 0;  // GSState::m_scanmask_used after the frame was merged (PCRTC anti-blur is disabled while it is non-zero)
 	int rc[8] = {};    // display circuits after PCSX2's offset logic: framebufferRect (x,y,z,w) of circuit 1 then 2... y and w only: fb1.y fb1.w fb2.y fb2.w disp1.y disp1.w disp2.y disp2.w
 	int gameDeint = 0; // PCSX2 'game_deinterlacing' (selects the MAD/bob path in Merge)

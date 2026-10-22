@@ -707,3 +707,9 @@ resulting tree to equal the pinned submodule tree.
   (2026-10-20): `log` mode saw 0-2 such deliveries per run, all benign (the frame-pipeline VIF1 handler during
   `SyncDCache` or at the `ei` itself), and the ten-run gate scored 8/10 with the gate on, the same as without it. Kept
   for a future fault that does involve a critical section; not adopted without evidence of benefit.
+- **experimental/audio-iop-cycle-credit-priority.diff** (not applied; `git apply --directory=ext/PS2Recomp`) -
+  charges offloaded RPC execution against future published IOP budget instead of advancing the same interval twice,
+  and raises the Windows IOP/SPU2 worker one priority level. In AUDIO-01 probes, cycle credit held IOP lead near 6 ms
+  instead of 9.8 seconds; combined with a 160 ms reserve, the automated 117-second run recorded 800 underrun frames
+  and no skips. The hands-on run was canceled, while a separate highest-priority experiment locked gameplay. Keep
+  this patch experimental until repeated interactive stability and zero-loss combat gates pass.

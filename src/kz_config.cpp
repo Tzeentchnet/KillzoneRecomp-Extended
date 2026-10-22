@@ -397,7 +397,7 @@ namespace
         c.motionBlur = reader.boolean("Graphics", "MotionBlur", c.motionBlur);
         c.glow = reader.boolean("Graphics", "Glow", c.glow);
         c.lensBlur = reader.boolean("Graphics", "LensBlur", c.lensBlur);
-        c.renderDistance = reader.number("Graphics", "RenderDistance", c.renderDistance, 1.0f, 16.0f);
+        c.renderDistance = reader.number("Graphics", "RenderDistance", c.renderDistance, 1.0f, 2.0f);
         c.lodScale = reader.number("Graphics", "LodScale", c.lodScale, 1.0f, 1.0f);
         c.mouseSensitivity = reader.number("Input", "MouseSensitivity", c.mouseSensitivity, 0.05f, 20.0f);
         c.invertY = reader.boolean("Input", "InvertY", c.invertY);
@@ -675,7 +675,7 @@ int kzConfigSelfTest()
     const std::filesystem::path baselinePath = root / "baseline.ini";
     const std::string baseline =
         "[Config]\nVersion=2\n\n"
-        "[Display]\nWindowMode=borderless\nWidth=0\nHeight=0\nVSync=0\nFpsLimit=0\n\n"
+        "[Display]\nWindowMode=borderless\nWidth=0\nHeight=0\nVSync=1\nFpsLimit=0\n\n"
         "[Graphics]\nRenderer=d3d12\nUpscale=0\nAspect=16:9\nAnisotropy=16\nMipmapping=ps2\nFXAA=0\nSMAA=1\n"
         "SmaaThreshold=0.2\nTextureReplacement=1\nBilinear=1\nSharpScaling=1\nSharpen=30\n"
         "NoiseFilter=0\nMotionBlur=0\nGlow=0\nLensBlur=0\nRenderDistance=1\nLodScale=1\n\n"
@@ -701,7 +701,7 @@ int kzConfigSelfTest()
     check(readText(baselinePath).find("[Config]\nVersion=2") != std::string::npos,
           "baseline schema version round-trip");
     KzConfig editedBaseline = baselineRoundTrip.config;
-    editedBaseline.vsync = true;
+    editedBaseline.vsync = false;
     editedBaseline.sharpen = 45;
     editedBaseline.defaultProfile = "Automation_1";
     check(saveConfigFile(baselinePath, editedBaseline, false), "save launcher-edited baseline");
@@ -714,9 +714,9 @@ int kzConfigSelfTest()
     check(missing.document.diagnostics.empty(), "missing file diagnostics");
 
     const std::filesystem::path partialPath = root / "partial.ini";
-    check(writeText(partialPath, "[Config]\nVersion=2\n[Display]\nVSync=1\n"), "write partial fixture");
+    check(writeText(partialPath, "[Config]\nVersion=2\n[Display]\nVSync=0\n"), "write partial fixture");
     const ConfigLoadResult partial = loadConfigFile(partialPath);
-    check(partial.config.vsync && partial.config.width == 0 && partial.config.renderer == KzRenderer::D3D11,
+    check(!partial.config.vsync && partial.config.width == 0 && partial.config.renderer == KzRenderer::D3D11,
           "partial file defaults");
     check(partial.document.diagnostics.empty(), "partial file diagnostics");
 
@@ -762,6 +762,14 @@ int kzConfigSelfTest()
     check(hasDiagnostic(duplicate, DiagnosticLevel::Warning, "Display", "FpsLimit", "144"),
           "duplicate-key diagnostic");
 
+    const std::filesystem::path renderDistancePath = root / "render-distance.ini";
+    check(writeText(renderDistancePath, "[Config]\nVersion=2\n[Graphics]\nRenderDistance=4\n"),
+          "write render-distance fixture");
+    const ConfigLoadResult renderDistance = loadConfigFile(renderDistancePath);
+    check(renderDistance.config.renderDistance == 2.0f, "render-distance safety clamp");
+    check(hasDiagnostic(renderDistance, DiagnosticLevel::Warning, "Graphics", "RenderDistance", "4"),
+          "render-distance clamp diagnostic");
+
     const std::filesystem::path malformedPath = root / "malformed.ini";
     check(writeText(malformedPath,
                     "[Config]\nVersion=2\n"
@@ -771,7 +779,7 @@ int kzConfigSelfTest()
           "write malformed-value fixture");
     const ConfigLoadResult malformed = loadConfigFile(malformedPath);
     check(malformed.config.windowMode == KzWindowMode::Borderless && malformed.config.width == 0 &&
-              !malformed.config.vsync && malformed.config.renderer == KzRenderer::D3D11 &&
+              malformed.config.vsync && malformed.config.renderer == KzRenderer::D3D11 &&
               malformed.config.renderDistance == 1.0f &&
               malformed.config.defaultProfile == KzDefaultProfileName,
           "malformed values rejected");

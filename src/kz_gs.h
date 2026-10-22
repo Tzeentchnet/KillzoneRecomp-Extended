@@ -32,6 +32,7 @@ void kzGsApplyConfig(const KzConfig &cfg);
 void kzGsSetScreenshotSchedule(const std::string &dir, int intervalSeconds);
 void kzGsSetGameplayCaptureOrigin(uint64_t guestVsync);
 uint64_t kzGsGameplayOffsetVsync();
+uint64_t kzGsGameplayFrameCount();
 
 // Frames presented so far (vblanks forwarded to kzgs).
 uint64_t kzGsFrameCount();

@@ -133,6 +133,8 @@ namespace
         uint64_t nextGuestShot = 0;
         uint64_t guestShotGameplayOffset = 0;
         std::atomic<uint64_t> gameplayStartVsync{0};
+        std::atomic<uint64_t> gameplayFrames{0};
+        std::atomic<bool> gameplayFramesActive{false};
         // KZ_SHOT_BURST=N: at every shot time the GS thread captures the next N presented frames (gb_*.png, internal resolution, or
         // as presented in KZ_WINDOW_SIZE with KZ_SHOT_BURST_PRESENT=1) without stalling the game, plus gb_*.csv with one line per
         // guest vblank during the capture (field, whether a frame was presented or skipped as unchanged, wall time).
@@ -885,7 +887,11 @@ namespace
         }
         reportResolution(s);
         if (didPresent)
+        {
             s.presentedSeq.fetch_add(1, std::memory_order_relaxed);
+            if (s.gameplayFramesActive.load(std::memory_order_acquire))
+                s.gameplayFrames.fetch_add(1, std::memory_order_relaxed);
+        }
         if (s.burstArmed)
         {
             s.vblankLog.push_back({static_cast<long long>(s.frames.load(std::memory_order_relaxed)), field, didPresent ? 1 : 0,
@@ -1076,6 +1082,8 @@ void kzGsSetScreenshotSchedule(const std::string &dir, int intervalSeconds)
     s.nextGuestShot = 0;
     s.guestShotGameplayOffset = 0;
     s.gameplayStartVsync.store(0, std::memory_order_relaxed);
+    s.gameplayFrames.store(0, std::memory_order_relaxed);
+    s.gameplayFramesActive.store(false, std::memory_order_relaxed);
     const auto parsePositiveGuestVsync = [](const char *name, const char *value, uint64_t &result)
     {
         errno = 0;
@@ -1126,8 +1134,12 @@ void kzGsSetGameplayCaptureOrigin(uint64_t guestVsync)
 {
     GsState &s = gs();
     uint64_t expected = 0;
-    s.gameplayStartVsync.compare_exchange_strong(
-        expected, guestVsync, std::memory_order_release, std::memory_order_relaxed);
+    if (s.gameplayStartVsync.compare_exchange_strong(
+            expected, guestVsync, std::memory_order_release, std::memory_order_relaxed))
+    {
+        s.gameplayFrames.store(0, std::memory_order_relaxed);
+        s.gameplayFramesActive.store(true, std::memory_order_release);
+    }
 }
 
 uint64_t kzGsGameplayOffsetVsync()
@@ -1136,6 +1148,11 @@ uint64_t kzGsGameplayOffsetVsync()
     const uint64_t origin = s.gameplayStartVsync.load(std::memory_order_acquire);
     const uint64_t current = s.currentGuestVsync.load(std::memory_order_relaxed);
     return origin > 0 && current >= origin ? current - origin : 0;
+}
+
+uint64_t kzGsGameplayFrameCount()
+{
+    return gs().gameplayFrames.load(std::memory_order_relaxed);
 }
 
 uint64_t kzGsFrameCount()

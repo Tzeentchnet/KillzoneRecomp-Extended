@@ -40,6 +40,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include "runtime/ps2_pad_provider.h"
 
 #include <cstdlib>
+#include <cerrno>
 #include <exception>
 #include <filesystem>
 #include <iostream>
@@ -135,6 +136,7 @@ namespace
         kzInputInit(std::filesystem::temp_directory_path() / "kz_missing.ini");
         failures += kzInputSelfTest();
         failures += kzTestingSelfTest();
+        failures += kzLauncherSelfTest();
         // disc check against the user's image when present (not required for the test to pass)
         const KzConfig saved = kzLoadConfig(kzConfigPath());
         if (!saved.isoPath.empty())
@@ -378,6 +380,25 @@ int main(int argc, char *argv[])
         }
         const int fps = std::getenv("KZ_FPS") ? std::atoi(std::getenv("KZ_FPS")) : cfg.fpsLimit;
         kzTimingInit(fps, displayHz);
+        uint64_t gameplayStopFrames = 0;
+        if (headless)
+        {
+            if (const char *value = std::getenv("KZ_HEADLESS_GAMEPLAY_SECONDS"); value && *value)
+            {
+                errno = 0;
+                char *end = nullptr;
+                const double seconds = std::strtod(value, &end);
+                if (end == value || *end != '\0' || errno == ERANGE || !std::isfinite(seconds) || seconds <= 0.0)
+                {
+                    std::cerr << "[kz] KZ_HEADLESS_GAMEPLAY_SECONDS=" << value
+                              << " must be a positive finite number" << std::endl;
+                    return 1;
+                }
+                gameplayStopFrames = static_cast<uint64_t>(std::llround(seconds * kzTimingRate()));
+                std::cout << "[kz] headless gameplay limit: " << seconds << " s (" << gameplayStopFrames
+                          << " rendered frames)" << std::endl;
+            }
+        }
 
         std::atomic<bool> runtimeDone{false};
         std::exception_ptr runtimeFailure;
@@ -425,6 +446,13 @@ int main(int argc, char *argv[])
         auto probeNext = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         while (!runtimeDone.load())
         {
+            if (gameplayStopFrames > 0 && kzGsGameplayFrameCount() >= gameplayStopFrames)
+            {
+                std::cout << "[kz] headless gameplay limit reached at "
+                          << kzGsGameplayFrameCount() << " rendered frames" << std::endl;
+                gameplayStopFrames = 0;
+                runtime.requestStop();
+            }
             if (pumpProbe && std::chrono::steady_clock::now() >= probeNext)
             {
                 probeReport();

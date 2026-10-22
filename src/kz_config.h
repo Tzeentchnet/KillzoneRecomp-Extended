@@ -42,7 +42,7 @@ struct KzConfig
     KzWindowMode windowMode = KzWindowMode::Borderless;
     int width = 0;  // 0 = desktop resolution
     int height = 0;
-    bool vsync = false;
+    bool vsync = true;
     int fpsLimit = 0; // 0 = unlimited (display refresh with vsync); otherwise a cap, e.g. 120, 144, 240
 
     // Graphics
@@ -64,7 +64,7 @@ struct KzConfig
     bool glow = false;       // blurred additive glow of emissive surfaces
     bool lensBlur = false;   // blur + overlay while the camera has a lens texture (rain)
     // View distance (docs/findings.md "Draw distance and LOD"). 1 = original.
-    float renderDistance = 1.0f; // multiplies each render zone's far plane and fog start/end
+    float renderDistance = 1.0f; // 1..2; farther views expose spawns and low-detail background geometry
     float lodScale = 1.0f;       // forced to 1: elevated values hang Escape in interactive gameplay
 
     // Input

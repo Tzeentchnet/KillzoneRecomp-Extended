@@ -8,6 +8,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -17,19 +18,24 @@
 #include <iostream>
 #include <mutex>
 #include <string>
+#include <system_error>
+#include <thread>
 
 namespace
 {
     constexpr uint32_t kRate = 48000;
-    constexpr uint32_t kTargetFrames = kRate * 40 / 1000;  // audio thread keeps ~40 ms queued
-    constexpr uint32_t kHighFrames = kRate * 150 / 1000;   // above this (producer ahead of real time): skip to target
+    constexpr uint32_t kDefaultTargetMs = 120;
+    constexpr uint32_t kDefaultHighMs = 320;
+    uint32_t g_targetFrames = kRate * kDefaultTargetMs / 1000;
+    uint32_t g_highFrames = kRate * kDefaultHighMs / 1000;
 
     bool g_active = false;
     PS2Runtime *g_runtime = nullptr;
     SDL_AudioStream *g_stream = nullptr;
     std::atomic<uint64_t> g_underrunFrames{0};
-    std::atomic<uint64_t> g_feedCalls{0}, g_feedFrames{0}; // SDL audio callback activity (device diagnostics)
+    std::atomic<uint64_t> g_feedCalls{0}, g_feedFrames{0}, g_producedFrames{0};
     std::atomic<uint64_t> g_skippedFrames{0};
+    std::atomic<uint64_t> g_putFailures{0};
     bool g_devicePrimed = false;
     bool g_pace = true; // see "pacing" below
     double g_factor = 1.0;
@@ -45,6 +51,42 @@ namespace
     uint64_t g_statsFrames = 0;
     double g_sumSq[2] = {};
     int g_peak[2] = {};
+
+    // ---- callback diagnostics ------------------------------------------------------------------------------------------
+    struct FeedDiagnostic
+    {
+        uint64_t callback;
+        uint64_t hostUs;
+        uint64_t callbackGapUs;
+        int additionalBytes;
+        int totalBytes;
+        uint64_t producedFrames;
+        uint64_t droppedFrames;
+        uint64_t diagnosticDroppedRecords;
+        uint32_t queueBefore;
+        uint32_t skipped;
+        uint32_t read;
+        uint32_t primeSilence;
+        uint32_t underrunSilence;
+        uint32_t queueAfter;
+        int sdlQueuedBefore;
+        int sdlQueuedAfter;
+        int sdlAvailableBefore;
+        int sdlAvailableAfter;
+        uint32_t putFailures;
+    };
+
+    constexpr uint64_t kDiagnosticCapacity = 16384;
+    std::array<FeedDiagnostic, kDiagnosticCapacity> g_diagRecords;
+    std::atomic<uint64_t> g_diagWrite{0};
+    std::atomic<uint64_t> g_diagRead{0};
+    std::atomic<uint64_t> g_diagDroppedRecords{0};
+    std::atomic<bool> g_diagEnabled{false};
+    std::atomic<bool> g_diagStop{false};
+    FILE *g_diag = nullptr;
+    std::thread g_diagThread;
+    bool g_feedTimeSet = false;
+    std::chrono::steady_clock::time_point g_feedLast;
 
     bool envFlag(const char *name, bool def)
     {
@@ -85,6 +127,93 @@ namespace
         g_wav = nullptr;
     }
 
+    void diagnosticWriter()
+    {
+        uint64_t read = g_diagRead.load(std::memory_order_relaxed);
+        auto nextFlush = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        while (!g_diagStop.load(std::memory_order_acquire) || read != g_diagWrite.load(std::memory_order_acquire))
+        {
+            const uint64_t write = g_diagWrite.load(std::memory_order_acquire);
+            if (read == write)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                continue;
+            }
+            while (read != write)
+            {
+                const FeedDiagnostic &record = g_diagRecords[read % kDiagnosticCapacity];
+                std::fprintf(
+                    g_diag,
+                    "1,%llu,%llu,%llu,%d,%d,%llu,%llu,%llu,%u,%u,%u,%u,%u,%u,%d,%d,%d,%d,%u\n",
+                    static_cast<unsigned long long>(record.callback),
+                    static_cast<unsigned long long>(record.hostUs),
+                    static_cast<unsigned long long>(record.callbackGapUs),
+                    record.additionalBytes, record.totalBytes,
+                    static_cast<unsigned long long>(record.producedFrames),
+                    static_cast<unsigned long long>(record.droppedFrames),
+                    static_cast<unsigned long long>(record.diagnosticDroppedRecords),
+                    record.queueBefore, record.skipped, record.read, record.primeSilence, record.underrunSilence,
+                    record.queueAfter, record.sdlQueuedBefore, record.sdlQueuedAfter, record.sdlAvailableBefore,
+                    record.sdlAvailableAfter, record.putFailures);
+                ++read;
+            }
+            g_diagRead.store(read, std::memory_order_release);
+            if (std::chrono::steady_clock::now() >= nextFlush)
+            {
+                std::fflush(g_diag);
+                nextFlush = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            }
+        }
+        std::fflush(g_diag);
+    }
+
+    void closeDiagnostic()
+    {
+        if (!g_diag)
+            return;
+        g_diagEnabled.store(false, std::memory_order_release);
+        g_diagStop.store(true, std::memory_order_release);
+        if (g_diagThread.joinable())
+            g_diagThread.join();
+        std::fclose(g_diag);
+        g_diag = nullptr;
+    }
+
+    void queueFeedDiagnostic(uint64_t callback, const std::chrono::steady_clock::time_point now, uint64_t callbackGapUs,
+                             int additionalBytes, int totalBytes, uint32_t queueBefore, uint32_t skipped, uint32_t read,
+                             uint32_t primeSilence, uint32_t underrunSilence, uint32_t queueAfter, int sdlQueuedBefore,
+                             int sdlQueuedAfter, int sdlAvailableBefore, int sdlAvailableAfter, uint32_t putFailures)
+    {
+        const uint64_t write = g_diagWrite.load(std::memory_order_relaxed);
+        if (write - g_diagRead.load(std::memory_order_acquire) >= kDiagnosticCapacity)
+        {
+            g_diagDroppedRecords.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        FeedDiagnostic &record = g_diagRecords[write % kDiagnosticCapacity];
+        record.callback = callback;
+        record.hostUs =
+            static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(now - g_start).count());
+        record.callbackGapUs = callbackGapUs;
+        record.additionalBytes = additionalBytes;
+        record.totalBytes = totalBytes;
+        record.producedFrames = g_producedFrames.load(std::memory_order_relaxed);
+        record.droppedFrames = kzspu2DroppedFrames();
+        record.diagnosticDroppedRecords = g_diagDroppedRecords.load(std::memory_order_relaxed);
+        record.queueBefore = queueBefore;
+        record.skipped = skipped;
+        record.read = read;
+        record.primeSilence = primeSilence;
+        record.underrunSilence = underrunSilence;
+        record.queueAfter = queueAfter;
+        record.sdlQueuedBefore = sdlQueuedBefore;
+        record.sdlQueuedAfter = sdlQueuedAfter;
+        record.sdlAvailableBefore = sdlAvailableBefore;
+        record.sdlAvailableAfter = sdlAvailableAfter;
+        record.putFailures = putFailures;
+        g_diagWrite.store(write + 1, std::memory_order_release);
+    }
+
     void printStats(double now)
     {
         const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - g_statsLast).count();
@@ -96,13 +225,15 @@ namespace
         std::fprintf(stderr,
                      "[kz_audio] t=%.0fs frames=%llu (%.3fx real time) rms L/R %.0f/%.0f (%.1f/%.1f dBFS) peak %d/%d "
                      "voices %u/%u irq %u dma %u/%u dropped %llu underrun %llu skipped %llu pace %.3f "
-                     "device calls %llu frames %llu\n",
+                     "queue %u produced %llu device calls %llu frames %llu putfail %llu\n",
                      now, static_cast<unsigned long long>(g_statsFrames), secs > 0 ? g_statsFrames / (kRate * secs) : 0.0,
                      rmsL, rmsR, db(rmsL), db(rmsR), g_peak[0], g_peak[1], st.keyedOnVoices[0], st.keyedOnVoices[1],
                      st.irqCount, st.dmaCount[0], st.dmaCount[1], static_cast<unsigned long long>(st.framesDropped),
                      static_cast<unsigned long long>(g_underrunFrames.load()),
                      static_cast<unsigned long long>(g_skippedFrames.load()), g_pace ? g_factor : 1.0,
-                     static_cast<unsigned long long>(g_feedCalls.load()), static_cast<unsigned long long>(g_feedFrames.load()));
+                     kzspu2AvailableFrames(), static_cast<unsigned long long>(g_producedFrames.load()),
+                     static_cast<unsigned long long>(g_feedCalls.load()), static_cast<unsigned long long>(g_feedFrames.load()),
+                     static_cast<unsigned long long>(g_putFailures.load()));
         g_statsFrames = 0;
         g_sumSq[0] = g_sumSq[1] = 0;
         g_peak[0] = g_peak[1] = 0;
@@ -110,6 +241,7 @@ namespace
 
     void onSamples(void *, const int16_t *stereo, uint32_t frames)
     {
+        g_producedFrames += frames;
         {
             std::lock_guard lock(g_wavMutex);
             if (g_wav)
@@ -142,42 +274,83 @@ namespace
     }
 
     // ---- SDL audio thread ---------------------------------------------------------------------------------------------
-    void SDLCALL feed(void *, SDL_AudioStream *stream, int additional, int)
+    void SDLCALL feed(void *, SDL_AudioStream *stream, int additional, int total)
     {
-        ++g_feedCalls;
+        const uint64_t callback = g_feedCalls.fetch_add(1) + 1;
         const uint32_t need = static_cast<uint32_t>(std::max(additional, 0)) / 4u;
         g_feedFrames += need;
-        if (need == 0u)
-            return;
+        const bool diagnostics = g_diagEnabled.load(std::memory_order_relaxed);
+        const auto now = diagnostics ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        uint64_t callbackGapUs = 0;
+        if (diagnostics)
+        {
+            if (g_feedTimeSet)
+                callbackGapUs =
+                    static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(now - g_feedLast).count());
+            g_feedLast = now;
+            g_feedTimeSet = true;
+        }
 
-        const uint32_t avail = kzspu2AvailableFrames();
-        if (avail > kHighFrames && avail > kTargetFrames + need)
-            g_skippedFrames += kzspu2SkipFrames(avail - kTargetFrames - need);
+        const int sdlQueuedBefore = diagnostics ? SDL_GetAudioStreamQueued(stream) : 0;
+        const int sdlAvailableBefore = diagnostics ? SDL_GetAudioStreamAvailable(stream) : 0;
+        const uint32_t queueBefore = kzspu2AvailableFrames();
+        uint32_t skipped = 0;
+        uint32_t read = 0;
+        uint32_t primeSilence = 0;
+        uint32_t underrunSilence = 0;
+        uint32_t putFailures = 0;
+        if (queueBefore > g_highFrames && queueBefore > g_targetFrames + need)
+        {
+            skipped = kzspu2SkipFrames(queueBefore - g_targetFrames - need);
+            g_skippedFrames += skipped;
+        }
 
         int16_t buf[1024 * 2] = {};
-        if (!g_devicePrimed && kzspu2AvailableFrames() < kTargetFrames + need)
+        auto put = [&](uint32_t frames) {
+            if (!SDL_PutAudioStreamData(stream, buf, static_cast<int>(frames * 4u)))
+            {
+                ++putFailures;
+                ++g_putFailures;
+                std::fprintf(stderr, "[kz_audio] SDL_PutAudioStreamData failed: %s\n", SDL_GetError());
+            }
+        };
+        if (need != 0u && !g_devicePrimed && kzspu2AvailableFrames() < g_targetFrames + need)
         {
+            primeSilence = need;
             for (uint32_t remaining = need; remaining != 0u;)
             {
                 const uint32_t chunk = std::min<uint32_t>(remaining, 1024u);
-                SDL_PutAudioStreamData(stream, buf, static_cast<int>(chunk * 4u));
+                put(chunk);
                 remaining -= chunk;
             }
-            return;
         }
-        g_devicePrimed = true;
-
-        for (uint32_t remaining = need; remaining != 0u;)
+        else if (need != 0u)
         {
-            const uint32_t chunk = std::min<uint32_t>(remaining, 1024u);
-            const uint32_t got = kzspu2ReadSamples(buf, chunk);
-            if (got < chunk)
+            g_devicePrimed = true;
+            for (uint32_t remaining = need; remaining != 0u;)
             {
-                std::memset(buf + got * 2, 0, (chunk - got) * 4);
-                g_underrunFrames += chunk - got;
+                const uint32_t chunk = std::min<uint32_t>(remaining, 1024u);
+                const uint32_t got = kzspu2ReadSamples(buf, chunk);
+                read += got;
+                if (got < chunk)
+                {
+                    std::memset(buf + got * 2, 0, (chunk - got) * 4);
+                    underrunSilence += chunk - got;
+                    g_underrunFrames += chunk - got;
+                }
+                put(chunk);
+                remaining -= chunk;
             }
-            SDL_PutAudioStreamData(stream, buf, static_cast<int>(chunk * 4));
-            remaining -= chunk;
+        }
+
+        if (diagnostics)
+        {
+            const uint32_t queueAfter = kzspu2AvailableFrames();
+            const int sdlQueuedAfter = SDL_GetAudioStreamQueued(stream);
+            const int sdlAvailableAfter = SDL_GetAudioStreamAvailable(stream);
+            queueFeedDiagnostic(callback, now, callbackGapUs, additional, total, queueBefore, skipped, read,
+                                primeSilence, underrunSilence, queueAfter, sdlQueuedBefore, sdlQueuedAfter,
+                                sdlAvailableBefore, sdlAvailableAfter, putFailures);
         }
     }
 
@@ -213,10 +386,11 @@ namespace
         return true;
     }
 
-    // atexit: finish the WAV. (kz_main ends with std::_Exit, which skips this; the header is also rewritten every
-    // second of audio, so the file stays valid either way.) The SDL stream is left to SDL / process exit.
+    // atexit: finish diagnostics. (kz_main ends with std::_Exit, which skips this; both files are also flushed every
+    // second, so they stay usable either way.) The SDL stream is left to SDL / process exit.
     void shutdown()
     {
+        closeDiagnostic();
         closeWav();
     }
 
@@ -349,6 +523,19 @@ bool kzAudioInstall(bool outputDevice)
     g_pace = envFlag("KZ_AUDIO_PACE", true);
     if (const char *t = std::getenv("KZ_AUDIO_TRACE"); t && *t)
         g_trace = std::max(1L, std::atol(t));
+    uint32_t targetMs = kDefaultTargetMs;
+    uint32_t highMs = kDefaultHighMs;
+    if (const char *buffer = std::getenv("KZ_AUDIO_BUFFER_MS"); buffer && *buffer)
+    {
+        targetMs = static_cast<uint32_t>(std::clamp(std::atoi(buffer), 10, 400));
+        highMs = std::min<uint32_t>(480, targetMs + 200);
+    }
+    if (const char *high = std::getenv("KZ_AUDIO_HIGH_MS"); high && *high)
+        highMs = static_cast<uint32_t>(std::clamp(std::atoi(high), static_cast<int>(targetMs + 10), 480));
+    g_targetFrames = kRate * targetMs / 1000;
+    g_highFrames = kRate * highMs / 1000;
+    if (targetMs != kDefaultTargetMs || highMs != kDefaultHighMs)
+        std::cout << "[kz_audio] diagnostic reserve " << targetMs << " ms, high water " << highMs << " ms" << std::endl;
 
     KzSpu2Config cfg;
     cfg.irq = onIrq;
@@ -386,6 +573,38 @@ bool kzAudioInstall(bool outputDevice)
     }
     if (const char *s = std::getenv("KZ_AUDIO_STATS"); s && *s)
         g_statsInterval = std::atof(s);
+    if (const char *diag = std::getenv("KZ_AUDIO_DIAG"); diag && *diag)
+    {
+        g_diag = std::fopen(diag, "wb");
+        if (g_diag)
+        {
+            std::fprintf(g_diag,
+                         "schema_version,callback,host_us,callback_gap_us,additional_bytes,total_bytes,"
+                         "spu_produced_frames,spu_dropped_frames,diagnostic_dropped_records,"
+                         "spu_queue_before_frames,spu_skipped_frames,spu_read_frames,prime_silence_frames,"
+                         "underrun_silence_frames,spu_queue_after_frames,sdl_queued_before_bytes,"
+                         "sdl_queued_after_bytes,sdl_available_before_bytes,sdl_available_after_bytes,put_failures\n");
+            std::fflush(g_diag);
+            g_diagWrite.store(0, std::memory_order_relaxed);
+            g_diagRead.store(0, std::memory_order_relaxed);
+            g_diagDroppedRecords.store(0, std::memory_order_relaxed);
+            g_diagStop.store(false, std::memory_order_relaxed);
+            try
+            {
+                g_diagThread = std::thread(diagnosticWriter);
+                g_diagEnabled.store(true, std::memory_order_release);
+                std::cout << "[kz_audio] writing callback diagnostics " << diag << std::endl;
+            }
+            catch (const std::system_error &error)
+            {
+                std::cerr << "[kz_audio] cannot start callback diagnostic writer: " << error.what() << std::endl;
+                std::fclose(g_diag);
+                g_diag = nullptr;
+            }
+        }
+        else
+            std::cerr << "[kz_audio] cannot write callback diagnostics " << diag << std::endl;
+    }
 
     // Not derived from PS2X_HEADLESS: kz_main sets that for the runtime in every run (the runtime's own window is
     // never used), which is why the device was never opened in real play.

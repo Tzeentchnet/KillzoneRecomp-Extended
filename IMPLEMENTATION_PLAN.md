@@ -126,11 +126,11 @@ Baseline rules:
 | Temporal inputs | The renderer does not yet provide a proven color/depth/motion/exposure/reactive/UI/history contract suitable for DLSS. |
 | Testing profile | PROFILE-01 passed: the isolated empty-card workflow creates exact `Shooterman` through the native UI, native chapter 11/Hard selection works without unlock hooks, and populated/normal card hashes remain unchanged. |
 | Weapon tuning | No recoil or accuracy symbol, field or hook is currently approved. Existing references to weapon objects and spread UI are discovery leads only. |
-| Stability | WIN-06, the intermittent chapter 11 crash/corruption, also reproduces after the full intro. The testing shortcut is not the common cause. |
+| Stability | The WIN-06 investigation covered the direct-start/skip-level diagnostic path. It is retired from release scope; exact `Shooterman` plus native campaign selection is the supported all-map workflow. |
 | Audio | First-mission firefights can truncate effects and dialogue by roughly 100 ms several times per fight; AUDIO-01 tracks the baseline defect. |
 
-WIN-06 remains a release blocker. Graphics capture and read-only weapon research may proceed in parallel, but no
-campaign-wide quality or balance conclusion is valid while the repeated-load gate is unstable.
+WIN-06/STAB-01 is retained as historical diagnostic evidence, not a release blocker. Release and campaign claims use
+the native `Shooterman` profile/menu path and do not depend on direct chapter selection.
 
 ## 5. Configuration contract
 
@@ -264,15 +264,6 @@ parallel after BASE-01, CFG-01 and TEST-01.
 - **Stop:** Do not hide clipping with global buffering or latency increases without measuring event delivery and
   callback timing.
 
-#### STAB-01 - Resolve WIN-06 repeated-load corruption
-
-- **Objective:** Fix the underlying emulation/runtime fault that intermittently corrupts memory or crashes chapter 11.
-- **Acceptance:** At least ten consecutive chapter 11 loads complete without host crash, texture corruption or HUD
-  corruption using the standard gate and a known isolated card.
-- **Stop:** Do not hide the failure by disabling content, swallowing an allocator error or excluding failed runs.
-- **Status (2026-10-20):** Investigation deferred by project decision after multiple independent ten-run diagnostic
-  arms. This does not waive acceptance; STAB-01 remains an M4 and release blocker.
-
 #### TEST-01 - Graphics and weapon measurement harness
 
 - **Depends on:** BASE-01
@@ -327,14 +318,25 @@ parallel after BASE-01, CFG-01 and TEST-01.
 - **Acceptance:** Each control at `1.0` is baseline-identical; approved elevated ranges pass the BYOD scene set and
   campaign checkpoints without cumulative bounds growth, missing actors, streaming failures or memory exhaustion.
 - **Stop:** Reduce the supported range instead of adding sentinel values or unbounded allocations.
-- **Status (2026-10-20):** In progress. Baseline distance/LOD installs no hooks; independent 2x/4x arms transform
+- **Status (2026-10-21):** Complete. Baseline distance/LOD installs no hooks; independent 2x/4x arms transform
   real far/fog values and Escape exits cleanly. The final LOD setter hook changes the selector scale actually consumed
   by static/skinned resources, but interactive Escape still freezes at 4x even when render distance is 1x; elevated
   LOD is therefore unavailable and clamped to 1x. The corrected diagnostic probe gates only `+0x30` skinned-resource
   callers; the earlier 44% selection figure included static callers and is withdrawn. Exact attribution found the
   corpse's threshold-3 level transition, but a radius-1 targeted arm did not clear same-process temporal variance, so
   the replacement is rejected for this milestone and is not exposed. Schema 2 exposes measured PS2/base-only mipmap
-  modes. Render-distance, texture-detail campaign and high-water qualification remain open.
+  modes. Baseline/render-2x gates pass chapters 1, 5 and 10 with exact far/fog transformations, uniform captures and
+  no consistent peak-memory increase. Human review accepts the fog at 2x and rejects larger values because they expose
+  enemy spawns and low-poly backgrounds; configuration and launcher ranges are capped accordingly. Remaining
+  chapters 2-4 and 7-9 also pass both arms. Chapter 6 is nondeterministically unstable: presented-frame-aligned
+  baseline retries reach invalid guest targets and one 2x retry reached a host access violation, so neither memory
+  comparison nor regression acceptance is valid. A baseline-only allocator diagnostic then caught non-chunk frees
+  from the known `0x2E7B38 -> 0x2E7440 -> 0x2E8170` cleanup chain immediately before another invalid virtual call.
+  Chapter 6 direct-start instability is diagnostic-only and is not attributed to render distance. Texture detail has
+  deterministic positive
+  cases: base-mip-only restores the distant docking bulkhead pattern, and 16x anisotropy changes oblique corridor
+  surfaces. Four-way replay confirms mip mode and anisotropy remain effective together. Exact `Shooterman` plus
+  native campaign selection is the supported map-access path; no further GFX-03 implementation is planned.
 
 #### GFX-04 - Temporal input feasibility contract
 
@@ -348,10 +350,18 @@ parallel after BASE-01, CFG-01 and TEST-01.
   - Classify HUD, transparency and reactive content.
   - Define history reset events for cuts, teleports, pause, resize, resolution change, save/load and device loss.
   - Add debug views for every proposed input.
+  - Add every confirmed user-facing graphics tweak to the launcher for hands-on testing; keep unproven probes behind
+    explicit diagnostic environment variables.
 - **Acceptance:** A go/no-go report in [`docs/findings.md`](docs/findings.md) includes captures, coordinate conventions,
-  missing inputs, dynamic-object limitations and a native fallback contract.
+  missing inputs, dynamic-object limitations and a native fallback contract. Every confirmed user-facing setting is
+  selectable from the launcher, has truthful capability text and is covered by config or preset self-tests.
 - **Stop:** Return "no-go" if required inputs cannot be made correct without broad game-specific draw guessing. Do not
   substitute optical flow and call the result a motion-vector implementation.
+- **Status (2026-10-21):** Complete with a technical no-go. The composed color path is `R8G8B8A8_UNORM` and already
+  includes HUD/post effects. A 20-frame loading burst had one transient `PSMZ24` target; a 20-frame 3D gameplay burst
+  had no depth target while the same GS address was used as color. GS vertices are already transformed and carry no
+  camera matrices, object identity or previous transform. There is no trustworthy motion, UI/reactive or semantic
+  history-reset contract. Target inventory remains diagnostic-only; no launcher option is exposed.
 
 #### DLSS-01 - DLSS 5 qualification
 
@@ -368,6 +378,9 @@ parallel after BASE-01, CFG-01 and TEST-01.
   renderer changes, unresolved image-quality risks and estimated implementation/test cost.
 - **Stop:** Any unclear redistribution right, unavailable public SDK, unsupported D3D12 path or unresolvable required
   input is a no-go for product integration. No NVIDIA binary is committed.
+- **Status (2026-10-21):** Technical no-go inherited from GFX-04. SDK/legal acquisition and a synthetic integration
+  spike are unnecessary while required depth, motion, UI/reactive and reset inputs are unavailable. Reopening
+  requires a new renderer/input plan.
 
 #### GFX-05 - Display follow-up
 
@@ -377,6 +390,11 @@ parallel after BASE-01, CFG-01 and TEST-01.
   parity before any HDR output proposal.
 - **Acceptance:** Menus, FMVs, scopes, HUD and gameplay geometry pass the selected display matrix.
 - **Stop:** Do not claim scene-referred HDR when only SDR remapping is available.
+- **Status (2026-10-21):** Complete. Native 4:3 and 16:9 gameplay/HUD and front-end menu arms pass at 1080p.
+  Deterministic replay proves 4:3 pillarboxing, 16:9 fill at 1080p and 16:9 pillarboxing on 3440x1440. Stretch fills
+  arbitrary outputs by distortion and is labeled accordingly; native ultrawide is not supported. Color remains
+  composed `R8G8B8A8_UNORM` SDR, so HDR is no-go. Hands-on ultrawide, scope/zoom and weapon-switching acceptance passes
+  through the native `Shooterman` path with the isolated test card and VSync on.
 
 ### Gameplay lane
 
@@ -458,18 +476,19 @@ parallel after BASE-01, CFG-01 and TEST-01.
 
 | Milestone | Exit criteria |
 |---|---|
-| **M0 - Baseline locked** | BASE-01, CFG-01 and TEST-01 pass; current INI is reproducible; WIN-06 has a root-cause path and remains explicitly blocking if not fixed. |
+| **M0 - Baseline locked** | BASE-01, CFG-01 and TEST-01 pass; current INI is reproducible. |
 | **M1 - D3D12 image-quality foundation** | GFX-01 and GFX-02 pass; active AA/scaling settings are truthful; render/output coordinates and native fallback are stable. |
 | **M2 - Safe graphics and weapon controls** | GFX-03, PROFILE-01, WPN-01, WPN-02 and WPN-03 pass; original behavior is preserved at `1.0`. |
-| **M3 - Modern-rendering decision** | GFX-04 and DLSS-01 produce signed go/no-go decisions; no DLSS product claim is made. |
-| **M4 - Enhancement release candidate** | STAB-01, GAME-01 and the selected display follow-up pass; release gate evidence is complete. |
+| **M3 - Modern-rendering decision** | GFX-04 and DLSS-01 produce go/no-go decisions; no DLSS product claim is made. |
+| **M4 - Enhancement release candidate** | GAME-01 and the selected display follow-up pass; release gate evidence is complete. |
 
-M0 and M1 passed on 2026-10-20. STAB-01 remains explicitly deferred and blocking for M4/release.
+M0 and M1 passed on 2026-10-20. GFX-03 and PROFILE-01 are also complete. GFX-04 closed the temporal lane with a
+technical no-go on 2026-10-21; DLSS-01 is stopped unless that input contract is replaced.
 
 Parallel order after M0:
 
 ```text
-GFX-01 -> GFX-02 -> GFX-04 -> DLSS-01
+GFX-01 -> GFX-02 -> GFX-04 --no-go--> DLSS-01 stopped
    |         |
    +-> GFX-05
 
@@ -477,10 +496,9 @@ GFX-03 ------------------------------+
                                        +-> release qualification
 PROFILE-01 ---------------------------+
 WPN-01 -> WPN-02 + WPN-03 -> WPN-04 -+
-STAB-01 ------------------------------+
 ```
 
-GFX-03, PROFILE-01, WPN-01 and STAB-01 may proceed independently once their named prerequisites pass.
+GFX-03, GFX-04 and PROFILE-01 are complete. WPN-01 may proceed independently of GFX-05.
 
 ## 9. Deferred and out-of-scope work
 
@@ -489,8 +507,10 @@ The following work is not deleted, but it is outside the active release plan:
 - native macOS/Apple Silicon, Metal and MetalFX;
 - AArch64 JIT work beyond preserving existing evidence;
 - DLSS product integration, DLSS frame generation and Ray Reconstruction;
+- temporal upscalers using inferred optical flow or draw-guessing in place of validated motion/depth/UI inputs;
 - FSR/XeSS integration until the common temporal contract is qualified;
 - ray tracing;
+- direct-start/skip-level stress qualification (retired STAB-01/WIN-06 evidence remains in `docs/findings.md`);
 - new VFS/mod-loading behavior and loose-asset expansion;
 - Blender import/export tooling;
 - AI/navigation tuning;
@@ -507,14 +527,14 @@ source and tests for deferred platform work must continue to compile where the c
 |---|---|
 | Existing INIs are silently changed | Versioned migration fixtures, effective-config diagnostics and round-trip tests |
 | D3D12 control is enabled but ignored | Backend capability reporting and synthetic toggle tests |
-| DLSS lacks correct depth/motion/UI inputs | GFX-04 debug views and a permitted no-go decision |
+| DLSS lacks correct depth/motion/UI inputs | GFX-04 technical no-go; no product integration |
 | Proprietary SDK cannot be distributed | Human legal disposition; never commit vendor binaries |
 | `Shooterman` is mistaken for a tuning preset | Separate Testing and Gameplay sections; explicit UI copy and tests |
 | Recoil is confused with animation or shot spread | WPN-01 component tracing before mutation |
 | Accuracy tuning affects AI or RNG globally | Player ownership checks, deterministic captures and AI regression cases |
 | Hook/layout drift corrupts guest memory | Executable hash, signature manifest, bounds checks and fail-closed installation |
 | Elevated LOD/distance exhausts memory | High-water telemetry, bounded ranges and campaign regression |
-| WIN-06 invalidates long-run results | Keep STAB-01 as a release blocker and report failed runs |
+| Direct-start diagnostics produce unstable long-run results | Keep them outside release acceptance; use exact `Shooterman` and native campaign selection |
 | Protected content enters source or artifacts | BYOD separation, package allowlists and protected-content scans |
 
 ## 11. Release gate
@@ -522,11 +542,13 @@ source and tests for deferred platform work must continue to compile where the c
 An enhancement release requires:
 
 - clean MSVC and clang-cl builds and the complete ISO-free suite;
-- BASE-01 and STAB-01 runtime acceptance;
+- BASE-01 runtime acceptance;
 - D3D12 golden and BYOD scene-set acceptance on the supported GPU/driver matrix;
 - config migration and reset-to-original tests;
 - weapon tuning at `1.0` matching baseline and non-default values matching documented semantics;
 - proof that the default `Shooterman` test workflow never touches the normal memory card;
+- supported all-map testing through exact `Shooterman` and native campaign selection; direct-start diagnostics are
+  excluded from release acceptance;
 - campaign, save/load, cutscene, FMV, resize, device-loss, shutdown and soak tests;
 - frame-time, memory and shader-stutter measurements;
 - dependency notices, corresponding-source review, SBOM and secret/protected-content scans;
@@ -540,8 +562,8 @@ This plan records the requested direction but does not substitute for named rele
 | Role | Status |
 |---|---|
 | Product direction | Graphics/gameplay focus requested 2026-10-20 |
-| Windows/runtime owner | M0 and M1 accepted 2026-10-20; STAB-01 remains deferred and release-blocking |
-| Graphics owner | Pending GFX-04 and DLSS-01 |
+| Windows/runtime owner | M0 and M1 accepted 2026-10-20; direct-start STAB-01 diagnostic retired 2026-10-21 |
+| Graphics owner | GFX-01 through GFX-05 complete; GFX-04/DLSS-01 technical no-go retained |
 | Gameplay owner | Pending WPN-01 evidence |
 | Test/release owner | Pending hardware and campaign matrices |
 | Legal/distribution owner | Existing LEGAL-01 disposition retained; any DLSS artifact requires separate review |

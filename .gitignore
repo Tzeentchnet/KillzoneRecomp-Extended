@@ -17,3 +17,5 @@ ext/kzvu/test/vu0_captures/
 dist/
 0x*
 tools/pcsx2_par/
+/dia_symbols.obj
+/gs_trace_summary.obj

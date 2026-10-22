@@ -40,18 +40,27 @@ Test build, currently in M0 (Windows enhancement baseline); see [`TODO.md`](TODO
 - **Mouse and keyboard:** mouse aim is an engine patch (raw counts go into the game's own look rate: no stick
   acceleration or dead zone), with fully rebindable keys. Controllers work through SDL3 with the original PS2 layout.
 - **Graphics:** internal resolution up to 8x (supersampling), native 16:9, sharp scaling, anisotropic filtering,
-  optional FXAA; D3D11, D3D12 or Vulkan. SMAA is D3D11-only and is explicitly shown as unavailable on other renderers.
+  optional FXAA, and view distance up to the supported 2x maximum; D3D11, D3D12 or Vulkan. SMAA is D3D11-only and is
+  explicitly shown as unavailable on other renderers. The Graphics tab's **Validated enhancements** preset applies
+  the measured stock-game test setup: D3D12, VSync on, automatic internal scale, 16x anisotropy, highest mip detail,
+  clean PS2 effects, replacement textures off, 2x view distance and 30% sharpening.
+  Native 4:3 and 16:9 are supported. On ultrawide outputs, 16:9 is pillarboxed; the optional Stretch mode fills the
+  display by distortion and is not native ultrawide.
 - **Launcher:** display, graphics, controls and audio settings; checks the disc image is the supported version.
 - **Testing options (launcher Testing tab, all off by default):** unlock all campaign levels without changing saves,
   skip the logos and intro movie, start directly in a chosen chapter and difficulty, and use a separate test memory
   card. On an empty isolated card, Start in creates the configured profile through the game's front end; the default
-  is exact `Shooterman`. Known issue: repeated chapter 11 loads can intermittently crash or corrupt textures even
-  after the full intro; the shortcut is not the common cause (WIN-06). Automation equivalents:
+  is exact `Shooterman`. The supported all-map workflow is to create/select exact `Shooterman` and use the native
+  campaign menu. Direct chapter selection is retained for diagnostics but is not a release-qualification path.
+  Automation equivalents:
   `KZ_UNLOCK_ALL=1`, `KZ_SKIP_INTRO=1`, `KZ_START_LEVEL=1..11`, `KZ_START_DIFFICULTY=0..2`,
   `KZ_DEFAULT_PROFILE=<name>`, `KZ_FRONTEND_LOG=1`.
   When testing native `Shooterman` behavior, explicit `KZ_UNLOCK_ALL=0` keeps Start in from installing the convenience
   unlock hooks.
-- **Not included:** Killzone Online (LOADER.ELF and the network modules); its servers are long gone.
+- **Not included:** Killzone Online (LOADER.ELF and the network modules); its servers are long gone. Temporal
+  upscalers such as DLSS/FSR/XeSS are also not supported: the PS2 GS path does not expose stable gameplay depth,
+  camera/object motion vectors or a separate HUD/reactive mask. HDR output is not claimed because the current
+  renderer exposes composed, untagged `R8G8B8A8_UNORM` SDR rather than scene-linear color.
 
 ## Default controls
 
@@ -89,10 +98,15 @@ to overwrite a file whose schema version is newer than it supports.
 always samples the base level. The latter only changes draws that actually enable GS mipmapping; many Killzone scenes
 use `MXL=0` and are therefore identical in both modes.
 
+`[Graphics] RenderDistance=1..2` scales the authored far plane and fog together. 2x is the supported maximum: pushing
+farther exposes enemy spawns and low-polygon background geometry that the original fog was designed to hide. Higher
+configuration or `KZ_RENDER_DISTANCE` values are reported and clamped to 2x.
+
 `[Testing] DefaultProfile=Shooterman` controls only the profile typed by Start in when the selected testing card is
 isolated and empty. It never renames an existing profile and is ignored for the normal memory card. Automation may
 override it with `KZ_DEFAULT_PROFILE`; supported names are 1-32 characters using letters, digits, spaces, `-`, `_`
-and `.`. Prebuilt saves or memory-card images are not distributed.
+and `.`. Exact `Shooterman` unlocks all maps through the game's native profile queries; use the native campaign menu
+for supported qualification. Prebuilt saves or memory-card images are not distributed.
 
 ## Building
 
@@ -120,7 +134,9 @@ workload, CMake 3.24+, Ninja 1.13.2, Python 3.11+, and a CPU with AVX2. The full
    `tools\scripts\cmake_preset.ps1 -Preset win-msvc-rel -Action build` -> `build\win-msvc-rel\killzone.exe`
    (see [Checked CMake presets](#checked-cmake-presets); `win-clang-rel` builds with clang-cl). The older
    `tools\scripts\build.bat RelWithDebInfo` still works and writes `build\RelWithDebInfo\killzone.exe`.
-8. Optional: `tools\scripts\package.ps1` makes a player folder in `dist\Killzone`.
+8. Run `launch_launcher.bat` to open the MSVC release launcher with inherited `KZ_*` and `PS2X_*` automation
+   variables cleared.
+9. Optional: `tools\scripts\package.ps1` makes a player folder in `dist\Killzone`.
 
 `killzone.exe --selftest` runs the unit checks. `tools\scripts\run_headless.ps1` runs the game without a window, with
 scripted input (`KZ_INPUT_SCRIPT`) and periodic screenshots, which is how everything here was verified.
@@ -147,6 +163,37 @@ both arms provide it:
 ```powershell
 python .\tools\scripts\image_compare.py .\work\baseline .\work\variant --glob "gs_*.png" --align-metadata
 ```
+
+Each headless run also writes `process.json` with sampled peak working-set, paged-memory and virtual-memory values.
+For GFX-03 campaign qualification, run fresh-card baseline/render-distance pairs with:
+
+```powershell
+tools\scripts\gfx03_campaign_gate.ps1 -Chapters 1,5,10 -Card .\work\<test-card> -Seconds 90 `
+  -ExeDir .\build\win-msvc-rel -Iso <image> -Elf .\game\SCUS_974.02
+```
+
+The gate requires the chapter to load, stable frame dimensions, no guest/host exception, the original baseline path,
+measured far/fog transformations in the 2x arm, and by default 30 seconds of actually presented gameplay frames.
+Its protected-content-safe summary contains only chapter, arm, frame counts/dimensions and process-memory peaks.
+
+For AUDIO-01, start with the schema-1 callback ledger only so producer-side file I/O cannot perturb the first
+continuity measurement:
+
+```powershell
+$env:KZ_AUDIO_DIAG = "$PWD\work\audio01-escape-callback.csv"
+& .\build\win-msvc-rel\killzone.exe --launcher
+python .\tools\scripts\summarize_audio_diag.py .\work\audio01-escape-callback.csv `
+  --summary .\work\audio01-escape-summary.json
+```
+
+The ledger maps host time to the raw WAV frame, SPU2 ring depth/drops/skips/reads, deliberate startup priming,
+underrun silence, SDL input/output queue depth, callback gaps and failed stream submissions. Around a heard cutout,
+rerun the summarizer with `--from-seconds` and `--to-seconds`. For a targeted producer-side comparison, repeat with
+`KZ_AUDIO_WAV=<path>`; if the event is truncated in that raw WAV, loss precedes the host callback. Otherwise any
+ledger loss counter localizes it to the host path. An intact WAV with no host loss counter leaves SDL
+conversion/backend or the output device. The product reserve/high-water defaults are 120/320 ms; diagnostics may
+override them with `KZ_AUDIO_BUFFER_MS=10..400` and `KZ_AUDIO_HIGH_MS=<reserve+10>..480`. Captures under `work/`
+remain local and ignored.
 
 Build scripts discover the repository from their own location. `KZ_ROOT` and `KZ_BUILD_ROOT` override the source and
 build roots; `KZ_VCVARS64` can point to `vcvars64.bat`, `KZ_CMAKE` can point to `cmake.exe`, `KZ_NINJA` can point to

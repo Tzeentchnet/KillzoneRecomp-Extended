@@ -1,6 +1,6 @@
 # WORKDONE - verified completions
 
-**Last updated:** 2026-10-20
+**Last updated:** 2026-10-21
 
 The ledger of finished work. An entry belongs here only after the acceptance commands in
 [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) pass on the machine the plan names. Open and partially evidenced
@@ -107,6 +107,64 @@ risk. Do not edit an entry's evidence after the fact. If a later run disagrees, 
 - **Protected-content disposition:** product images, cards, logs and JSONL remain untracked under `work/`; committed
   evidence contains only dimensions, counts and effective configuration.
 
+## GFX-03 - Render distance, LOD and texture clarity qualification
+
+- **Completed:** 2026-10-21 in the current working tree; commit pending.
+- **Supported controls:** render distance and authored fog scale together through 1x-2x. Human review accepts 2x as
+  the maximum; larger ranges expose enemy spawns and low-detail backgrounds. Character/model LOD remains original at
+  1x because elevated arms froze in hands-on testing and the bounded character probe did not clear temporal variance.
+- **Texture qualification:** deterministic docking replay shows base-mip-only restoring distant bulkhead detail and
+  16x anisotropy changing eligible oblique corridor surfaces. Four-way replay confirms mip mode and anisotropy remain
+  effective together. The launcher descriptions retain these narrow measured claims.
+- **Launcher testing:** the `Validated enhancements` preset applies the accepted stock-game configuration in one
+  action and is covered by `kzLauncherSelfTest`; individual controls remain available for A/B testing.
+- **Campaign evidence:** baseline/render-2x pairs pass chapters 1-5 and 7-10 with exact far/fog transformations,
+  uniform captures and no consistent peak-memory increase. The Chapter 6 direct-start diagnostic produced unstable
+  baseline and 2x arms, so its memory comparison is withdrawn and no failure is attributed to render distance.
+- **Scope decision:** STAB-01/WIN-06 and the Chapter 6 direct-start stress gate are retired diagnostic work. Release
+  map access uses exact `Shooterman` and native campaign selection; diagnostic-only instability is not a GFX-03
+  acceptance dependency.
+- **Validation:** `killzone.exe --selftest`, image-comparison and capture-metadata self-tests, MSVC/clang-cl ISO-free
+  suites, both compiler builds and `git diff --check` pass. Runtime images, cards, traces and metrics remain ignored
+  under `work/`.
+
+## GFX-04 - Temporal input feasibility contract
+
+- **Completed:** 2026-10-21 with a technical **no-go** for temporal reconstruction.
+- **Color contract:** kzgs exposes only the composed output after display-circuit merge and interlace processing.
+  D3D12 color and swap-chain surfaces are `R8G8B8A8_UNORM`; no scene-linear/HDR or separate pre-HUD color contract
+  exists. The captured output already contains game post effects, weapon, HUD and tutorial overlays.
+- **Depth evidence:** burst metadata now records display mapping plus color and depth cache targets. Twenty consecutive
+  loading frames expose one `PSMZ24` target at `TBP0 0x1C00`, but twenty consecutive 3D gameplay frames expose zero
+  depth targets. During gameplay `0x1C00` is instead one of three color targets while displayed color alternates
+  between `0x00000` and `0x00070`.
+- **Motion/jitter contract:** the GS receives already transformed `ST`, `RGBAQ`, `XYZ`, `UV` and fog values, not
+  camera/view/projection matrices or object identity. It has no previous-transform stream or motion vectors. Applying
+  global GS jitter would also move HUD, sprites and post-process draws.
+- **UI/reactive/history contract:** HUD and transparency are composited into the same color buffers with no mask.
+  Resize, renderer restart and device loss are host-visible reset events; camera cuts, teleports, pause, save/load and
+  gameplay transitions are not reliably signaled to kzgs.
+- **Decision:** DLSS/FSR/XeSS-style temporal reconstruction is not supportable without broad game-specific draw and
+  engine reconstruction, which violates the GFX-04 stop condition. The native fallback is the validated spatial
+  D3D12 pipeline from GFX-01 through GFX-03. No temporal option is exposed in the launcher.
+- **Validation:** diagnostic D3D12 runs exited 0; MSVC and clang-cl builds pass; `git diff --check` passes. Captures,
+  cards and per-frame target inventories remain ignored under `work/`.
+
+## GFX-05 - Display follow-up
+
+- **Completed:** 2026-10-21 in the current working tree; commit pending.
+- **Automated matrix:** native 4:3 and 16:9 gameplay/HUD and front-end menu arms exit 0. Deterministic final-backbuffer
+  replay confirms 4:3 pillarboxing, 16:9 fill at 1920x1080 and 16:9 pillarboxing at 3440x1440. Stretch fills
+  ultrawide by distortion and is labeled accordingly.
+- **Hands-on acceptance:** on the ultrawide display, 16:9 pillarboxes correctly, 4:3 appears correct, and Stretch
+  behaves exactly as labeled. Gameplay, zoom/scope and weapon switching are normal in both native aspects.
+- **FMV/HDR disposition:** the recorded movie fills 16:9 and pillarboxes in 4:3. Native ultrawide and HDR are not
+  claimed; the renderer remains composed `R8G8B8A8_UNORM` SDR.
+- **Accepted configuration:** the `Validated enhancements` preset was used with VSync on. VSync off still causes
+  egregious tearing, so VSync on is now both the default and part of the preset.
+- **Validation:** MSVC and clang-cl builds, product self-test, deterministic replay matrix and `git diff --check`
+  pass. Protected captures and metrics remain ignored under `work/`.
+
 ## PROFILE-01 - Default `Shooterman` isolated test profile
 
 - **Completed:** 2026-10-20 in the current working tree; commit pending.
@@ -142,6 +200,14 @@ risk. Do not edit an entry's evidence after the fact. If a later run disagrees, 
 
 - **Protected-content disposition:** the generated card and captures remain untracked under `work/` for local repeat
   testing. No save, card image, retail path, screenshot or decoded content is committed or distributed.
+
+## WIN-05 - Isolated test-card workflow
+
+- **Completed:** 2026-10-21 in the current working tree; commit pending.
+- **Hands-on acceptance:** Test memory card was enabled throughout the display matrix. Exact `Shooterman` exposed
+  every campaign map and difficulty through the native menu flow; gameplay, zoom and weapon switching passed.
+- **Isolation:** scripted hash evidence already proves populated test cards are not renamed/overwritten and the
+  normal card remains unchanged. Direct chapter selection remains diagnostic-only.
 
 ## CFG-01 - Versioned `killzone.ini` schema
 
@@ -225,7 +291,8 @@ risk. Do not edit an entry's evidence after the fact. If a later run disagrees, 
 | `git diff --check` | PASS |
 | `killzone.exe --no-launcher` with `PS2X_HEADLESS=1` and a `KZ_CONFIG` without an ISO | exit 1 with "No game disc image is selected." (previously "ELF not found: " with an empty path) |
 
-WIN-06 remains open (8/10 on its gate in all three arms measured this session); see `TODO.md`.
+WIN-06 was still open when this 2026-10-20 evidence was recorded (8/10 on all three measured arms). The 2026-10-21
+scope decision later retired its direct-start diagnostic gate from release acceptance; see `TODO.md`.
 
 ## Re-verification: Windows regression set, 2026-10-19
 
