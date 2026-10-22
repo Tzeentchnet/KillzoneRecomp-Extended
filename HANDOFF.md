@@ -1,6 +1,6 @@
 # KillzoneRecomp session handoff
 
-**Last updated:** 2026-10-20
+**Last updated:** 2026-10-22
 **Workspace:** `D:\Github` (also holds the superseded `plan.md` and `KillzoneRecomp_Master_PRD.md`, history only)
 **Implementation repository:** `D:\Github\KillzoneRecomp-Extended`
 **Branch / last substantive commit:** `master` / see `git log` (2026-10-20 session commits)
@@ -116,15 +116,37 @@ Safe parallel work:
 ## 7. Latest session record
 
 ```text
-Task: AUDIO-01 localization and bounded host mitigation
-Owner/session: Copilot SDK in VS Code, 2026-10-21
-Machine: Windows 11 x64; MSVC and clang-cl presets; SDL/WASAPI default output device
-Status: in progress. Paired hands-on captures localize the cuts to SPU2 ring starvation/catch-up on the host path. The committed 120/320 ms reserve/high-water mitigation reduces severity with no noticeable action latency but does not eliminate large combat dropouts.
-Files changed for AUDIO-01: src/kz_audio.{h,cpp}; ext/kzspu2/{include/kzspu2.h,src/kzspu2.cpp,README.md}; tools/scripts/summarize_audio_diag.py; patches/ps2recomp/experimental/audio-iop-cycle-credit-priority.diff; README.md; TODO.md; docs/findings.md; LEARNINGS.md; patches/README.md; HANDOFF.md. Captures remain ignored under work/. The locked PS2Recomp submodule is clean.
-Evidence: Escape baseline 184.04 s: 317,863 underrun frames, 254,851 skipped frames, 1,104 loss rows, many audible cuts. Hope 220.45 s: 161,858 / 166,077, 466 rows, a few cuts. SDL callbacks stayed near 10 ms with zero producer overflow, submit failure or diagnostic loss. A focused audible enemy-wave cut aligned with IOP backlog reaching 954.27 ms.
-Mitigation / decisions: reserve 40 -> 120 ms and high water 150 -> 320 ms; firing/reload latency was not noticeable and cuts fell from many to a few. Synchronous IOP was worse. Highest worker priority locked gameplay. RPC cycle credit fixed 9.8-second IOP lead but not the dropout. The unaccepted above-normal-priority / cycle-credit candidate is preserved as an experimental patch only.
-Acceptance commands and exact results: final MSVC and clang-cl builds PASS; ISO-free suites PASS 13/13 each; strict dependencies PASS 31/0/0; resume table PASS (132,656 dispatch entries, 100,661 resume cases, 31,995 generated targets); generated inventory PASS (56 hooks, 101,715 recompiler-resumable entries); full diff check PASS. Clang-cl reports only the existing unused-flag and MSVC CRT deprecation warnings.
-Blocker and minimal reproducer: Escape enemy-wave combat still produces an audible large cut with the 120 ms mitigation. AUDIO-01 cannot move to WORKDONE without a stable zero-loss combat soak.
-Next command: if resumed, apply `patches/ps2recomp/experimental/audio-iop-cycle-credit-priority.diff` in an isolated branch, add repeated interactive stability coverage, and reject any priority change that locks once.
-Safe parallel work: WPN-01 remains read-only and requires BYOD authorization. AUDIO-01 is paused after this documented push.
+Task: GFX-03 reinvestigation - per-consumer scene-detail scaling (diagnostic only)
+Owner/session: Claude Code, 2026-10-21/22
+Machine: Windows 11 x64; MSVC and clang-cl presets; NVIDIA RTX 5070; disc image at E:\Git\Killzone\Killzone (USA).iso
+Status: complete as a diagnostic reinvestigation; no product/WORKDONE change. The withdrawn shared-context LOD
+  mechanism was replaced with a per-class mechanism (static/instanced/skinned LOD, visible-distance cull, grass)
+  that each pass independently up to 8x. RenderDistance=2 combined with any elevated LOD class still corrupts the
+  guest heap, reproducing the original no-go with cleaner evidence; the root cause is not isolated. RenderDistance
+  stays clamped 1..2 and LodScale stays fixed at 1.0.
+Files changed: src/kz_detail.{h,cpp} (new); src/kz_hook_addresses.h; src/kz_main.cpp; src/kz_post.cpp (character
+  LOD probe moved into kz_detail.cpp); config/generated-manifest.json (+7 debug hooks: LodStreamRequest, GrassRender,
+  LodStaticInstanced, LodSelectSimple, LodSelectBlended, AllocFailHandler, PacketFrameBegin); docs/findings.md;
+  TODO.md; LEARNINGS.md; patches/README.md; HANDOFF.md; patches/ps2recomp/experimental/
+  gfx03-host-write-rpc-diagnostics.diff (new, not applied; adds a null-by-default host-write observer and an
+  in-flight offloaded-RPC receive-buffer registry to the locked PS2Recomp checkout, gated by
+  PS2X_GUEST_RANGE_WRITE_OBSERVER so kz_detail.cpp degrades cleanly without it). The locked PS2Recomp submodule
+  itself is clean (patch not applied in the committed tree).
+Evidence: see docs/findings.md "GFX-03 reinvestigation" for the full consumer table, streaming/grass/stack
+  analysis, the render-distance-2x failure matrix, and every mechanism ruled out (stack, heap exhaustion, DMA
+  packet overflow, synchronous-IOP-only, late RPC copies into freed buffers, suppressed LOD stream requests).
+Acceptance commands and exact results: win-clang-tests and win-msvc-tests builds PASS; ISO-free suites PASS
+  13/13 each (MSVC and clang-cl); strict dependencies PASS 31/0/0; resume table PASS (132,656 dispatch entries,
+  100,661 resume cases, 31,995 generated targets); generated inventory PASS (63 hook signatures,
+  101,715 recompiler-resumable entries); full diff check PASS; product --selftest PASS 0 failures under both
+  compilers.
+Blocker and minimal reproducer: render distance 2x + per-class LOD >=4x on any tested class reliably reproduces
+  guest missing-target indirect calls or indefinite stalls within seconds of level load in chapter 5 (5.Fields1,
+  direct start + scripted input). Root-cause attribution stopped at a heap-corrupting write (rpcCopyToRdram
+  0xE1B950+0x70, 8 bytes past its chunk) with the known writer mechanism not yet identified.
+Next command: if resumed, apply the experimental patch and KZ_DETAIL_HEAPCHECK against a chapter-5 render2+LOD4
+  repro; walk forward from the next captured heap break to the write's caller, or compare against WIN-06's own
+  allocator-corruption findings for a shared first-fault signature.
+Safe parallel work: WPN-01 remains read-only and requires BYOD authorization. AUDIO-01 is paused where the
+  2026-10-21 session left it (see git history for that record); this session did not touch it.
 ```

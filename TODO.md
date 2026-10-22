@@ -1,7 +1,7 @@
 # TODO - current milestone queue
 
 **Milestone:** M2 - Safe graphics and weapon controls
-**Last updated:** 2026-10-21
+**Last updated:** 2026-10-22
 
 The durable queue of open work. Definitions, dependencies, acceptance commands and stop conditions are in
 [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md); verified completions are in [`WORKDONE.md`](WORKDONE.md). A task
@@ -27,6 +27,15 @@ retired from the release plan because it
 qualified the direct-start/skip-level diagnostic path, which exact `Shooterman` plus native campaign selection has
 superseded. BASE-01, CFG-01, TEST-01, GFX-01, GFX-02, GFX-03, GFX-04, GFX-05, PROFILE-01, WIN-01, WIN-03 and WIN-05 are complete in
 [`WORKDONE.md`](WORKDONE.md). DLSS-01 is qualification only; product integration is not in this queue.
+
+**GFX-03 reinvestigation (2026-10-22, diagnostic only, no WORKDONE change):** a follow-up session replaced the
+withdrawn shared-context LOD scaling with per-class scaling (`src/kz_detail.cpp`, `KZ_DETAIL_*` env vars, no
+product config key) to see whether the mechanism, not just the symptom, could be isolated. Each class
+(static/instanced/skinned LOD, grass, visible-distance cull) passes independently; `RenderDistance=2` combined
+with *any* elevated LOD class still corrupts the guest heap, reproducing the original no-go with cleaner evidence
+but still no identified root cause. See `docs/findings.md` "GFX-03 reinvestigation" for the full writeup, ruled-out
+mechanisms and the experimental PS2Recomp diagnostic patch. `RenderDistance`/`LodScale` product behaviour and
+launcher are unchanged.
 
 ### AUDIO-01 - Combat audio clipping
 

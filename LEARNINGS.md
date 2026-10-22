@@ -1,6 +1,6 @@
 # LEARNINGS - lessons for the next session
 
-**Last updated:** 2026-10-21
+**Last updated:** 2026-10-22
 
 Short, reusable lessons about working on this repository: what tripped a session up, which checks catch it, and
 which tools answer a question fastest. Evidence and measurements live in [`docs/findings.md`](docs/findings.md); task
@@ -170,3 +170,23 @@ few lines with a pointer to the evidence.
   retained allocator diagnostics caught Chapter 6 cleanup freeing resource-record fields as heap chunks through the
   same cleanup chain already studied by STAB-01. Localize the baseline arm before blaming an elevated graphics
   setting, and do not claim a shared first writer merely because the downstream corruption class matches.
+- **One shared context field with twenty readers is not one setting.** `ctx+0x1AC` fans out into static/instanced/
+  skinned LOD selection, the mesh visible-distance cull, grass view distance, scope zoom and ~15 unclassified
+  per-class gates. Scaling it to probe "LOD" conflates all of them; a call-site-gated hook on the shared AABB-distance
+  helper (`0x2C8178`) plus per-selector threshold-table patching isolates each consumer without touching the others.
+  `src/kz_detail.cpp` is the reusable per-class harness; it installs no hook unless a `KZ_DETAIL_*` variable is set.
+- **A streamed LOD system degrades gracefully even when the selector is wrong.** Elevated per-class LOD distance
+  (static/instanced/skinned/grass, up to 8x) passed independently because the draw path only ever shows the nearest
+  *resident* level (`0x3FF318`/`0x3EF648`, residency check `0x189C08`); a selection the streamer hasn't loaded yet
+  just keeps showing the old level while `0x189CB0` stamps it for background loading. Don't assume a wrong LOD
+  selection is unsafe without checking whether the consumer actually requires the data to be present.
+- **Rule out stack, heap, packet-buffer and known race mechanisms with sampled telemetry before calling a crash
+  "allocator corruption" by resemblance alone.** Render distance 2x + elevated LOD reproduces WIN-06-like symptoms
+  (stale-pointer indirect calls, the same `0x2E7B38` cleanup chain, the same streamer object address), but minimum
+  stack pointer, heap used/free/top, DMA packet high-water and an in-flight offloaded-RPC registry all stayed normal
+  in the failing runs this session measured. Matching downstream symptoms is not the same as a shared first cause;
+  see WIN-06's own inability to pin one across 7-10 ten-run batches.
+- **`ps2TraceGuestRangeWrite`/`ps2TraceGuestWrite` are real, if currently no-op, hook points.** Turning the range-write
+  one into a null-by-default observer callback (`patches/ps2recomp/experimental/gfx03-host-write-rpc-diagnostics.diff`)
+  cost one relaxed atomic load per host-side guest-RAM write and found a corrupting `rpcCopyToRdram` write within one
+  session, instead of the page-protection watch's larger timing perturbation.

@@ -7,6 +7,7 @@ namespace kz_hook
     inline constexpr uint32_t GameEntry = 0x00146F30u;
     inline constexpr uint32_t FileReadAsync = 0x0014D790u;
     inline constexpr uint32_t FilePoll = 0x0014DAD0u;
+    inline constexpr uint32_t PacketFrameBegin = 0x0014FD90u;
     inline constexpr uint32_t TimelineKick = 0x00150090u;
     inline constexpr uint32_t FogParams = 0x00151180u;
     inline constexpr uint32_t LodScaleApply = 0x00151E64u;
@@ -20,6 +21,7 @@ namespace kz_hook
     inline constexpr uint32_t HeapReallocC = 0x00173660u;
     inline constexpr uint32_t TimelineWaitD1Idle = 0x001759C0u;
     inline constexpr uint32_t TimelineWaitVblankKick = 0x001759F8u;
+    inline constexpr uint32_t LodStreamRequest = 0x00189CB0u;
     inline constexpr uint32_t LensBlur = 0x001A9308u;
     inline constexpr uint32_t SwitchToMenu = 0x001A9738u;
     inline constexpr uint32_t VirtualKeyboard = 0x001B0DF0u;
@@ -54,9 +56,14 @@ namespace kz_hook
     inline constexpr uint32_t MovieAudioFeed = 0x002E19C0u;
     inline constexpr uint32_t MovieAudioFull = 0x002E1A40u;
     inline constexpr uint32_t ListNodeAllocReturn = 0x002E7238u;
+    inline constexpr uint32_t AllocFailHandler = 0x0030A180u;
     inline constexpr uint32_t MpegGetPicture = 0x003CD750u;
     inline constexpr uint32_t MpegClearRefBuff = 0x003CD9F8u;
     inline constexpr uint32_t KeyboardModuleInit = 0x003D7490u;
+    inline constexpr uint32_t GrassRender = 0x003EE6F8u;
+    inline constexpr uint32_t LodStaticInstanced = 0x003EFAD8u;
+    inline constexpr uint32_t LodSelectSimple = 0x003F4E70u;
+    inline constexpr uint32_t LodSelectBlended = 0x003F4F10u;
     inline constexpr uint32_t Vector36ResizeReturn = 0x004299FCu;
     inline constexpr uint32_t StreamOpen = 0x00496168u;
     inline constexpr uint32_t StreamRead = 0x004963B8u;

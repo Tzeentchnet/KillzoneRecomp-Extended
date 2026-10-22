@@ -20,6 +20,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include "kz_ipu.h"
 #include "kz_aim.h"
 #include "kz_post.h"
+#include "kz_detail.h"
 #include "kz_timefix.h"
 #include "kz_testing.h"
 #include "kz_win06_watch.h"
@@ -133,6 +134,7 @@ namespace
         int failures = kzConfigSelfTest();
         failures += kzGsSelfTest();
         failures += kzPostSelfTest();
+        failures += kzDetailSelfTest();
         kzInputInit(std::filesystem::temp_directory_path() / "kz_missing.ini");
         failures += kzInputSelfTest();
         failures += kzTestingSelfTest();
@@ -342,6 +344,7 @@ int main(int argc, char *argv[])
         kzAimInstall(runtime);
         kzTimeFixInstall(runtime);
         kzPostInstall(runtime);
+        kzDetailInstall(runtime);
         kzWin06WatchInstall(runtime); // KZ_WIN06_WATCH=1 only
         // Tests: a separate (e.g. empty) memory card folder. After loadELF, which resets the roots to the ELF folder.
         // [Testing] TestMemoryCard=1 does the same with "testcard" next to killzone.ini; KZ_MC_ROOT wins.
@@ -506,6 +509,7 @@ int main(int argc, char *argv[])
         }
         runtime.requestStop();
         runtimeThread.join();
+        kzDetailShutdown();
         if (const char *dump = std::getenv("KZ_DUMP_RAM")) // debugging: EE RAM image after the game thread stops
         {
             if (FILE *f = std::fopen(dump, "wb"))

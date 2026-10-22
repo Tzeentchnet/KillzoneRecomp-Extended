@@ -713,3 +713,12 @@ resulting tree to equal the pinned submodule tree.
   instead of 9.8 seconds; combined with a 160 ms reserve, the automated 117-second run recorded 800 underrun frames
   and no skips. The hands-on run was canceled, while a separate highest-priority experiment locked gameplay. Keep
   this patch experimental until repeated interactive stability and zero-loss combat gates pass.
+- **experimental/gfx03-host-write-rpc-diagnostics.diff** (not applied; `git apply --directory=ext/PS2Recomp`) -
+  turns the existing no-op `ps2TraceGuestRangeWrite` hook into a null-by-default observer callback
+  (`ps2GuestRangeWriteObserver`) that HLE stubs and the IOP host bridge already call on every guest-RAM write, and
+  adds a diagnostic registry of in-flight offloaded (threaded-IOP) nowait `SifCallRpc` receive buffers
+  (`ps2RpcFindInFlightReceive`). Both are gated behind `#define PS2X_GUEST_RANGE_WRITE_OBSERVER 1` so
+  `src/kz_detail.cpp` compiles and degrades cleanly without the patch. Used during the GFX-03 reinvestigation
+  (`docs/findings.md`, "GFX-03 reinvestigation") to attribute a heap-corrupting write and to rule out late RPC
+  copies into freed buffers as the render-distance-2x-plus-elevated-LOD failure mechanism. No measured benefit or
+  cost to product behaviour; kept only as a diagnostic aid for a future session.

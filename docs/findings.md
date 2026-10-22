@@ -1952,6 +1952,160 @@ surfaces, and highest-detail mip mode forces level zero only where the game auth
 rejected for this milestone unless offline mesh evidence justifies reopening it. GFX-03 is complete. Supported map
 access uses exact `Shooterman` and native campaign selection; the direct-start Chapter 6 stress gate is retired.
 
+## GFX-03 reinvestigation: per-consumer scene detail (2026-10-21/22)
+
+A follow-up session re-examined the withdrawn shared-context LOD mechanism to see whether scaling render-context
+`+0x1AC` (`0x70003A00+0x1AC`, reached through global `0x559118`) individually by consumer, instead of as one shared
+value, could reopen elevated model detail safely. It does not change the product decision (`LodScale` stays fixed
+at 1x), but it replaces the earlier correlational evidence with a disassembly-level account of the mechanism and a
+cleaner reproduction of the unsafe interaction, plus new diagnostic tooling kept out of the product build path.
+
+### The shared value has over twenty consumers
+
+`ctx+0x1AC` is not a LOD setting; it is read by every per-class scene-distance gate in the executable:
+
+| Consumer | Code | Effect |
+|---|---|---|
+| LodStaticMeshResource simple / blended | `0x3EF700` / `0x3EF7A0` call selectors `0x3F4E70` / `0x3F4F10` | metric = AABB distance / ctx, compared against the resource's `+0x2C` "LOD Info" table (count, -, threshold pointer) |
+| LodStaticMeshResource instanced | `0x3EFAD8` (vtable slot `0x53AC38`) | same `+0x2C` table; per-placement distance computed inline |
+| LodSkinnedMeshResource simple / blended | `0x3FF3D0` / `0x3FF470` | same selectors against the `+0x30` table |
+| MeshResource "Maximum visible distance" (`+0x1C`, -1 = unlimited) | cull `0x3F1574` (AABB helper return `0x3F1650`), compound objects `0x246EC8` | visible while distance < maximum * ctx |
+| Grass "Max View Distance" (`+0x134`) | walker `0x3EE6F8` (cell cull `0x3EE874`, instance cull `0x3EEBB8`) | cull radius = maximum * ctx |
+| scope zoom | `0x225F30` | calls setter `0x151E60` with `ctx * zoom` |
+| ~15 further per-class gates | e.g. `0x1D8F54`, `0x253314`, `0x25FFE0`, `0x27C814`, `0x2822F0`, `0x28F39C`, `0x313734`, `0x3BC2A8` | `distance * ctx` accessors on other entity classes; not individually classified |
+
+All selector and cull paths reach the same AABB-distance helper (`0x2C8178`), so a call-site-gated hook on that
+helper, plus hooks on the three selector entry points for threshold-table patching, can scale each class
+independently. A new diagnostic module, `src/kz_detail.{h,cpp}` (not wired into any product config key; every hook
+is gated by a `KZ_DETAIL_*` environment variable and installs nothing when none is set), implements this: it
+patches a resource's own "LOD Info" threshold table once per table (covering its simple, blended and instanced
+paths together), scales the visible-cull helper call-site, and patches a grass object's own view-distance field.
+Telemetry (`KZ_DETAIL_LOG[=<vblank-period>]`) reports per-class selection-level histograms before/after scaling,
+LOD stream-request counts, streamer state, a guest-heap walk, DMA packet high-water, malloc-exhaustion events, grass
+budget saturation and the minimum observed main-thread stack pointer.
+
+### LOD streaming makes elevated selection safe by itself
+
+LOD meshes are streamed, not always-resident. After selecting a level, a resource searches for the nearest
+*resident* level (`0x3FF318` skinned, `0x3EF648` static; residency check `0x189C08` reads a node flag bit) and draws
+that instead. When the selected level differs from the resident one, the returned level's dependency tree is
+stamped with the streamer clock through `0x189CB0` -> `0x186240` -> `0x186220` (`node+8 = streamer+0x1C`). The
+streamer (`new(0x478)`, constructor `0x186FC0`, global `0x559170`, state machine `0x18A0A0`) loads stamped nodes in
+batches of at most 1 MB (`+0x8C`) or 100 entries (`+0xA0`) per tick. Because only resident levels are ever drawn,
+elevated LOD selection alone degrades gracefully to the best already-loaded level rather than requesting missing
+data synchronously; this is consistent with per-class LOD scaling (static, instanced, skinned) at up to 8x each
+passing a 45-75 s scripted-gameplay gate independently, in chapter 5 (`5.Fields1`), with normal streamer activity
+and no abnormal memory growth.
+
+### Grass is budget-bound, not distance-bound
+
+The grass draw (`0x3EE6F8`/`0x3EF0xx`) allocates `min(instances, 1500)` 80-byte records on the *main-thread stack*
+every frame, and the walker itself stops at 1500 (`grass+0x158`, constant `0x5DC` at `0x3EE75C`/`0x3EF0DC`/
+`0x3EF21C`). Fields1's grass object has an authored `Max View Distance` of 50; stock play already peaks at
+1385-1500 instances per frame and routinely saturates the cap. Doubling the view distance via the diagnostic hook
+hits the 1500 cap continuously (thousands of times per minute) without a crash or measurable memory growth: grass
+density is bounded by its own per-frame budget regardless of view distance, so there is no reason to believe a
+grass-distance product setting would be unsafe on its own.
+
+### Main-thread stack headroom is unaffected
+
+`SetupThread` places the main stack at `0x100000-0x140000` (256 KiB). Baseline gameplay bottoms out around
+`sp=0x1209F0` (~130 KiB headroom free) in the `KZ_DETAIL_LOG` minimum-stack-pointer telemetry. Every elevated-detail
+arm, including every one that crashed under the render-distance interaction below, measured the same
+`0x1209F0-0x120950` floor. Stack exhaustion is not the failure mechanism for any case tested.
+
+### Render distance 2x plus any elevated LOD class remains unsafe, and the mechanism is not yet isolated
+
+Each control passed alone: per-class static/instanced/skinned/grass scaling up to 8x, the shared-context diagnostic
+at 4x, and `RenderDistance=2` alone (4/4 clean runs, each exiting cleanly at the scripted gameplay limit). Combining
+`RenderDistance=2` with *any* tested elevation of LOD selection distance reproduced the original withdrawn
+mechanism's failure signature: guest `missing-target` indirect calls to addresses like `0x0`, `0x1B`, or
+`0x6F636952` (ASCII "Rico" — a reused/stale vtable-like slot), or indefinite stalls inside `malloc` (`0x172928`) or
+a block-copy routine (`0x2E6620`). Combinations tried and their outcome over this session's small samples:
+
+| Arm (with `RenderDistance=2`) | Result |
+|---|---|
+| shared-context `LodScale=4` (the original withdrawn mechanism) | 1/1 failed |
+| per-class static+instanced LOD `=4` | 2/2 failed |
+| per-class skinned LOD `=4` | 1/2 failed (the other reached the gameplay limit cleanly) |
+| per-class static+instanced+skinned LOD `=4`, with `KZ_DETAIL_NOTOUCH=1` suppressing LOD stream requests from any resource whose table this module scaled | 1/1 failed |
+| `PS2X_IOP_THREAD=0` (synchronous IOP) with per-class LOD `=4` | inconclusive; batch did not complete before the session ended |
+
+The sample sizes are too small, and skinned-only's single pass is too thin, to name one LOD class as uniquely
+responsible; the safest reading is that render distance 2x combined with elevated LOD selection distance of *any*
+kind is unsafe, matching the original 2026-10-20/21 finding, now reproduced with cleaner per-class tooling instead
+of the single shared value.
+
+Ruled out as the mechanism:
+
+- **Stack exhaustion** — see above; unaffected in failing runs.
+- **Heap exhaustion** — the fixed arena (`0x591410-0x1FFFFF0`, initialized by `0x173430`, hard end at
+  `0x2000000-0x10`) holds ~24.1 MiB used, 1.3-2.0 MiB of free bins and an 874-994 KiB top chunk in both passing and
+  failing arms; malloc's own exhaustion path (purge callback `*(gp-0x7E98)`, fatal callback `*(gp-0x7E9C)`, both the
+  no-op stub `0x30A180` in ordinary gameplay) never fires in either arm, and both stay within roughly 1.3 MiB of
+  exhaustion at the level-load peak regardless of pass/fail.
+- **DMA packet-buffer overflow** — the two 768 KiB double-buffered packet areas (`0x5DAA00`/`0x69AB00`, size
+  tables at `0x5134A8`/`0x5134B0`) peak at 276-287 KiB used in passing runs and 372-407 KiB in failing runs; a
+  *passing* shared-context-LOD-4x-only run separately reached 425 KiB. No overflow (cursor past the buffer end) was
+  ever observed by the per-frame `KZ_DETAIL_LOG` packet-high-water probe.
+- **Threaded-IOP latency specifically** — the combination also failed with `PS2X_IOP_THREAD=0` (synchronous IOP),
+  so a race specific to the threaded-IOP path is not the sole explanation, though a race elsewhere in the
+  offload machinery was not excluded.
+- **Late offloaded nowait-RPC result copies writing into a freed/reused receive buffer** — an in-flight receive-
+  buffer registry (experimental PS2Recomp patch, below) recorded zero guest frees of a buffer with a pending
+  offloaded RPC result in any failing run.
+- **LOD-triggered stream requests specifically** — suppressing `0x189CB0` stream-residency calls from any resource
+  whose threshold table this module had patched (`KZ_DETAIL_NOTOUCH=1`) did not prevent the failure.
+
+What was positively observed in the corrupted state: guest code calls through live objects at addresses that were
+reused since a previous allocation (e.g. `0x1009CC0` lies inside a different, newer `0x530190`-tagged object than
+whatever last owned it), and a per-frame heap walk (`KZ_DETAIL_HEAPCHECK`) caught a `rpcCopyToRdram` write at
+`0xE1B950+0x70` landing eight bytes past its enclosing chunk, directly into the next chunk's size/inuse header.
+This is the same symptom class, and in one run the same cleanup chain (`0x2E7B38 -> 0x2E7440 -> 0x2E8170`, frees
+from `0x2E819C`) and the same LOD-streamer object address (`0x01281020`) as the retired WIN-06 direct-start
+investigation (`docs/findings.md`, "WIN-06: write watch names the realloc wrap" and "renderer guards expose the
+remaining guest corruption"). Whether render distance 2x plus elevated LOD reaches the *same* underlying corruption
+as WIN-06, or only produces a similar-looking downstream effect, is not established; the WIN-06 investigation itself
+could not pin a single first-fault signature across its own 7-10 ten-run batches after extensive instrumentation
+(see `docs/findings.md` "WIN-06" sections). Further narrowing was not completed in this session.
+
+### Texture mip-distance bias is feasible but not implemented
+
+The Texture resource's `PS2Mip1Distance` (`+0x10`) and `PS2MipMapL` (`+0x14`) are copied to the GS texture object
+(`+0x98`/`+0x9C`). `0x15AB90` builds the GS `TEX1` register with `MXL = levels - 1` and
+`K = 16 * (1 - 2^L * log2(Mip1Distance * scratchpad[0x3BAC]))`, clamped to `-0x800..0x7FF`; scaling `Mip1Distance`
+by a factor `s` is therefore exactly `K -= 16 * 2^L * log2(s)`. PCSX2 only honours K/L (manual trilinear LOD) when
+hardware mipmapping is enabled, and that path disables anisotropic filtering, so `Mipmapping=highest` with 16x
+anisotropy (the existing, qualified combination) stays the sharper option. A K-bias "texture detail distance" mode
+is feasible at the kzgs level but was not implemented or qualified this session. Separately,
+`TextureManager`'s "Maximum texture size" (`+0x28`) defaults to 2048, above the GS's working limit, so textures are
+not downscaled on load regardless of this setting.
+
+### Diagnostic-only tooling added, kept out of the product path
+
+- `src/kz_detail.{h,cpp}`: per-class detail scaling, LOD streamer/heap/packet/stack telemetry, a same-process A/B
+  toggle (`KZ_DETAIL_TOGGLE=<n>`, active only in odd `n`-vblank gameplay windows), and an opt-in per-frame heap
+  walk with free history (`KZ_DETAIL_HEAPCHECK=<path>`, writes a CSV of the host-write/free ring at shutdown).
+  Three new manifest-validated debug hooks support it: `LodStreamRequest` (`0x00189CB0`), `GrassRender`
+  (`0x003EE6F8`), `LodStaticInstanced` (`0x003EFAD8`), `LodSelectSimple` (`0x003F4E70`), `LodSelectBlended`
+  (`0x003F4F10`), `AllocFailHandler` (`0x0030A180`) and `PacketFrameBegin` (`0x0014FD90`). None is reachable without
+  its guarding environment variable; the module installs no hook and changes no behaviour by default.
+- `patches/ps2recomp/experimental/gfx03-host-write-rpc-diagnostics.diff` (not applied; see `patches/README.md`) —
+  adds a null-by-default host-write observer hook (`ps2TraceGuestRangeWrite`, previously a no-op per `LEARNINGS.md`)
+  and an in-flight offloaded-RPC receive-buffer registry/query (`ps2RpcFindInFlightReceive`) to the locked
+  PS2Recomp checkout, both gated behind `PS2X_GUEST_RANGE_WRITE_OBSERVER` so `kz_detail.cpp` degrades cleanly when
+  the patch is not applied. Used only to produce the heap-corruption evidence above; not part of the accepted
+  submodule revision.
+
+### Disposition
+
+No product or launcher change results from this reinvestigation. `RenderDistance` stays clamped to `1..2` and
+`LodScale` stays fixed at `1.0`; the earlier GFX-03 acceptance in `WORKDONE.md` is unaffected. The per-class
+mechanism and diagnostic tooling are retained for a future session that wants to pursue elevated per-class LOD
+(static/instanced/skinned/grass) as a narrower product feature than the withdrawn shared value — on the evidence
+above, static/instanced/skinned/grass alone each look safe, but the render-distance-2x interaction needs a found
+root cause, not just a wider no-go net, before any of them can ship together with elevated render distance.
+
 ## GFX-04 temporal-input feasibility: no-go (2026-10-21)
 
 The current renderer boundary cannot provide a correct input contract for modern temporal reconstruction.
