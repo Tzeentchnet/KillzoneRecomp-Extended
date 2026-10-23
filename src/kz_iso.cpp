@@ -184,7 +184,9 @@ std::filesystem::path kzPrepareDiscFiles(const std::filesystem::path &isoPath, c
     if (!iso.open(isoPath, error))
         return {};
     static const char *kFiles[] = {
-        "SYSTEM.CNF", "SCUS_974.02",
+        "SYSTEM.CNF", "SCUS_974.02", "LOADER.ELF",
+        "MODULES/BLGFX.REL", "MODULES/DNASMC.REL", "MODULES/NETWORK.REL", "MODULES/ONLINE.REL",
+        "IOP/DNAS300.IMG",
         "IOP/DEV9.IRX", "IOP/EZNETCNF.IRX", "IOP/EZNETCTL.IRX", "IOP/INET.IRX", "IOP/INETCTL.IRX", "IOP/LGAUD.IRX",
         "IOP/LGKBM.IRX", "IOP/LIBNETB.IRX", "IOP/LIBSD.IRX", "IOP/MCMAN.IRX", "IOP/MCSERV.IRX", "IOP/MSIFRPC.IRX",
         "IOP/NETCNF.IRX", "IOP/NTPWROFF.IRX", "IOP/PADMAN.IRX", "IOP/PFILE_R.IRX", "IOP/PINPUT_R.IRX", "IOP/POWEROFF.IRX",
@@ -192,7 +194,6 @@ std::filesystem::path kzPrepareDiscFiles(const std::filesystem::path &isoPath, c
         "IOP/SMAP.IRX", "IOP/USBD.IRX",
     };
     std::error_code ec;
-    std::filesystem::create_directories(dir / "IOP", ec);
     std::vector<uint8_t> data;
     for (const char *name : kFiles)
     {
@@ -202,6 +203,13 @@ std::filesystem::path kzPrepareDiscFiles(const std::filesystem::path &isoPath, c
         const std::filesystem::path out = dir / name;
         if (std::filesystem::exists(out, ec) && std::filesystem::file_size(out, ec) == entry->size)
             continue;
+        ec.clear();
+        std::filesystem::create_directories(out.parent_path(), ec);
+        if (ec)
+        {
+            if (error) *error = "could not create " + out.parent_path().string() + ": " + ec.message();
+            return {};
+        }
         if (!iso.read(*entry, data))
         {
             if (error) *error = std::string("could not read ") + name + " from the disc image";

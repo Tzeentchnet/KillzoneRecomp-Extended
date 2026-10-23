@@ -4,7 +4,8 @@ Addresses are EE virtual addresses in `SCUS_974.02`. Function names are Ghidra a
 
 ## Scope
 - `SCUS_974.02` = entire offline game. `cdrom0:\LOADER.ELF` is exec'd only for Killzone Online; `LOADER.ELF` loads
-  `MODULES\BLGFX.REL` (online loading screen), `DNASMC.REL`, `NETWORK.REL`, `ONLINE.REL`. All online-only → out of scope.
+  `MODULES\BLGFX.REL` (online loading screen), `DNASMC.REL`, `NETWORK.REL`, `ONLINE.REL`. Online reconstruction is
+  isolated from these campaign findings and tracked in [`multiplayer/README.md`](multiplayer/README.md).
 - Game data: `FILES.DAT`, `FILES01-04.DAT`.
 - ~~Native USB mouse support~~ — **wrong, corrected 2026-09-29**: `Use Mouse` / `Mouse-Look X/Y` are reflection properties of the
   engine camera classes (`Camera.Input: Use Mouse/Use Joystick/Use Keyboard`, `CamFirstPerson: Speed/Forward/Strafe/Mouse-Look X/Y/Min Pitch/Max Pitch`,

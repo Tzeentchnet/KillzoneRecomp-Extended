@@ -32,6 +32,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include <cstdio>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <vector>
 #include <atomic>
@@ -50,9 +51,22 @@ extern "C" int __llvm_profile_write_file(void);
 
 namespace
 {
+    bool isOnlineLoader(const std::filesystem::path &path)
+    {
+        std::string name = path.filename().string();
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        return name == "loader.elf";
+    }
+
     struct Options
     {
+#ifdef KZ_ONLINE_BUILD
+        std::filesystem::path elf = "game/LOADER.ELF";
+#else
         std::filesystem::path elf = "game/SCUS_974.02";
+#endif
         bool elfGiven = false;
         std::filesystem::path iso;
         int sampleSeconds = 0; // --sample N: dump all thread stacks to work/stacks.txt every N seconds
@@ -213,7 +227,12 @@ int main(int argc, char *argv[])
         }
         const std::filesystem::path elf = opts.elfGiven
                                               ? std::filesystem::absolute(opts.elf).lexically_normal()
+#ifdef KZ_ONLINE_BUILD
+                                              : (preparedElf.empty() ? std::filesystem::path{}
+                                                                     : preparedElf.parent_path() / "LOADER.ELF");
+#else
                                               : preparedElf;
+#endif
         if (elf.empty())
         {
             const std::string msg = "No game disc image is selected. Choose your Killzone disc image in the launcher.";
@@ -227,6 +246,22 @@ int main(int argc, char *argv[])
             std::cerr << "[kz] ELF not found: " << elf.string() << std::endl;
             return 1;
         }
+#ifdef KZ_ONLINE_BUILD
+        constexpr bool campaignGuest = false;
+        if (!isOnlineLoader(elf))
+        {
+            std::cerr << "[kz] the online build requires LOADER.ELF, not " << elf.filename().string() << std::endl;
+            return 1;
+        }
+        std::cout << "[kz] guest variant: Killzone Online loader (experimental)" << std::endl;
+#else
+        constexpr bool campaignGuest = true;
+        if (isOnlineLoader(elf))
+        {
+            std::cerr << "[kz] LOADER.ELF requires a KZ_ONLINE_BUILD executable" << std::endl;
+            return 1;
+        }
+#endif
 
         if (opts.sampleSeconds > 0)
             kz::host::startStackSampler(opts.sampleSeconds, 24, "work/stacks.txt");
@@ -341,11 +376,14 @@ int main(int argc, char *argv[])
             paths.cdRoot = preparedElf.parent_path();
             PS2Runtime::setIoPaths(paths);
         }
-        kzAimInstall(runtime);
-        kzTimeFixInstall(runtime);
-        kzPostInstall(runtime);
-        kzDetailInstall(runtime);
-        kzWin06WatchInstall(runtime); // KZ_WIN06_WATCH=1 only
+        if (campaignGuest)
+        {
+            kzAimInstall(runtime);
+            kzTimeFixInstall(runtime);
+            kzPostInstall(runtime);
+            kzDetailInstall(runtime);
+            kzWin06WatchInstall(runtime); // KZ_WIN06_WATCH=1 only
+        }
         // Tests: a separate (e.g. empty) memory card folder. After loadELF, which resets the roots to the ELF folder.
         // [Testing] TestMemoryCard=1 does the same with "testcard" next to killzone.ini; KZ_MC_ROOT wins.
         std::filesystem::path mcRoot;
@@ -372,7 +410,8 @@ int main(int argc, char *argv[])
         const PS2Runtime::IoPaths selectedPaths = PS2Runtime::getIoPaths();
         std::cout << "[kz] memory card root: " << selectedPaths.mcRoot.string()
                   << (mcRoot.empty() ? " (normal card)" : " (isolated testing card)") << std::endl;
-        kzTestingInstall(runtime, !mcRoot.empty());
+        if (campaignGuest)
+            kzTestingInstall(runtime, !mcRoot.empty());
 
         // Guest vblank rate = target frame rate (kz_timing.h). Automation can force it with KZ_FPS.
         int displayHz = 60;
@@ -382,7 +421,7 @@ int main(int argc, char *argv[])
                 displayHz = static_cast<int>(std::lround(mode->refresh_rate));
         }
         const int fps = std::getenv("KZ_FPS") ? std::atoi(std::getenv("KZ_FPS")) : cfg.fpsLimit;
-        kzTimingInit(fps, displayHz);
+        kzTimingInit(fps, displayHz, campaignGuest);
         uint64_t gameplayStopFrames = 0;
         if (headless)
         {
@@ -498,7 +537,8 @@ int main(int argc, char *argv[])
                 }
             }
             kzInputPoll();
-            kzTestingPoll();
+            if (campaignGuest)
+                kzTestingPoll();
             SDL_Delay(1);
         }
         if (pumpProbe)
@@ -509,7 +549,8 @@ int main(int argc, char *argv[])
         }
         runtime.requestStop();
         runtimeThread.join();
-        kzDetailShutdown();
+        if (campaignGuest)
+            kzDetailShutdown();
         if (const char *dump = std::getenv("KZ_DUMP_RAM")) // debugging: EE RAM image after the game thread stops
         {
             if (FILE *f = std::fopen(dump, "wb"))

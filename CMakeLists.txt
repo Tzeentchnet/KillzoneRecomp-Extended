@@ -40,7 +40,8 @@ if(KZ_PORTABLE_VU_ONLY)
     return()
 endif()
 
-set(KZ_GENERATED_DIR "${CMAKE_SOURCE_DIR}/generated" CACHE PATH "PS2Recomp output for SCUS_974.02")
+option(KZ_ONLINE_BUILD "Build the BYOD Killzone Online loader variant" OFF)
+set(KZ_GENERATED_DIR "${CMAKE_SOURCE_DIR}/generated" CACHE PATH "PS2Recomp output for the selected guest executable")
 include(cmake/KzPreflight.cmake)
 kz_preflight_before_project()
 project(KillzoneRecomp CXX C)
@@ -138,8 +139,8 @@ file(GLOB KZ_SRC CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/*.cpp")
 list(FILTER KZ_SRC EXCLUDE REGEX "/kz_(crash|profiler|sampler)\\.cpp$")
 
 # Our code lives in its own library so its dependencies (SDL3, ImGui, ...) never change the compile flags of the
-# ~250 generated-code unity batches (a flag change there means a full rebuild: about 2 minutes with MSVC, 1 with
-# clang-cl, on 16 cores).
+# generated-code unity groups (a flag change there means a full rebuild: about 2 minutes with MSVC, 1 with clang-cl,
+# on 16 cores).
 include(FetchContent)
 FetchContent_GetProperties(imgui SOURCE_DIR KZ_IMGUI_DIR)
 add_library(kz_port STATIC
@@ -149,6 +150,9 @@ add_library(kz_port STATIC
 target_include_directories(kz_port PRIVATE "${CMAKE_SOURCE_DIR}/src" "${KZ_IMGUI_DIR}" "${KZ_IMGUI_DIR}/backends")
 target_link_libraries(kz_port PRIVATE kz_host_core ps2_runtime SDL3::SDL3 imgui kzgs kzvu kzipu kzspu2)
 target_compile_definitions(kz_port PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+if(KZ_ONLINE_BUILD)
+    target_compile_definitions(kz_port PRIVATE KZ_ONLINE_BUILD=1)
+endif()
 if(KZ_CLANG_CL AND KZ_CLANG_PGO_GEN)
     target_compile_definitions(kz_port PRIVATE KZ_PGO_GEN=1)
 endif()
@@ -156,18 +160,37 @@ endif()
 add_executable(killzone
     ${KZ_GENERATED_SRC}
 )
+set(KZ_GENERATED_UNITY_GROUPS)
+foreach(_kz_generated_source IN LISTS KZ_GENERATED_SRC)
+    get_filename_component(_kz_generated_name "${_kz_generated_source}" NAME)
+    if(_kz_generated_name MATCHES "_0x([0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f])[0-9A-Fa-f]+\\.cpp$")
+        string(TOLOWER "${CMAKE_MATCH_1}" _kz_guest_prefix)
+        set(_kz_unity_group "guest_${_kz_guest_prefix}")
+    elseif(_kz_generated_name STREQUAL "register_functions.cpp")
+        set(_kz_unity_group "guest_registration")
+    else()
+        string(MAKE_C_IDENTIFIER "${_kz_generated_name}" _kz_generated_identifier)
+        set(_kz_unity_group "guest_support_${_kz_generated_identifier}")
+    endif()
+    set_source_files_properties("${_kz_generated_source}" PROPERTIES UNITY_GROUP "${_kz_unity_group}")
+    list(APPEND KZ_GENERATED_UNITY_GROUPS "${_kz_unity_group}")
+endforeach()
+list(REMOVE_DUPLICATES KZ_GENERATED_UNITY_GROUPS)
+list(LENGTH KZ_GENERATED_UNITY_GROUPS KZ_GENERATED_UNITY_GROUP_COUNT)
+message(STATUS "Killzone: ${KZ_GENERATED_UNITY_GROUP_COUNT} stable generated unity groups")
 target_include_directories(killzone PRIVATE "${KZ_GENERATED_DIR}" "${CMAKE_SOURCE_DIR}/src")
 # kz_port holds main() and the game override registration; link it whole so static registrars are kept.
 target_link_libraries(killzone PRIVATE ps2_runtime "$<LINK_LIBRARY:WHOLE_ARCHIVE,kz_port>")
 set_target_properties(killzone PROPERTIES
     UNITY_BUILD ON
-    UNITY_BUILD_BATCH_SIZE 128
+    UNITY_BUILD_MODE GROUP
 )
+if(KZ_ONLINE_BUILD)
+    set_target_properties(killzone PROPERTIES OUTPUT_NAME "killzone-online")
+endif()
 target_precompile_headers(killzone PRIVATE
     ext/PS2Recomp/ps2xRuntime/include/ps2_runtime_macros.h
     ext/PS2Recomp/ps2xRuntime/include/ps2_runtime.h
-    "${KZ_GENERATED_DIR}/ps2_recompiled_functions.h"
-    "${KZ_GENERATED_DIR}/ps2_recompiled_stubs.h"
     ext/PS2Recomp/ps2xRuntime/include/ps2_syscalls.h
     ext/PS2Recomp/ps2xRuntime/include/ps2_stubs.h
 )

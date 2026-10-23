@@ -2,10 +2,10 @@
 
 Steps: merge SCE library bindings from ps2_analyzer and missed function starts from find_code_pointers.py into the
 config (work/killzone.merged.toml), run ps2_recomp into work/gen_tmp, close emitted tail and resume dispatch targets
-to a fixed point, then copy changed/new files to generated/ and delete stale ones.
+to a fixed point, localize direct-call declarations, then copy changed/new files to generated/ and delete stale ones.
 Usage: python tools/scripts/regen.py --elf <path-to-SCUS_974.02>
 """
-import argparse, filecmp, hashlib, json, os, re, shutil, subprocess, sys, tomllib
+import argparse, hashlib, json, os, re, shutil, subprocess, sys, tomllib
 
 # Killzone ships the register-locals code generator (patch 0017); PS2X_CODEGEN=classic regenerates the old style.
 os.environ.setdefault('PS2X_CODEGEN', 'locals')
@@ -15,6 +15,7 @@ os.environ.setdefault('PS2X_CODEGEN_DSP', '1')
 os.environ.setdefault('PS2X_CODEGEN_FOLD', '1')
 from pathlib import Path
 from normalize_function_map import sections
+from sync_recompiled_output import sync_generated_tree
 
 ROOT = Path(__file__).resolve().parents[2]
 CFG = ROOT / "config" / "killzone.toml"
@@ -95,18 +96,12 @@ def merged_config(elf: Path, closure_entries: set[int]) -> str:
 
 
 def sync() -> None:
-    GEN.mkdir(exist_ok=True)
-    new = {p.name for p in TMP.iterdir()}
-    changed = 0
-    for name in new:
-        src, dst = TMP / name, GEN / name
-        if not dst.exists() or not filecmp.cmp(src, dst, shallow=False):
-            shutil.copy2(src, dst)
-            changed += 1
-    stale = [p for p in GEN.iterdir() if p.name not in new]
-    for p in stale:
-        p.unlink()
-    print(f"[regen] {len(new)} files: {changed} changed/new, {len(stale)} removed")
+    stats = sync_generated_tree(TMP, GEN)
+    print(
+        f"[regen] {stats.total} files: {stats.changed} changed/new, "
+        f"{stats.removed} removed; localized {stats.localized_declarations} declaration(s) "
+        f"across {stats.localized_sources} source file(s)"
+    )
 
 
 def main() -> int:

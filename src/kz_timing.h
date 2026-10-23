@@ -13,8 +13,9 @@
 
 class PS2Runtime;
 
-// fpsLimit 0 = display refresh rate. Returns the chosen guest vblank rate.
-int kzTimingInit(int fpsLimit, int displayRefreshHz);
+// fpsLimit 0 = display refresh rate. Campaign patches are disabled for the separate online guest, which runs at the
+// original 60 Hz and must not receive writes to SCUS-97402-specific addresses.
+int kzTimingInit(int fpsLimit, int displayRefreshHz, bool campaignPatchesEnabled = true);
 int kzTimingRate();
 
 // Called on the game thread at every guest vblank (before the game's vblank handlers run).

@@ -527,11 +527,15 @@ The following work is not deleted, but it is outside the active release plan:
 - Blender import/export tooling;
 - AI/navigation tuning;
 - spatial audio and head tracking;
-- multiplayer/online restoration;
 - new game content or redistribution of protected assets.
 
 Reactivating any item requires a new work package with dependencies, acceptance criteria and release impact. Existing
 source and tests for deferred platform work must continue to compile where the checked Windows build depends on them.
+
+Multiplayer/online restoration has been reactivated as a separate experimental work package in
+[`docs/multiplayer/README.md`](docs/multiplayer/README.md) with its own
+[`docs/multiplayer/TODO.md`](docs/multiplayer/TODO.md). It remains outside the campaign enhancement release plan
+until its two-client LAN acceptance gate passes.
 
 ## 10. Risk register
 

@@ -22,6 +22,8 @@ Developed with AI assistance.
 | [`docs/findings.md`](docs/findings.md) | Reverse-engineering notes and measurements, cited from source comments |
 | [`LEARNINGS.md`](LEARNINGS.md) | Short process lessons: checks that catch mistakes, fastest tools, gate usage |
 | [`docs/assetforms.md`](docs/assetforms.md) | Verified DAT, Core/CoreStream, texture swizzle, model and level format evidence |
+| [`docs/multiplayer/README.md`](docs/multiplayer/README.md) | Experimental Killzone Online reconstruction status, architecture, and workflow |
+| [`docs/multiplayer/TODO.md`](docs/multiplayer/TODO.md) | Dedicated multiplayer bring-up queue and acceptance gates |
 | [`patches/README.md`](patches/README.md) | Rationale and measurements for each PS2Recomp runtime patch |
 | [`docs/archive/upstream/`](docs/archive/upstream/) | Superseded upstream design and performance notes |
 
@@ -57,8 +59,11 @@ Test build, currently in M0 (Windows enhancement baseline); see [`TODO.md`](TODO
   `KZ_DEFAULT_PROFILE=<name>`, `KZ_FRONTEND_LOG=1`.
   When testing native `Shooterman` behavior, explicit `KZ_UNLOCK_ALL=0` keeps Start in from installing the convenience
   unlock hooks.
-- **Not included:** Killzone Online (LOADER.ELF and the network modules); its servers are long gone. Temporal
-  upscalers such as DLSS/FSR/XeSS are also not supported: the PS2 GS path does not expose stable gameplay depth,
+- **Experimental, not playable:** Killzone Online reconstruction is active on the `MPwork` branch. The separate
+  loader now reaches ONLINE content initialization, but NETWORK, DNAS, native sockets, server login, lobbies, and
+  gameplay are not working. See [`docs/multiplayer/README.md`](docs/multiplayer/README.md) and its dedicated
+  [`TODO`](docs/multiplayer/TODO.md).
+- **Not included:** Temporal upscalers such as DLSS/FSR/XeSS are not supported: the PS2 GS path does not expose stable gameplay depth,
   camera/object motion vectors or a separate HUD/reactive mask. HDR output is not claimed because the current
   renderer exposes composed, untagged `R8G8B8A8_UNORM` SDR rather than scene-linear color.
 
@@ -137,7 +142,7 @@ workload, CMake 3.24+, Ninja 1.13.2, Python 3.11+, and a CPU with AVX2. The full
 5. Provision the locked Ghidra and JDK tools: `tools\scripts\provision_analysis_tools.ps1`, and the locked Ninja:
    `tools\scripts\provision_ninja.ps1`.
 6. Recompile the game: `python tools\scripts\regen.py --elf "$env:KZ_GAME_ELF"` (writes `generated/`, about 32k C++
-   files; only changed files are rewritten).
+   files; only changed files are rewritten, and direct guest calls receive file-local declarations).
 7. Build: `tools\scripts\cmake_preset.ps1 -Preset win-msvc-rel`, then
    `tools\scripts\cmake_preset.ps1 -Preset win-msvc-rel -Action build` -> `build\win-msvc-rel\killzone.exe`
    (see [Checked CMake presets](#checked-cmake-presets); `win-clang-rel` builds with clang-cl). The older
@@ -249,9 +254,10 @@ For the edit-build-test loop:
 - Configure once with `-DKZ_DEV_LINK=ON` (for example `cmake --preset win-msvc-rel -DKZ_DEV_LINK=ON`). It turns off
   identical-COMDAT folding, which takes most of the `killzone.exe` link time. Compile flags don't change, so switching
   it on or off only relinks. Leave it off for builds you package.
-- Editing `src/` recompiles only `kz_port` and relinks. Changing a header the generated code includes (`ps2_runtime.h`,
-  `ps2_runtime_macros.h`, `ps2_cg*.h`), or a regen that adds or removes functions, rebuilds all ~250 unity batches.
-  That takes about 2 minutes with MSVC; `win-clang-rel` does it in about half the time.
+- Editing `src/` recompiles only `kz_port` and relinks. Generated functions use stable unity groups keyed by the first
+  three guest-address hex digits. A regen that adds or removes functions therefore rebuilds only affected address
+  groups plus the registration unit and final link. Changing a shared runtime header (`ps2_runtime.h`,
+  `ps2_runtime_macros.h`, or `ps2_cg*.h`) still correctly rebuilds every group.
 
 ### Host platform boundary
 
@@ -318,6 +324,14 @@ Generated game code and the source executable remain private and ignored. The co
 `config\generated-manifest.json` contains only provenance hashes, named counts, table bounds, instruction-patch
 assertions, and unique hashes for the fixed guest addresses in `src\kz_hook_addresses.h`.
 
+`regen.py` generates into a disposable staging tree and synchronizes files by content, preserving timestamps for
+unchanged output. For additional PS2Recomp configurations, use the same incremental path instead of deleting the
+configured output directory:
+
+```powershell
+python .\tools\scripts\sync_recompiled_output.py --config <config.toml> --log <recompiler.log>
+```
+
 ```powershell
 python .\tools\scripts\verify_resume_table.py .\generated
 python .\tools\scripts\inventory_generated.py --check
@@ -339,7 +353,7 @@ supported executable.
 - `config/killzone.toml` - PS2Recomp configuration for SCUS-97402.
 - `host/` - `kz_host_core`, the renderer-free platform boundary (Windows and Darwin), and its smoke tests.
 - `tools/` - build, test, profiling and Ghidra helper scripts.
-- `docs/` - `findings.md` (evidence log) and `archive/upstream/` (superseded upstream design notes).
+- `docs/` - evidence and format notes, the experimental multiplayer work package, and superseded upstream notes.
 - `IMPLEMENTATION_PLAN.md`, `TODO.md`, `WORKDONE.md`, `HANDOFF.md` - plan, open queue, verified completions, session
   protocol.
 

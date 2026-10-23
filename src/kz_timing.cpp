@@ -22,6 +22,7 @@ namespace
     constexpr int kNativeHz = 60;
 
     int g_rate = kNativeHz;
+    bool g_campaignPatchesEnabled = true;
 
     // clamp scaling
     uint32_t g_clampObserved = 0; // original (30 Hz tick) value we last scaled
@@ -62,13 +63,17 @@ namespace
     }
 }
 
-int kzTimingInit(int fpsLimit, int displayRefreshHz)
+int kzTimingInit(int fpsLimit, int displayRefreshHz, bool campaignPatchesEnabled)
 {
-    int rate = fpsLimit > 0 ? fpsLimit : (displayRefreshHz > 0 ? displayRefreshHz : kNativeHz);
+    g_campaignPatchesEnabled = campaignPatchesEnabled;
+    int rate = campaignPatchesEnabled
+                   ? (fpsLimit > 0 ? fpsLimit : (displayRefreshHz > 0 ? displayRefreshHz : kNativeHz))
+                   : kNativeHz;
     rate = std::clamp(rate, 30, 480);
     g_rate = rate;
     ps2SetVblankPeriodMicros(static_cast<uint32_t>(std::lround(1'000'000.0 / rate)));
-    std::cout << "[kz] guest vblank / frame rate: " << rate << " Hz" << std::endl;
+    std::cout << "[kz] guest vblank / frame rate: " << rate << " Hz"
+              << (campaignPatchesEnabled ? "" : " (online compatibility)") << std::endl;
     const char *log = std::getenv("KZ_TIMING_LOG");
     g_timingLog = log && *log && *log != '0';
     g_logStart = std::chrono::steady_clock::now();
@@ -83,6 +88,8 @@ int kzTimingRate()
 void kzTimingOnVsync(uint8_t *rdram)
 {
     if (!rdram)
+        return;
+    if (!g_campaignPatchesEnabled)
         return;
     kzParityOnVsync(rdram);
 

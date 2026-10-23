@@ -8,6 +8,9 @@ The durable queue of open work. Definitions, dependencies, acceptance commands a
 leaves this file only when its plan acceptance passes on the named machine. Then move it to `WORKDONE.md` with the
 evidence.
 
+Multiplayer restoration has a separate queue in [`docs/multiplayer/TODO.md`](docs/multiplayer/TODO.md); it does not
+change the campaign enhancement milestone tracked here.
+
 Status values: `not started` | `in progress` | `blocked` | `complete (move it)`.
 Labels: `[SUBAGENT-PARALLEL]` isolated worktree, single writer per file scope; `[READ-PARALLEL]` read-only, parent
 owns edits; `[SERIAL]` waits on dependencies or the integration owner; `[HUMAN]` needs a human decision.

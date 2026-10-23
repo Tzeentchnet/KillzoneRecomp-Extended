@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 INSTRUCTION_SIZE = 4
-NORMALIZATION = "clamp_bodies_align_instructions_extend_delay_slots_v3"
+NORMALIZATION = "clamp_bodies_align_instructions_extend_delay_slots_v4"
 
 
 def sha256_file(path: Path) -> str:
@@ -33,7 +33,7 @@ def sections(data: bytes):
     for header in headers:
         name_offset = strings_offset + header[0]
         name = data[name_offset : data.index(b"\0", name_offset)].decode()
-        yield name, header[3], header[4], header[5]
+        yield name, header[3], header[4], header[5], header[2]
 
 
 def has_delay_slot(instruction: int) -> bool:
@@ -57,9 +57,11 @@ def main() -> int:
     args = parser.parse_args()
 
     elf_data = args.elf.read_bytes()
-    section_map = {name: (address, offset, size) for name, address, offset, size in sections(elf_data)}
-    text_address, text_offset, text_size = section_map[".text"]
-    text_end = text_address + text_size
+    executable_sections = [
+        (address, address + size, offset)
+        for _name, address, offset, size, flags in sections(elf_data)
+        if flags & 0x4 and size
+    ]
 
     with args.input.open(newline="", encoding="utf-8-sig") as stream:
         rows = list(csv.DictReader(stream))
@@ -85,18 +87,17 @@ def main() -> int:
             end = aligned_end
             instruction_aligned_count += 1
 
-        if (
-            text_address + INSTRUCTION_SIZE <= end < text_end
-            and has_delay_slot(
-                struct.unpack_from(
+        for section_start, section_end, section_offset in executable_sections:
+            if section_start + INSTRUCTION_SIZE <= end < section_end:
+                instruction = struct.unpack_from(
                     "<I",
                     elf_data,
-                    text_offset + end - text_address - INSTRUCTION_SIZE,
+                    section_offset + end - section_start - INSTRUCTION_SIZE,
                 )[0]
-            )
-        ):
-            end += INSTRUCTION_SIZE
-            delay_slot_count += 1
+                if has_delay_slot(instruction):
+                    end += INSTRUCTION_SIZE
+                    delay_slot_count += 1
+                break
 
         normalized.append(
             {
