@@ -20,20 +20,26 @@ Developed with AI assistance.
 | [`WORKDONE.md`](WORKDONE.md) | Verified completions and the evidence behind them |
 | [`HANDOFF.md`](HANDOFF.md) | Session protocol: startup, parallel-work rules, regression set, privacy rules |
 | [`docs/findings.md`](docs/findings.md) | Reverse-engineering notes and measurements, cited from source comments |
+| [`docs/upstream_comparison.md`](docs/upstream_comparison.md) | Audited upstream comparison and the bounded changes selected for this fork |
 | [`LEARNINGS.md`](LEARNINGS.md) | Short process lessons: checks that catch mistakes, fastest tools, gate usage |
 | [`docs/assetforms.md`](docs/assetforms.md) | Verified DAT, Core/CoreStream, texture swizzle, model and level format evidence |
 | [`patches/README.md`](patches/README.md) | Rationale and measurements for each PS2Recomp runtime patch |
+| [`perf_fresh_ideas.md`](docs/archive/upstream/perf_fresh_ideas.md) and [`perf_research.md`](docs/archive/upstream/perf_research.md) | Archived baseline performance research; historical context, not the active queue |
 | [`docs/archive/upstream/`](docs/archive/upstream/) | Superseded upstream design and performance notes |
 
 ## Status
 
-Test build, currently in M0 (Windows enhancement baseline); see [`TODO.md`](TODO.md).
+Test build. The active queue is M2 (safe graphics and weapon controls); see [`TODO.md`](TODO.md). The graphics lane is
+complete through GFX-05. WPN-01 and AUDIO-01 are the remaining Windows investigation lanes.
 
-- **Verified on this fork (2026-10-17, D3D12):** boot, host memory cards, the opening movies with audio at their
-  29.97 fps source cadence, the main menu and the attract reel. Profile creation and first-mission gameplay were
-  verified upstream and are queued for re-verification on the current build (WIN-04).
+- **Verified baseline (2026-10-20):** boot, host memory cards, opening/menu/attract movies at their 29.97 fps source
+  cadence, normal profile selection, first-mission gameplay, Quit to menu, Continue/load, game timing, mouse aim,
+  controller input and clean window-close shutdown all passed on this fork.
 - **Renderer verification (2026-10-20):** D3D11 and D3D12 render on an NVIDIA RTX 5070 (driver `32.0.16.1742`).
   The repeated 90-second D3D11 black-output defect is no longer reproducible on the pinned renderer stack.
+- **Runtime and input hardening (2026-10-24):** forced-yield SIF initialization, module and memory-card calls now
+  return to the guest exactly once; host stdout/stderr share one durable unbuffered log stream; controller aim remains
+  a native toggle; scope mouse ordering is yield-safe; and the MSVC ISO-free suite passes 14/14.
 - **Frame rate (upstream measurement):** runs at the monitor's refresh rate; about 117-120 fps at 120 Hz and about
   130-140 fps at 144 Hz in gameplay. The game's clock runs at real time at 120 Hz (the frame timer is rescaled, not
   sped up).
@@ -47,7 +53,7 @@ Test build, currently in M0 (Windows enhancement baseline); see [`TODO.md`](TODO
   clean PS2 effects, replacement textures off, 2x view distance and 30% sharpening.
   Native 4:3 and 16:9 are supported. On ultrawide outputs, 16:9 is pillarboxed; the optional Stretch mode fills the
   display by distortion and is not native ultrawide.
-- **Launcher:** display, graphics, controls and audio settings; checks the disc image is the supported version.
+- **Launcher:** display, graphics, controls, audio and testing settings; checks the disc image is the supported version.
 - **Testing options (launcher Testing tab, all off by default):** unlock all campaign levels without changing saves,
   skip the logos and intro movie, start directly in a chosen chapter and difficulty, and use a separate test memory
   card. On an empty isolated card, Start in creates the configured profile through the game's front end; the default
@@ -58,6 +64,8 @@ Test build, currently in M0 (Windows enhancement baseline); see [`TODO.md`](TODO
   `KZ_DEFAULT_PROFILE=<name>`, `KZ_FRONTEND_LOG=1`.
   When testing native `Shooterman` behavior, explicit `KZ_UNLOCK_ALL=0` keeps Start in from installing the convenience
   unlock hooks.
+- **Known issue:** AUDIO-01 still tracks intermittent effects/dialogue truncation during action-heavy combat. The
+  current host-buffer mitigation reduces the cuts but has not met the zero-loss combat acceptance gate.
 - **Not included:** Killzone Online (LOADER.ELF and the network modules); its servers are long gone. Temporal
   upscalers such as DLSS/FSR/XeSS are also not supported: the PS2 GS path does not expose stable gameplay depth,
   camera/object motion vectors or a separate HUD/reactive mask. HDR output is not claimed because the current
@@ -326,7 +334,7 @@ python .\tools\scripts\inventory_generated.py --check
 The current lock distinguishes 16,045 Ghidra functions, 19,307 Ghidra code labels, 31,996 generated translation
 units, 31,995 generated functions, 132,656 dispatch entries, 101,715 resumable entries reported by PS2Recomp, and
 100,661 globally dispatchable resume cases. Regeneration merges every locked hook address into the configured
-entry-point set so a hard-coded hook cannot remain silently unreachable. The inventory gate also proves that all 42
+entry-point set so a hard-coded hook cannot remain silently unreachable. The inventory gate also proves that all 58
 fixed guest hook and lookup addresses are executable, dispatchable, signature-matched, and uniquely resolvable in the
 supported executable.
 
