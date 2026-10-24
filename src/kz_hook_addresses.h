@@ -33,10 +33,12 @@ namespace kz_hook
     inline constexpr uint32_t ProfileLevelUnlocked = 0x001D7190u;
     inline constexpr uint32_t ProfileAnimaticUnlocked = 0x001D7258u;
     inline constexpr uint32_t PostRender = 0x001EF640u;
+    inline constexpr uint32_t AfterLookProbe = 0x00218710u;
     inline constexpr uint32_t ApplyLook = 0x0021C550u;
     inline constexpr uint32_t LookAcceleration = 0x0023E8C8u;
     inline constexpr uint32_t PitchAutoCentre = 0x0023E9C8u;
     inline constexpr uint32_t ControllerUpdate = 0x0023EE08u;
+    inline constexpr uint32_t MoviePlay = 0x0026ECC8u;
     inline constexpr uint32_t SifInitRpc = 0x002B3158u;
     inline constexpr uint32_t SifStopModule = 0x002B5AF0u;
     inline constexpr uint32_t SifUnloadModule = 0x002B5CF8u;

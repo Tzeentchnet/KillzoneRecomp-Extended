@@ -1,9 +1,9 @@
 # KillzoneRecomp session handoff
 
-**Last updated:** 2026-10-20
-**Workspace:** `D:\Github` (also holds the superseded `plan.md` and `KillzoneRecomp_Master_PRD.md`, history only)
-**Implementation repository:** `D:\Github\KillzoneRecomp-Extended`
-**Branch / last substantive commit:** `master` / see `git log` (2026-10-20 session commits)
+**Last updated:** 2026-10-24
+**Workspace:** `E:\Git\Killzone`
+**Implementation repository:** `E:\Git\Killzone\KillzoneRecomp-Extended`
+**Branch / last substantive commit:** `master` / see `git log` (2026-10-24 upsync integration)
 **PS2Recomp revision:** `93d19aaa4f933787df05eed348a8283aa249a22b` (`Tzeentchnet/PS2Recomp`, branch `killzone`)
 **GitHub origin:** `Tzeentchnet/KillzoneRecomp-Extended`, private during cleanup
 

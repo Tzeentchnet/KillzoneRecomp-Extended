@@ -50,6 +50,13 @@ namespace
         Toggle,
     };
     constexpr EnumName<AimMode> kAimModes[] = {{AimMode::Hold, "Hold"}, {AimMode::Toggle, "Toggle"}};
+    enum class SprintMode
+    {
+        Hold,
+        Toggle,
+    };
+    constexpr EnumName<SprintMode> kSprintModes[] = {
+        {SprintMode::Hold, "Hold"}, {SprintMode::Toggle, "Toggle"}};
 
     template <typename E, size_t N>
     const char *toName(const EnumName<E> (&table)[N], E v)
@@ -403,8 +410,12 @@ namespace
         c.invertY = reader.boolean("Input", "InvertY", c.invertY);
         c.rawMouse = reader.boolean("Input", "RawMouse", c.rawMouse);
         c.holdAim = reader.enumeration("Input", "AimMode", AimMode::Hold, kAimModes) == AimMode::Hold;
+        c.toggleSprint =
+            reader.enumeration("Input", "SprintMode", SprintMode::Hold, kSprintModes) == SprintMode::Toggle;
         c.stickDeadzone = reader.number("Input", "StickDeadzone", c.stickDeadzone, 0.0f, 0.9f);
+        c.stickRange = reader.number("Input", "StickRange", c.stickRange, 1.0f, 1.5f);
         c.masterVolume = reader.integer("Audio", "MasterVolume", c.masterVolume, 0, 100);
+        c.skipLongIntro = reader.boolean("Game", "SkipIntro", c.skipLongIntro);
         c.isoPath = reader.text("Paths", "ISO", c.isoPath);
         c.unlockAllLevels = reader.boolean("Testing", "UnlockAllLevels", c.unlockAllLevels);
         c.skipIntro = reader.boolean("Testing", "SkipIntro", c.skipIntro);
@@ -523,10 +534,13 @@ namespace
         writeExtras("Graphics", false);
         o << "\n[Input]\nMouseSensitivity=" << c.mouseSensitivity << "\nInvertY=" << (c.invertY ? 1 : 0)
           << "\nRawMouse=" << (c.rawMouse ? 1 : 0) << "\nAimMode=" << (c.holdAim ? "Hold" : "Toggle")
-          << "\nStickDeadzone=" << c.stickDeadzone << '\n';
+          << "\nSprintMode=" << (c.toggleSprint ? "Toggle" : "Hold")
+          << "\nStickDeadzone=" << c.stickDeadzone << "\nStickRange=" << c.stickRange << '\n';
         writeExtras("Input", false);
         o << "\n[Audio]\nMasterVolume=" << c.masterVolume << '\n';
         writeExtras("Audio", false);
+        o << "\n[Game]\nSkipIntro=" << (c.skipLongIntro ? 1 : 0) << '\n';
+        writeExtras("Game", false);
         o << "\n[Paths]\nISO=" << c.isoPath << '\n';
         writeExtras("Paths", false);
         o << "\n[Testing]\nUnlockAllLevels=" << (c.unlockAllLevels ? 1 : 0)
@@ -580,8 +594,10 @@ namespace
                a.noiseFilter == b.noiseFilter && a.motionBlur == b.motionBlur && a.glow == b.glow &&
                a.lensBlur == b.lensBlur && a.renderDistance == b.renderDistance && a.lodScale == b.lodScale &&
                a.mouseSensitivity == b.mouseSensitivity && a.invertY == b.invertY && a.rawMouse == b.rawMouse &&
-               a.holdAim == b.holdAim && a.stickDeadzone == b.stickDeadzone &&
-               a.masterVolume == b.masterVolume && a.isoPath == b.isoPath &&
+               a.holdAim == b.holdAim && a.toggleSprint == b.toggleSprint &&
+               a.stickDeadzone == b.stickDeadzone && a.stickRange == b.stickRange &&
+               a.masterVolume == b.masterVolume && a.skipLongIntro == b.skipLongIntro &&
+               a.isoPath == b.isoPath &&
                a.unlockAllLevels == b.unlockAllLevels && a.skipIntro == b.skipIntro &&
                a.startLevel == b.startLevel && a.startDifficulty == b.startDifficulty &&
                a.testMemoryCard == b.testMemoryCard && a.defaultProfile == b.defaultProfile &&
@@ -679,8 +695,10 @@ int kzConfigSelfTest()
         "[Graphics]\nRenderer=d3d12\nUpscale=0\nAspect=16:9\nAnisotropy=16\nMipmapping=ps2\nFXAA=0\nSMAA=1\n"
         "SmaaThreshold=0.2\nTextureReplacement=1\nBilinear=1\nSharpScaling=1\nSharpen=30\n"
         "NoiseFilter=0\nMotionBlur=0\nGlow=0\nLensBlur=0\nRenderDistance=1\nLodScale=1\n\n"
-        "[Input]\nMouseSensitivity=1\nInvertY=0\nRawMouse=1\nAimMode=Hold\nStickDeadzone=0.15\n\n"
+        "[Input]\nMouseSensitivity=1\nInvertY=0\nRawMouse=1\nAimMode=Hold\nSprintMode=Hold\n"
+        "StickDeadzone=0.15\nStickRange=1.33\n\n"
         "[Audio]\nMasterVolume=100\n\n"
+        "[Game]\nSkipIntro=0\n\n"
         "[Paths]\nISO=X:\\BYOD\\Killzone.iso\n\n"
         "[Testing]\nUnlockAllLevels=0\nSkipIntro=0\nStartLevel=0\nStartDifficulty=0\nTestMemoryCard=0\n"
         "DefaultProfile=Shooterman\n\n"
@@ -703,6 +721,9 @@ int kzConfigSelfTest()
     KzConfig editedBaseline = baselineRoundTrip.config;
     editedBaseline.vsync = false;
     editedBaseline.sharpen = 45;
+    editedBaseline.toggleSprint = true;
+    editedBaseline.stickRange = 1.42f;
+    editedBaseline.skipLongIntro = true;
     editedBaseline.defaultProfile = "Automation_1";
     check(saveConfigFile(baselinePath, editedBaseline, false), "save launcher-edited baseline");
     check(sameConfig(loadConfigFile(baselinePath).config, editedBaseline),

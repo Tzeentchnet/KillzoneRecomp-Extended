@@ -118,6 +118,9 @@ namespace
         SDL_Gamepad *gamepad = nullptr;
         // latest gamepad snapshot, taken on the window thread
         uint16_t padButtons = 0; // active-high
+        bool sprintLatched = false;
+        bool sprintWasDown = false;
+        uint64_t sprintIdleSince = 0;
         float lx = 0, ly = 0, rx = 0, ry = 0, l2 = 0, r2 = 0;
     };
 
@@ -416,12 +419,18 @@ namespace
         return static_cast<uint8_t>(std::lround(127.5f + v * 127.5f));
     }
 
-    float applyDeadzone(float v, float dz)
+    void stickToPs2(float x, float y, float deadzone, float range, float &outX, float &outY)
     {
-        const float a = std::fabs(v);
-        if (a <= dz)
-            return 0.0f;
-        return std::copysign((a - dz) / (1.0f - dz), v);
+        const float magnitude = std::sqrt(x * x + y * y);
+        if (magnitude <= deadzone || magnitude <= 0.0f)
+        {
+            outX = outY = 0.0f;
+            return;
+        }
+        const float scale = std::min(1.0f, (magnitude - deadzone) / (1.0f - deadzone))
+                            / magnitude * range;
+        outX = std::clamp(x * scale, -1.0f, 1.0f);
+        outY = std::clamp(y * scale, -1.0f, 1.0f);
     }
 
     // Compose the 32-byte DualShock 2 reply from current state. Caller holds the mutex.
@@ -458,11 +467,14 @@ namespace
             pressed |= menuPad;
         if (now < s.pulseUntil)
             pressed |= s.pulseMask;
-        const float dz = kzConfig().stickDeadzone;
-        lx += applyDeadzone(s.lx, dz);
-        ly += applyDeadzone(s.ly, dz);
-        float rx = applyDeadzone(s.rx, dz) + mx;
-        float ry = applyDeadzone(s.ry, dz) + my;
+        const KzConfig &config = kzConfig();
+        float gamepadLx = 0.0f, gamepadLy = 0.0f, gamepadRx = 0.0f, gamepadRy = 0.0f;
+        stickToPs2(s.lx, s.ly, config.stickDeadzone, config.stickRange, gamepadLx, gamepadLy);
+        stickToPs2(s.rx, s.ry, config.stickDeadzone, config.stickRange, gamepadRx, gamepadRy);
+        lx += gamepadLx;
+        ly += gamepadLy;
+        float rx = gamepadRx + mx;
+        float ry = gamepadRy + my;
         if (!s.aimPatchActive)
         {
             // Fallback until the engine aim patch is active: mouse counts per pad read -> right stick deflection.
@@ -472,6 +484,29 @@ namespace
         }
         s.stickMouseDx = s.stickMouseDy = 0.0f;
         applyScript(pressed, lx, ly, rx, ry);
+        if (config.toggleSprint && s.aimPatchActive && now < s.gameplayUntil)
+        {
+            const bool down = (pressed & KZ_PAD_L3) != 0;
+            if (down && !s.sprintWasDown)
+                s.sprintLatched = !s.sprintLatched;
+            s.sprintWasDown = down;
+            if (std::fabs(lx) > 0.5f || std::fabs(ly) > 0.5f)
+                s.sprintIdleSince = 0;
+            else if (s.sprintIdleSince == 0)
+                s.sprintIdleSince = now;
+            if (s.sprintLatched && s.sprintIdleSince != 0 && now - s.sprintIdleSince > 300)
+                s.sprintLatched = false;
+            if (s.sprintLatched)
+                pressed |= KZ_PAD_L3;
+            else
+                pressed &= static_cast<uint16_t>(~KZ_PAD_L3);
+        }
+        else
+        {
+            s.sprintLatched = false;
+            s.sprintWasDown = false;
+            s.sprintIdleSince = 0;
+        }
         if (s.r2 > 0.5f) pressed |= KZ_PAD_R2;
         if (s.l2 > 0.5f) pressed |= KZ_PAD_L2;
         kzGsRecordFireButtonValue((pressed & KZ_PAD_R1) != 0u ? 1.0f : 0.0f);
@@ -502,6 +537,9 @@ void kzInputInit(const std::filesystem::path &bindingsIni)
     State &s = state();
     std::lock_guard<std::mutex> lock(s.mutex);
     s.bindings = loadBindings(bindingsIni);
+    s.sprintLatched = false;
+    s.sprintWasDown = false;
+    s.sprintIdleSince = 0;
     if (std::getenv("KZ_INPUT_SCRIPT"))
         std::printf("[kz-input] loaded %zu scripted event(s)\n", script().size());
 }
@@ -791,6 +829,26 @@ int kzInputSelfTest()
     State &s = state();
     std::lock_guard<std::mutex> lock(s.mutex);
     const auto saved = s.bindings;
+    KzConfig &config = kzConfig();
+    const bool savedToggleSprint = config.toggleSprint;
+    const float savedStickDeadzone = config.stickDeadzone;
+    const float savedStickRange = config.stickRange;
+    config.toggleSprint = false;
+    config.stickDeadzone = 0.15f;
+    config.stickRange = 1.33f;
+    float stickX = 0.0f, stickY = 0.0f;
+    stickToPs2(0.0f, 0.0f, 0.15f, 1.33f, stickX, stickY);
+    check(stickX == 0.0f && stickY == 0.0f, "stick range: center");
+    stickToPs2(0.15f, 0.0f, 0.15f, 1.33f, stickX, stickY);
+    check(stickX == 0.0f && stickY == 0.0f, "stick range: dead-zone boundary");
+    stickToPs2(1.0f, 0.0f, 0.15f, 1.33f, stickX, stickY);
+    check(stickX == 1.0f && stickY == 0.0f, "stick range: cardinal");
+    constexpr float kDiagonal = 0.70710678f;
+    stickToPs2(kDiagonal, kDiagonal, 0.15f, 1.33f, stickX, stickY);
+    check(std::fabs(stickX - 0.94045f) < 0.001f && std::fabs(stickY - 0.94045f) < 0.001f,
+          "stick range: circular diagonal expansion");
+    stickToPs2(1.0f, 1.0f, 0.15f, 1.5f, stickX, stickY);
+    check(stickX == 1.0f && stickY == 1.0f, "stick range: per-axis clamp");
     s.bindings.clear();
     for (const auto &[k, v] : kDefaultBindings)
     {
@@ -841,6 +899,70 @@ int kzInputSelfTest()
     s.consumed.fill(false);
     s.keys.fill(false);
     s.wheelUpUntil = 0;
+
+    config.toggleSprint = true;
+    s.aimPatchActive = true;
+    s.gameplayUntil = 2000;
+    s.sprintLatched = false;
+    s.sprintWasDown = false;
+    s.sprintIdleSince = 0;
+    s.padButtons = KZ_PAD_L3;
+    s.lx = 0.0f;
+    s.ly = -1.0f;
+    compose(s, d, 100);
+    check((static_cast<uint16_t>(~(d[2] | (d[3] << 8))) & KZ_PAD_L3) != 0,
+          "toggle sprint: first press latches");
+    s.padButtons = 0;
+    compose(s, d, 120);
+    check((static_cast<uint16_t>(~(d[2] | (d[3] << 8))) & KZ_PAD_L3) != 0,
+          "toggle sprint: release stays latched");
+    s.padButtons = KZ_PAD_L3;
+    compose(s, d, 140);
+    check((static_cast<uint16_t>(~(d[2] | (d[3] << 8))) & KZ_PAD_L3) == 0,
+          "toggle sprint: second press releases");
+    s.padButtons = 0;
+    compose(s, d, 160);
+    s.padButtons = KZ_PAD_L3;
+    compose(s, d, 200);
+    s.padButtons = 0;
+    compose(s, d, 210);
+    s.lx = s.ly = 0.0f;
+    compose(s, d, 220);
+    compose(s, d, 521);
+    check((static_cast<uint16_t>(~(d[2] | (d[3] << 8))) & KZ_PAD_L3) == 0,
+          "toggle sprint: idle release");
+
+    s.sprintLatched = true;
+    s.sprintWasDown = true;
+    s.sprintIdleSince = 42;
+    s.aimPatchActive = false;
+    s.padButtons = KZ_PAD_L3;
+    compose(s, d, 600);
+    check((static_cast<uint16_t>(~(d[2] | (d[3] << 8))) & KZ_PAD_L3) != 0
+              && !s.sprintLatched && !s.sprintWasDown && s.sprintIdleSince == 0,
+          "toggle sprint: menus use raw button and reset state");
+
+    config.toggleSprint = false;
+    s.aimPatchActive = true;
+    s.gameplayUntil = 1000;
+    s.padButtons = KZ_PAD_L3;
+    compose(s, d, 700);
+    const bool disabledDown =
+        (static_cast<uint16_t>(~(d[2] | (d[3] << 8))) & KZ_PAD_L3) != 0;
+    s.padButtons = 0;
+    compose(s, d, 710);
+    const bool disabledUp =
+        (static_cast<uint16_t>(~(d[2] | (d[3] << 8))) & KZ_PAD_L3) == 0;
+    check(disabledDown && disabledUp, "toggle sprint: disabled preserves hold behavior");
+
+    config.toggleSprint = savedToggleSprint;
+    config.stickDeadzone = savedStickDeadzone;
+    config.stickRange = savedStickRange;
+    s.padButtons = 0;
+    s.lx = s.ly = s.rx = s.ry = 0.0f;
+    s.sprintLatched = false;
+    s.sprintWasDown = false;
+    s.sprintIdleSince = 0;
     s.bindings = saved;
     return failures;
 }

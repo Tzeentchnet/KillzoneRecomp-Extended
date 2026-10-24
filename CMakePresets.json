@@ -92,6 +92,7 @@
         "kzgs_palette_test",
         "kzipu_test",
         "kz_host_core_test",
+        "kz_host_log_test",
         "kz_host_window_smoke",
         "kz_host_audio_smoke"
       ]
@@ -109,6 +110,7 @@
         "kzgs_palette_test",
         "kzipu_test",
         "kz_host_core_test",
+        "kz_host_log_test",
         "kz_host_window_smoke",
         "kz_host_audio_smoke"
       ]
@@ -118,6 +120,7 @@
       "configurePreset": "macos-arm64",
       "targets": [
         "kz_host_core_test",
+        "kz_host_log_test",
         "kz_host_window_smoke",
         "kz_host_audio_smoke",
         "kzvu_interpreter_conformance"

@@ -303,6 +303,9 @@ namespace
                             ImGui::EndCombo();
                         }
                         toggleRow("V-Sync", "Removes tearing; adds a little input delay.", cfg.vsync);
+                        toggleRow("Skip intro movie",
+                                  "Skips the long intro after the Sony and Guerrilla logos. Story cutscenes still play.",
+                                  cfg.skipLongIntro);
                         ImGui::EndTable();
                     }
                 }
@@ -450,6 +453,11 @@ namespace
                         ImGui::SliderFloat("##sens", &cfg.mouseSensitivity, 0.1f, 10.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
                         toggleRow("Invert vertical look", nullptr, cfg.invertY);
                         toggleRow("Aim", "Right mouse button by default.", cfg.holdAim, "Hold to aim", "Press to toggle (as on PS2)");
+                        toggleRow("Sprint",
+                                  "Left Shift / L3. Toggle stops when you stop moving or press again; also applies to controllers.",
+                                  cfg.toggleSprint,
+                                  "Press to toggle",
+                                  "Hold to sprint (as on PS2)");
                         ImGui::EndTable();
                     }
                     section("Controller");
@@ -457,6 +465,8 @@ namespace
                     {
                         row("Stick dead zone", "Controllers are detected automatically (PS2 layout).");
                         ImGui::SliderFloat("##deadzone", &cfg.stickDeadzone, 0.0f, 0.5f, "%.2f");
+                        row("Stick range", "1.33 gives full-speed diagonals like a PS2 pad; 1.00 keeps the controller's raw circle.");
+                        ImGui::SliderFloat("##range", &cfg.stickRange, 1.0f, 1.5f, "%.2f");
                         ImGui::EndTable();
                     }
                     section("Keys");

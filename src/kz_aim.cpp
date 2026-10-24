@@ -38,6 +38,7 @@ namespace
 {
     constexpr uint32_t kCtrlUpdate = kz_hook::ControllerUpdate;
     constexpr uint32_t kApplyLook = kz_hook::ApplyLook;
+    constexpr uint32_t kAfterLookProbe = kz_hook::AfterLookProbe;
     constexpr uint32_t kPitchAutoCentre = kz_hook::PitchAutoCentre;
     constexpr uint32_t kVkKeyboard = kz_hook::VirtualKeyboard;
     constexpr uint32_t kVkAddChar = kz_hook::VirtualKeyboardAddChar;
@@ -48,6 +49,7 @@ namespace
 
     PS2Runtime::RecompiledFunction g_origCtrlUpdate = nullptr;
     PS2Runtime::RecompiledFunction g_origApplyLook = nullptr;
+    PS2Runtime::RecompiledFunction g_origAfterLook = nullptr;
     PS2Runtime::RecompiledFunction g_origPitchAutoCentre = nullptr;
     PS2Runtime::RecompiledFunction g_origVkKeyboard = nullptr;
     PS2Runtime::RecompiledFunction g_vkAddChar = nullptr;
@@ -57,6 +59,7 @@ namespace
     uint32_t g_ctrl = 0;   // its controller
     bool g_announced = false;
     bool g_log = false;
+    uint32_t g_modeSwapCtl = 0;
     std::chrono::steady_clock::time_point g_lastTake{};
 
     // Mouse yaw goes in as the turn value. Because every turn value acts in two consecutive frames, the mouse keeps a
@@ -117,13 +120,13 @@ namespace
     {
         static std::chrono::steady_clock::time_point nextPulse{};
         static int attempts = 0;
-        if (!kzConfig().holdAim)
+        if (!kzConfig().holdAim || !kzInputUsingKeyboardMouse())
             return;
         const uint32_t mode = rd32(rdram, ctl + 0x454);
-        if (mode > 1u)
-            return; // mounted weapon / other modes: leave alone
+        if (mode > 2u)
+            return;
         const bool want = kzInputZoomHeld();
-        if (want == (mode == 1u))
+        if (want == (mode != 0u))
         {
             attempts = 0;
             return;
@@ -141,6 +144,11 @@ namespace
 
     void ctrlUpdate(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
     {
+        if (g_modeSwapCtl)
+        {
+            wr32(rdram, g_modeSwapCtl + 0x454, 2u);
+            g_modeSwapCtl = 0;
+        }
         const uint32_t ra = getRegU32(ctx, 31);
         const uint32_t ctrl = getRegU32(ctx, 4);
         const bool local = ctx->pc == kCtrlUpdate && rd32(rdram, ctrl + 0x1C) == 0u;
@@ -239,9 +247,30 @@ namespace
                             rdf(rdram, g_ctrl + 0x3C), rate, rdf(rdram, ctl + 0x78));
             }
         }
+        static const bool scopeFix =
+            !(std::getenv("KZ_SCOPE_FIX") && std::getenv("KZ_SCOPE_FIX")[0] == '0');
+        if (scopeFix && kbm)
+        {
+            const uint32_t ctl = rd32(rdram, g_player + 0x31C);
+            if (ctl && rd32(rdram, ctl + 0x454) == 2u)
+            {
+                wr32(rdram, ctl + 0x454, 1u);
+                g_modeSwapCtl = ctl;
+            }
+        }
         g_origApplyLook(rdram, ctx, rt);
         if (kbm)
             rdram[lagFlag] = savedFlag;
+    }
+
+    void afterLook(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
+    {
+        if (g_modeSwapCtl)
+        {
+            wr32(rdram, g_modeSwapCtl + 0x454, 2u);
+            g_modeSwapCtl = 0;
+        }
+        g_origAfterLook(rdram, ctx, rt);
     }
 
     void pitchAutoCentre(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
@@ -342,7 +371,8 @@ void kzAimInstall(PS2Runtime &runtime)
         return;
     }
     g_log = std::getenv("KZ_AIM_LOG") != nullptr;
-    const bool ok = hook(runtime, kCtrlUpdate, &ctrlUpdate, g_origCtrlUpdate) &&
+    const bool ok = hook(runtime, kAfterLookProbe, &afterLook, g_origAfterLook) &&
+                    hook(runtime, kCtrlUpdate, &ctrlUpdate, g_origCtrlUpdate) &&
                     hook(runtime, kApplyLook, &applyLook, g_origApplyLook) &&
                     hook(runtime, kPitchAutoCentre, &pitchAutoCentre, g_origPitchAutoCentre);
     std::printf("[kz] mouse aim patch: %s\n", ok ? "installed" : "FAILED (mouse drives the right stick)");

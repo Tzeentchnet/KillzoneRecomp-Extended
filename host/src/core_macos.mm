@@ -187,10 +187,13 @@ namespace kz::host
 
         if (!std::freopen(currentLog.c_str(), "w", stdout))
             throwPosix("Redirecting stdout to the host log");
-        if (!std::freopen(currentLog.c_str(), "a", stderr))
-            throwPosix("Redirecting stderr to the host log");
-        std::setvbuf(stdout, nullptr, _IOLBF, 4096);
-        std::setvbuf(stderr, nullptr, _IONBF, 0);
+        if (dup2(fileno(stdout), fileno(stderr)) == -1)
+            throwPosix("Sharing the host log between stdout and stderr");
+        if (std::setvbuf(stdout, nullptr, _IONBF, 0) != 0
+            || std::setvbuf(stderr, nullptr, _IONBF, 0) != 0)
+        {
+            throwPosix("Disabling host-log buffering");
+        }
         std::ios::sync_with_stdio(true);
         return StandardStreamRedirection::Redirected;
     }

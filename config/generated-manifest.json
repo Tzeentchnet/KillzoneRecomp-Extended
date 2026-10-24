@@ -379,6 +379,13 @@
       "signature_sha256": "f891da93775fdc2d5d8af6ab5bbacf399c1e199e0a1c83d3ce9d9496854aae08"
     },
     {
+      "symbol": "AfterLookProbe",
+      "kind": "hook",
+      "address": "0x00218710",
+      "signature_size": 68,
+      "signature_sha256": "df4ab156e66cfa6e9199d822690049175d5105b7814a0c653ccf8ee6b100ab36"
+    },
+    {
       "symbol": "ApplyLook",
       "kind": "hook",
       "address": "0x0021C550",
@@ -405,6 +412,13 @@
       "address": "0x0023EE08",
       "signature_size": 16,
       "signature_sha256": "982c07ffcc37e42c159430bd1a6227c13c530a13f36ca33966cab2b52686aabf"
+    },
+    {
+      "symbol": "MoviePlay",
+      "kind": "hook",
+      "address": "0x0026ECC8",
+      "signature_size": 16,
+      "signature_sha256": "33cf3afa9da8abe9edee264d5dfda27329b6500d2b42f51c8b0aa981492dad93"
     },
     {
       "symbol": "SifInitRpc",

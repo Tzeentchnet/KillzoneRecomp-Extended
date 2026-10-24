@@ -38,7 +38,8 @@ Test build, currently in M0 (Windows enhancement baseline); see [`TODO.md`](TODO
   130-140 fps at 144 Hz in gameplay. The game's clock runs at real time at 120 Hz (the frame timer is rescaled, not
   sped up).
 - **Mouse and keyboard:** mouse aim is an engine patch (raw counts go into the game's own look rate: no stick
-  acceleration or dead zone), with fully rebindable keys. Controllers work through SDL3 with the original PS2 layout.
+  acceleration or dead zone), with fully rebindable keys. Controllers work through SDL3 with the original PS2 layout,
+  a radial dead zone, and an adjustable PS2-style stick range.
 - **Graphics:** internal resolution up to 8x (supersampling), native 16:9, sharp scaling, anisotropic filtering,
   optional FXAA, and view distance up to the supported 2x maximum; D3D11, D3D12 or Vulkan. SMAA is D3D11-only and is
   explicitly shown as unavailable on other renderers. The Graphics tab's **Validated enhancements** preset applies
@@ -76,7 +77,14 @@ Test build, currently in M0 (Windows enhancement baseline); see [`TODO.md`](TODO
 | Arrow keys, Enter | menus |
 
 The profile name can be typed directly on the game's on-screen keyboard. Bindings live in `killzone.ini` under
-`[Bindings]`.
+`[Bindings]`. The Controls tab can switch mouse aim between hold/toggle, enable opt-in toggle sprint, and adjust the
+controller dead zone/range. Toggle sprint releases on a second press or after 300 ms without movement; hold remains
+the default. The Display tab can skip only the long boot intro after the Sony and Guerrilla logos; story cutscenes,
+menu backgrounds, and attract movies are unchanged.
+
+The corresponding settings are `[Input] SprintMode=Hold|Toggle`, `[Input] StickRange=1.0..1.5`, and
+`[Game] SkipIntro=0|1`. `KZ_SKIP_LONG_INTRO=0|1` overrides the saved intro setting for one run, and `KZ_MOVIE_LOG=1`
+logs every movie name handled by the optional hook.
 
 ## Configuration compatibility
 

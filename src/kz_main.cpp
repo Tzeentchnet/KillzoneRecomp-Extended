@@ -19,6 +19,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include "kz_vu.h"
 #include "kz_ipu.h"
 #include "kz_aim.h"
+#include "kz_movies.h"
 #include "kz_post.h"
 #include "kz_timefix.h"
 #include "kz_testing.h"
@@ -343,6 +344,7 @@ int main(int argc, char *argv[])
         kzTimeFixInstall(runtime);
         kzPostInstall(runtime);
         kzWin06WatchInstall(runtime); // KZ_WIN06_WATCH=1 only
+        kzMoviesInstall(runtime);
         // Tests: a separate (e.g. empty) memory card folder. After loadELF, which resets the roots to the ELF folder.
         // [Testing] TestMemoryCard=1 does the same with "testcard" next to killzone.ini; KZ_MC_ROOT wins.
         std::filesystem::path mcRoot;

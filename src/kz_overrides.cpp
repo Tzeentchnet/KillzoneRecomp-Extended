@@ -5,6 +5,8 @@
 // Use this for library functions the ps2_analyzer signature DB misses. Evidence for each binding: docs/findings.md.
 
 #include "game_overrides.h"
+#include "Stubs/MemoryCard.h"
+#include "Syscalls/RPC.h"
 #include "kz_hook_addresses.h"
 #include "kz_ipu.h"
 #include "kz_sif_modules.h"
@@ -20,21 +22,14 @@
 
 namespace
 {
-    struct Binding
+    // A scheduler resume can enter an address replacement directly, so the replacement must complete the guest return.
+    template <void (*Handler)(uint8_t *, R5900Context *, PS2Runtime *)>
+    void returningBinding(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
-        uint32_t address;
-        const char *handler;
-    };
-
-    // Stripped-ELF library functions identified by hand (docs/findings.md#library-bindings).
-    constexpr Binding kBindings[] = {
-        {kz_hook::SifInitRpc, "sceSifInitRpc"},
-        {kz_hook::SifLoadModule, "sceSifLoadModule"},
-        {kz_hook::SifStopModule, "SifStopModule"}, // sceSifStopModule(modid, arg_len, args, *result)
-        {kz_hook::McInit, "sceMcInit"},
-        {kz_hook::McGetInfo, "sceMcGetInfo"},
-        {kz_hook::McFormat, "sceMcFormat"},
-    };
+        const uint32_t returnPc = getRegU32(ctx, 31);
+        Handler(rdram, ctx, runtime);
+        ctx->pc = returnPc;
+    }
 
     // Library functions the runtime has no handler for; implemented in kz_sif_modules.cpp.
     struct CustomBinding
@@ -64,8 +59,14 @@ namespace
     }
 
     const CustomBinding kCustom[] = {
+        {kz_hook::SifInitRpc, &returningBinding<&ps2_syscalls::SifInitRpc>, "sceSifInitRpc"},
+        {kz_hook::SifStopModule, &kzSifStopModuleAt, "sceSifStopModule"},
         {kz_hook::SifSearchModuleByName, &kzSceSifSearchModuleByName, "sceSifSearchModuleByName"},
         {kz_hook::SifUnloadModule, &kzSceSifUnloadModule, "sceSifUnloadModule"},
+        {kz_hook::SifLoadModule, &kzSifLoadModuleAt, "sceSifLoadModule"},
+        {kz_hook::McInit, &returningBinding<&ps2_stubs::sceMcInit>, "sceMcInit"},
+        {kz_hook::McGetInfo, &returningBinding<&ps2_stubs::sceMcGetInfo>, "sceMcGetInfo"},
+        {kz_hook::McFormat, &returningBinding<&ps2_stubs::sceMcFormat>, "sceMcFormat"},
         {kz_hook::MpegGetPicture, &kzSceMpegGetPicture, "sceMpegGetPicture"},
         {kz_hook::MpegClearRefBuff, &kzSceMpegClearRefBuff, "sceMpegClearRefBuff"},
         {kz_hook::KeyboardModuleInit, &kzLgkbmInit, "lgkbm init"},
@@ -128,11 +129,6 @@ namespace
             tlInstall<3>(runtime, kz_hook::TimelineKick); // the kick (D1 CHCR store)
             tlInstall<4>(runtime, kz_hook::TimelineKickCheck); // vblank handler: kick check
             tlInstall<5>(runtime, kz_hook::TimelineVblank); // vblank handler
-        }
-        for (const Binding &b : kBindings)
-        {
-            if (!ps2_game_overrides::bindAddressHandler(runtime, b.address, b.handler))
-                std::cerr << "[kz] failed to bind " << b.handler << " @0x" << std::hex << b.address << std::dec << std::endl;
         }
         if (!kzIpuActive() && !runtime.replaceFunction(kz_hook::MovieOpen, &kzMovieOpenUnavailable))
             std::cerr << "[kz] failed to bind movie-open skip" << std::endl;

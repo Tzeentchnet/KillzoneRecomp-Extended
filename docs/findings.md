@@ -2472,3 +2472,61 @@ is therefore not complete.
 First-pass captures should use `KZ_AUDIO_DIAG` without `KZ_AUDIO_WAV`: the callback ledger writes on a background
 thread, while the raw WAV tap necessarily writes from the producer thread and can perturb the boundary being
 measured. Add the WAV only for a targeted producer-side comparison.
+
+## Direct-upstream hardening and input options (2026-10-24)
+
+The bounded upstream comparison in `docs/upstream_comparison.md` identified five changes that apply cleanly to this
+fork without importing upstream's overlapping runtime or graphics work.
+
+### Yield-safe SIF module calls
+
+`sceSifLoadModule` and `sceSifStopModule` were address-bound directly to runtime handlers. Those handlers write a
+return value but do not advance the saved guest PC. If the call boundary yields, scheduler re-entry can invoke the
+same module operation again; repeated loads eventually exhaust the IOP module arena. The two local module wrappers
+now save `$ra`, call the runtime handler, and assign `ctx->pc = $ra`, matching the return contract already used by
+this fork's yielding MPEG wrappers. Search and unload remain synchronous custom HLE calls.
+
+The first forced `PS2X_STRESS_YIELD=2` acceptance run then exposed the same contract one call earlier at the
+fork-local `sceSifInitRpc` address binding: all three runs remained at that guest PC. The shared returning wrapper now
+covers `sceSifInitRpc` and the three local memory-card address bindings as well. Three corrected stress boots loaded
+13 modules each, advanced DMA continuously, reached the rendered main menu, and reported no arena exhaustion.
+
+### One durable host-log stream
+
+The Windows and macOS launch paths previously opened `stdout` in truncate mode and `stderr` independently in append
+mode. The two buffered streams had independent file positions, so a later `stdout` write could overwrite an earlier
+`stderr` record. Windows also treats `_IOLBF` as full buffering, which could lose the final block on a hang or forced
+termination. Both backends now open the log once, duplicate its descriptor onto `stderr`, and make both C streams
+unbuffered. The ISO-free `kz_host_log_component` test launches a child with no usable standard output, interleaves
+records on both streams, exits through `std::_Exit`, and verifies exact-once records plus intact previous-log
+rotation.
+
+### Aim-mode ownership and scope ordering
+
+Hold-to-aim reconciliation is now keyboard/mouse-only. A controller retains Killzone's original R3 toggle instead of
+having the host immediately pulse its zoom state back off. Aim modes 1 and 2 are both treated as zoomed.
+
+Scope weapons use aim mode 2 and run a reticle-offset block after `ApplyLook`; that block interprets mouse turn
+commands as stick positions, swallowing small motion and clamping larger motion. For keyboard/mouse input, the hook
+temporarily presents mode 1 before entering `ApplyLook`, then restores mode 2 at the first call after the scope block.
+Making the swap before the original call is required because a guest yield can return from the wrapper before later
+host statements execute. A pending restore is also repaired at the next controller update if the normal probe never
+runs. The new probe is locked in the generated manifest with a unique 68-byte ELF signature.
+
+### Controller range, sprint, and intro behavior
+
+Controller dead zones are radial rather than per-axis. After removing the radial dead zone, each axis is multiplied
+by `[Input] StickRange` (default 1.33, clamped to 1.0-1.5) and clamped separately. A modern circular stick's full
+diagonal therefore becomes about `(0.94, 0.94)` instead of `(0.71, 0.71)`, while cardinals remain full scale.
+
+Optional toggle sprint latches L3 on the first gameplay press, releases on the next press, and also releases after
+more than 300 ms without movement. It resets outside gameplay and when disabled; hold-to-sprint remains the default.
+
+The default-off intro hook recognizes only the exact game string `Movies/Intro/Intro`. Returning zero from that
+single movie-player call skips the long boot intro after the logos; story FMVs, menu backgrounds, and attract
+playback still call the original player. Guest object and character pointers are range-checked and the name scan is
+bounded to 128 bytes.
+
+The rewritten branch already reserves `[Testing] SkipIntro` and `KZ_SKIP_INTRO` for its automation path, which skips
+the logos and cinematic together. The precise player option therefore remains `[Game] SkipIntro`, but its one-run
+override is `KZ_SKIP_LONG_INTRO=0|1`; `KZ_MOVIE_LOG=1` exposes the movie timeline.

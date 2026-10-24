@@ -45,6 +45,17 @@ if(BUILD_TESTING)
         LABELS "iso-free;component;host"
         ENVIRONMENT "KZ_ISO_FREE=1")
 
+    if(WIN32 OR APPLE)
+        add_executable(kz_host_log_test test/log_test.cpp)
+        target_link_libraries(kz_host_log_test PRIVATE kz_host_core)
+        target_compile_features(kz_host_log_test PRIVATE cxx_std_20)
+        add_test(NAME kz_host_log_component COMMAND kz_host_log_test)
+        set_tests_properties(kz_host_log_component PROPERTIES
+            LABELS "iso-free;component;host;logging"
+            ENVIRONMENT "KZ_ISO_FREE=1"
+            TIMEOUT 30)
+    endif()
+
     if(TARGET SDL3::SDL3)
         add_executable(kz_host_window_smoke
             test/window_smoke.cpp

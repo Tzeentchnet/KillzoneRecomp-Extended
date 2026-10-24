@@ -72,10 +72,15 @@ struct KzConfig
     bool invertY = false;
     bool rawMouse = true;
     bool holdAim = true;     // hold the zoom key to aim (the game's own zoom is a toggle)
+    bool toggleSprint = false; // press sprint once to keep sprinting (the original is hold-to-sprint)
     float stickDeadzone = 0.15f;
+    float stickRange = 1.33f; // expands a modern circular stick toward the DualShock 2's square-ish range
 
     // Audio
     int masterVolume = 100; // 0..100
+
+    // Game
+    bool skipLongIntro = false; // skip the long boot intro after the Sony and Guerrilla logos
 
     // Paths
     std::string isoPath; // user's Killzone (USA) disc image

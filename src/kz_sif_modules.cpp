@@ -7,6 +7,7 @@
 #include "kz_sif_modules.h"
 
 #include "Syscalls/Common.h"
+#include "ps2_syscalls.h"
 
 #include <string>
 
@@ -49,6 +50,20 @@ namespace
         }
         return kUnknownModule;
     }
+}
+
+void kzSifLoadModuleAt(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const uint32_t returnPc = getRegU32(ctx, 31);
+    ps2_syscalls::SifLoadModule(rdram, ctx, runtime);
+    ctx->pc = returnPc;
+}
+
+void kzSifStopModuleAt(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const uint32_t returnPc = getRegU32(ctx, 31);
+    ps2_syscalls::SifStopModule(rdram, ctx, runtime);
+    ctx->pc = returnPc;
 }
 
 void kzSceSifSearchModuleByName(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
