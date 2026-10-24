@@ -1,9 +1,9 @@
 # KillzoneRecomp execution handoff
 
-**Last updated:** 2026-10-17 19:57 PDT
+**Last updated:** 2026-10-24 05:25 PDT
 **Workspace:** `E:\Git\Killzone`
 **Implementation repository:** `E:\Git\Killzone\KillzoneRecomp-Extended`
-**Branch / implementation commit:** `master` / `4ed9b95b877ad62fa58bd1d87dc88e4251b929ab`
+**Branch / implementation commit:** `test/upsync-01-05` / uncommitted changes over `ef6339a130982e44c8c748b4eae5e98d4cd4832f`
 **PS2Recomp revision:** `6e4bc1827a65d45be92d10f9eca97c04f062f4b8`
 **GitHub origin:** `Tzeentchnet/KillzoneRecomp-Extended` is private during
 cleanup. The PS2Recomp dependency now uses `Tzeentchnet/PS2Recomp`; the
@@ -68,18 +68,18 @@ worktree, use subagents only for bounded read-only inventories.
 | BASE-03 | Complete | Checked MSVC and clang-cl presets configure successfully |
 | TEST-01 | Complete | Hermetic ISO-free CTest layer and disabled-by-default BYOD test |
 | TEST-02 | Complete | D3D11, D3D12, and Vulkan deterministic golden tests |
-| GEN-01 | Complete | 132,656 dispatch entries, 100,661 globally dispatchable resume cases, 42 locked hook signatures |
+| GEN-01 | Complete | 132,656 dispatch entries, 100,661 globally dispatchable resume cases, 44 locked hook signatures |
 | PORT-01 | Complete | Renderer-free `kz_host_core`; MSVC and clang-cl builds and host component tests pass |
 
 Latest Windows validation:
 
 ```text
-MSVC ISO-free:    12/12 passed
-clang-cl ISO-free: 12/12 passed
+MSVC ISO-free:    13/13 passed
+clang-cl ISO-free: 13/13 passed
 Portable VU:      28/28 checks passed with MSVC and clang-cl
 Host smoke:       3/3 passed with MSVC and clang-cl
 Strict dependencies: 31 passed, 0 warnings, 0 failures; 61-path canonical PS2Recomp patch reconstructed
-Generated inventory: PASS with 42 locked hook signatures
+Generated inventory: PASS with 44 locked hook signatures
 Resume table: PASS with 132,656 dispatch entries, 100,661 resume cases, and 31,995 targets
 Deterministic regeneration: 31,998 files, 0 changed/new, 0 removed
 Complete D3D12 movie probe: visible decoded frames at 35, 40, 45, and 50 s
@@ -492,4 +492,30 @@ New facts or decisions: exact raw-PCM equality at a 3,584-frame lag identified s
 Blocker and minimal reproducer: no FMV-audio blocker remains. Rare full four-bank (7,168-frame / 149.3 ms) misses remain possible when the movie update is delayed for several hundred milliseconds; the accepted configuration minimizes audible frequency without turning exceptional misses into the 250 ms-plus repeats seen with eight banks. The broad standalone PS2Recomp test executable still reaches the pre-existing sceMpegDemuxPssRing failure and later access violation, so it is not a full-suite pass. D3D11 remains the separate known black-output issue on this driver.
 Next command: preserve the accepted four-bank/two-callback/40 ms policy unless the user supplies a reproducible timestamp and scene for a new audio regression. Keep Unlock All Campaign Levels as a separate launcher task.
 Safe parallel work: bounded D3D11 backend investigation and design research for the deferred campaign-unlock option may proceed independently of native ARM-01, VU-01, and MAC-01 acceptance
+```
+
+```text
+Task: Direct-upstream and PS3-port comparison
+Owner/session: Copilot SDK investigation session, 2026-10-24
+Machine: Windows x64; read-only public GitHub research plus local merge-tree and source inspection
+Status: complete - research and integration plan only; no runtime code imported
+Files changed: docs/upstream_comparison.md; HANDOFF.md
+Acceptance commands and exact results: fetched drakolordx7/KillzoneRecomp upstream/master at 832c8adb7b730c0b98c03516dc582d139606c1d8; ancestry count is 9 local-only / 17 upstream-only commits from common base 5f0700079f9ac4e14799d66d01747dbcdcec55f6; merge-tree identified seven textual conflicts; exact public source, commit, issue, license, and local-code evidence is recorded in docs/upstream_comparison.md
+New facts or decisions: the local fork still has the address-bound SifLoadModule/StopModule return-PC hazard and the two-handle buffered-log hazard fixed upstream; input fixes, skip-intro, and ultrawide are useful manual ports; maiconjsv/killzone_pc targets an incompatible, currently non-reproducible PS3 architecture and contributes no code worth importing
+Blocker and minimal reproducer: no research blocker. Runtime fixes require separate bounded implementation and BYOD validation; ultrawide remains gated by Phase 0 and needs D3D12/Vulkan plus skybox/impostor qualification
+Next command: implement UPSYNC-01 from docs/upstream_comparison.md as a two-wrapper change, then run the normal Windows gates and repeated PS2X_STRESS_YIELD=2 headless boots
+Safe parallel work: UPSYNC-02 durable host logging can proceed independently; native ARM-01, VU-01, and MAC-01 acceptance remains unchanged
+```
+
+```text
+Task: UPSYNC-01 through UPSYNC-05 implementation
+Owner/session: Copilot SDK implementation session, 2026-10-24
+Machine: Windows x64, NVIDIA GeForce RTX 5070 driver 32.0.16.1742, MSVC 19.44.35229.0, and clang-cl 23.1.3
+Status: complete on test/upsync-01-05; implementation and Windows/BYOD acceptance pass, not committed
+Files changed: CMakePresets.json; README.md; config/generated-manifest.json; docs/findings.md; docs/upstream_comparison.md; host/CMakeLists.txt; host/src/core_macos.mm; host/src/core_win32.cpp; host/test/log_test.cpp; src/kz_aim.cpp; src/kz_config.cpp; src/kz_config.h; src/kz_hook_addresses.h; src/kz_input.cpp; src/kz_launcher.cpp; src/kz_main.cpp; src/kz_movies.cpp; src/kz_movies.h; src/kz_overrides.cpp; src/kz_sif_modules.cpp; src/kz_sif_modules.h; HANDOFF.md
+Acceptance commands and exact results: MSVC and clang-cl builds PASS; complete MSVC ISO-free 13/13 PASS; complete clang-cl ISO-free 13/13 PASS; kz_host_log_component verifies 256 interleaved stdout/stderr records across std::_Exit plus previous-log rotation; strict dependency and 61-path canonical patch reconstruction 31 passed, 0 warnings, 0 failures; generated inventory PASS with 44 unique hook signatures; resume table PASS with 132,656 dispatch entries, 100,661 resume cases, and 31,995 targets. Three corrected 60-second PS2X_STRESS_YIELD=2 boots exited 0, each loaded 13 modules exactly once, advanced DMA from 327-401 at 5 seconds to 3,735-3,859 at 55 seconds, skipped Movies/Intro/Intro exactly once, kept Movies/Intro/Anim_Intro, rendered the main menu, and contained no failure or arena-exhaustion marker. A normal 180-second scripted run logged Movies/Level 1/Intro without skipping it and reached rendered gameplay; a 240-second idle run logged and rendered Movies/Attract/Attract and returned to the menu.
+New facts or decisions: the upstream two-wrapper fix was necessary but not sufficient for this fork. The first three stress attempts remained at sceSifInitRpc because the fork also binds that runtime handler by guest address. The shared returning wrapper now completes pc=$ra for sceSifInitRpc and the three fork-local memory-card address bindings as well as the explicit load/stop wrappers. Windows/macOS logging now opens one stream, duplicates its descriptor to stderr, and disables C buffering. Hold aim no longer overrides controller toggles; scope mode swaps before ApplyLook and restores at the locked post-scope probe; radial StickRange defaults to 1.33; toggle sprint and skip intro remain opt-in/default-off as applicable. MoviePlay and AfterLookProbe are locked by unique 16-byte and 68-byte signatures computed from the authorized local ELF.
+Blocker and minimal reproducer: no UPSYNC implementation blocker remains. Scope behavior is installed and compiled but a hands-on sniper-scope pass remains useful because the automated BYOD route exercises the opening, menu, story movie, and first-mission gameplay rather than a scope weapon. Native Apple Silicon acceptance for the separate VU-01/MAC-01 work remains unavailable on this host.
+Next command: review and commit the bounded test/upsync-01-05 changes if desired; keep UPSYNC-06 ultrawide and UPSYNC-07 release staging deferred behind their existing gates
+Safe parallel work: native ARM-01, VU-01, and MAC-01 acceptance remains unchanged; no additional upstream import should be mixed into this branch
 ```

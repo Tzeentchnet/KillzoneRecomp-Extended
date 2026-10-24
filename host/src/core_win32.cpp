@@ -4,6 +4,7 @@
 
 #include <windows.h>
 #include <intrin.h>
+#include <io.h>
 #include <xmmintrin.h>
 
 #include <algorithm>
@@ -172,10 +173,13 @@ namespace kz::host
 
         if (!_wfreopen(currentLog.c_str(), L"w", stdout))
             throw Error(ErrorCode::SystemFailure, errno, "Redirecting stdout to the host log failed");
-        if (!_wfreopen(currentLog.c_str(), L"a", stderr))
-            throw Error(ErrorCode::SystemFailure, errno, "Redirecting stderr to the host log failed");
-        std::setvbuf(stdout, nullptr, _IOLBF, 4096);
-        std::setvbuf(stderr, nullptr, _IONBF, 0);
+        if (_dup2(_fileno(stdout), _fileno(stderr)) != 0)
+            throw Error(ErrorCode::SystemFailure, errno, "Sharing the host log between stdout and stderr failed");
+        if (std::setvbuf(stdout, nullptr, _IONBF, 0) != 0
+            || std::setvbuf(stderr, nullptr, _IONBF, 0) != 0)
+        {
+            throw Error(ErrorCode::SystemFailure, errno, "Disabling host-log buffering failed");
+        }
         std::ios::sync_with_stdio(true);
 
         DWORD processIds[2]{};

@@ -19,6 +19,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include "kz_vu.h"
 #include "kz_ipu.h"
 #include "kz_aim.h"
+#include "kz_movies.h"
 #include "kz_post.h"
 #include "kz_timefix.h"
 #include "runtime/ps2_host_arena.h"
@@ -136,19 +137,28 @@ namespace
         a.aspect = KzAspect::Classic4x3;
         a.mouseSensitivity = 2.5f;
         a.invertY = true;
+        a.toggleSprint = true;
+        a.stickRange = 1.42f;
+        a.skipIntro = true;
         a.isoPath = "C:/games/Killzone (USA).iso";
         const auto tmp = std::filesystem::temp_directory_path() / "kz_selftest.ini";
         if (!kzSaveConfig(tmp, a)) { std::cerr << "[selftest] FAIL: save config" << std::endl; ++failures; }
         const KzConfig b = kzLoadConfig(tmp);
         if (b.windowMode != a.windowMode || b.fpsLimit != 144 || b.upscale != 4 || b.aspect != a.aspect ||
-            b.mouseSensitivity != 2.5f || !b.invertY || b.isoPath != a.isoPath)
+            b.mouseSensitivity != 2.5f || !b.invertY || !b.toggleSprint || b.stickRange != 1.42f ||
+            !b.skipIntro || b.isoPath != a.isoPath)
         {
             std::cerr << "[selftest] FAIL: config round-trip" << std::endl;
             ++failures;
         }
         std::filesystem::remove(tmp);
         const KzConfig d = kzLoadConfig(std::filesystem::temp_directory_path() / "kz_missing.ini");
-        if (d.windowMode != KzWindowMode::Borderless || d.fpsLimit != 0) { std::cerr << "[selftest] FAIL: defaults" << std::endl; ++failures; }
+        if (d.windowMode != KzWindowMode::Borderless || d.fpsLimit != 0 || d.toggleSprint ||
+            d.stickRange != 1.33f || d.skipIntro)
+        {
+            std::cerr << "[selftest] FAIL: defaults" << std::endl;
+            ++failures;
+        }
         kzInputInit(std::filesystem::temp_directory_path() / "kz_missing.ini");
         failures += kzInputSelfTest();
         // disc check against the user's image when present (not required for the test to pass)
@@ -348,6 +358,7 @@ int main(int argc, char *argv[])
         kzAimInstall(runtime);
         kzTimeFixInstall(runtime);
         kzPostInstall(runtime);
+        kzMoviesInstall(runtime);
         // Tests: a separate (e.g. empty) memory card folder. After loadELF, which resets the roots to the ELF folder.
         if (const char *mc = std::getenv("KZ_MC_ROOT"); mc && *mc)
         {

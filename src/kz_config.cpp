@@ -123,8 +123,11 @@ KzConfig kzLoadConfig(const std::filesystem::path &path)
     if (auto v = get("Input.InvertY")) c.invertY = parseBool(*v, c.invertY);
     if (auto v = get("Input.RawMouse")) c.rawMouse = parseBool(*v, c.rawMouse);
     if (auto v = get("Input.AimMode")) c.holdAim = _stricmp(v->c_str(), "Toggle") != 0;
+    if (auto v = get("Input.SprintMode")) c.toggleSprint = _stricmp(v->c_str(), "Toggle") == 0;
     if (auto v = get("Input.StickDeadzone")) c.stickDeadzone = std::clamp(static_cast<float>(std::atof(v->c_str())), 0.0f, 0.9f);
+    if (auto v = get("Input.StickRange")) c.stickRange = std::clamp(static_cast<float>(std::atof(v->c_str())), 1.0f, 1.5f);
     if (auto v = get("Audio.MasterVolume")) c.masterVolume = std::clamp(std::atoi(v->c_str()), 0, 100);
+    if (auto v = get("Game.SkipIntro")) c.skipIntro = parseBool(*v, c.skipIntro);
     if (auto v = get("Paths.ISO")) c.isoPath = *v;
     if (auto v = get("Launcher.Show")) c.showLauncher = parseBool(*v, c.showLauncher);
     return c;
@@ -144,8 +147,10 @@ bool kzSaveConfig(const std::filesystem::path &path, const KzConfig &c)
       << "\nRenderDistance=" << c.renderDistance << "\nLodScale=" << c.lodScale << "\n\n"
       << "[Input]\nMouseSensitivity=" << c.mouseSensitivity << "\nInvertY=" << (c.invertY ? 1 : 0)
       << "\nRawMouse=" << (c.rawMouse ? 1 : 0) << "\nAimMode=" << (c.holdAim ? "Hold" : "Toggle")
-      << "\nStickDeadzone=" << c.stickDeadzone << "\n\n"
+      << "\nSprintMode=" << (c.toggleSprint ? "Toggle" : "Hold")
+      << "\nStickDeadzone=" << c.stickDeadzone << "\nStickRange=" << c.stickRange << "\n\n"
       << "[Audio]\nMasterVolume=" << c.masterVolume << "\n\n"
+      << "[Game]\nSkipIntro=" << (c.skipIntro ? 1 : 0) << "\n\n"
       << "[Paths]\nISO=" << c.isoPath << "\n\n"
       << "[Launcher]\nShow=" << (c.showLauncher ? 1 : 0) << "\n\n";
     // Key/mouse bindings: keep the user's section (read before the file is rewritten), or write the defaults.

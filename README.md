@@ -20,10 +20,11 @@ play-throughs and hands-on testing are ongoing.
 - **Frame rate:** runs at the monitor's refresh rate. Measured in gameplay: about 117-120 fps at 120 Hz and about
   130-140 fps at 144 Hz. The game's clock runs at real time at 120 Hz (the frame timer is rescaled, not sped up).
 - **Mouse and keyboard:** mouse aim is an engine patch (raw counts go into the game's own look rate: no stick
-  acceleration or dead zone), with fully rebindable keys. Controllers work through SDL3 with the original PS2 layout.
+  acceleration or dead zone), with fully rebindable keys. Controllers work through SDL3 with the original PS2 layout,
+  a radial dead zone, and an adjustable PS2-style stick range.
 - **Graphics:** internal resolution up to 8x (supersampling), native 16:9, sharp scaling, anisotropic filtering,
   optional FXAA; D3D11, D3D12 or Vulkan.
-- **Launcher:** display, graphics, controls and audio settings; checks the disc image is the supported version.
+- **Launcher:** display, graphics, controls, gameplay and audio settings; checks the disc image is the supported version.
 - **Not included:** Killzone Online (LOADER.ELF and the network modules); its servers are long gone.
 
 ## Default controls
@@ -40,7 +41,14 @@ play-throughs and hands-on testing are ongoing.
 | Arrow keys, Enter | menus |
 
 The profile name can be typed directly on the game's on-screen keyboard. Bindings live in `killzone.ini` under
-`[Bindings]`.
+`[Bindings]`. The Controls tab can switch mouse aim between hold/toggle, enable opt-in toggle sprint, and adjust the
+controller dead zone/range. Toggle sprint releases on a second press or after 300 ms without movement; hold remains
+the default. The Display tab can skip only the long boot intro after the Sony and Guerrilla logos; story cutscenes,
+menu backgrounds, and attract movies are unchanged.
+
+The corresponding settings are `[Input] SprintMode=Hold|Toggle`, `[Input] StickRange=1.0..1.5`, and
+`[Game] SkipIntro=0|1`. `KZ_SKIP_INTRO=0|1` overrides the saved intro setting for one run, and `KZ_MOVIE_LOG=1`
+logs every movie name handled by the optional hook.
 
 ## Building
 
@@ -107,6 +115,15 @@ The configure preflight runs the strict offline dependency verifier, validates t
 version, and checks `KZ_GENERATED_DIR` (default `generated\`) before dependency population begins. Outside a Build
 Tools shell, `tools\scripts\cmake_preset.ps1 -Preset win-msvc-rel` loads the latest available x64 environment; set
 `KZ_VCVARS64` when the Build Tools installation cannot be discovered automatically.
+
+For the edit-build-test loop:
+
+- Configure once with `-DKZ_DEV_LINK=ON` (for example `cmake --preset win-msvc-rel -DKZ_DEV_LINK=ON`). It turns off
+  identical-COMDAT folding, which takes most of the `killzone.exe` link time. Compile flags don't change, so switching
+  it on or off only relinks. Leave it off for builds you package.
+- Editing `src/` recompiles only `kz_port` and relinks. Changing a header the generated code includes (`ps2_runtime.h`,
+  `ps2_runtime_macros.h`, `ps2_cg*.h`), or a regen that adds or removes functions, rebuilds all ~250 unity batches.
+  That takes about 2 minutes with MSVC; `win-clang-rel` does it in about half the time.
 
 ### Host platform boundary
 
