@@ -1,6 +1,6 @@
 # WORKDONE - verified completions
 
-**Last updated:** 2026-10-21
+**Last updated:** 2026-10-24
 
 The ledger of finished work. An entry belongs here only after the acceptance commands in
 [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) pass on the machine the plan names. Open and partially evidenced
@@ -576,6 +576,30 @@ submodule, and the failed toml11 GCC-flag probes during the PS2Recomp configure.
   accepted the D3D12 audio subjectively ("Audio seems fine for now").
 - **Residual risk:** a rare full four-bank miss (7,168 frames / 149.3 ms) is still possible when the movie update stalls
   for several hundred milliseconds. Change this policy only for a reproducible, timestamped regression.
+
+### UPSYNC-01 through UPSYNC-05 - bounded upstream hardening
+
+- **Integrated:** 2026-10-24 in `b9c308c` (source branch commit `0a64834`).
+- **Runtime fixes:** yielding SIF initialization, load/stop-module and fork-local memory-card address bindings now
+  return through `$ra`; Windows and macOS use one unbuffered, descriptor-shared host log stream; hold-to-aim no
+  longer overrides controller toggles; and the scope-mode swap is ordered safely across guest yields.
+- **Player options:** controller dead zones are radial, `StickRange=1.33` restores PS2-style diagonal range, toggle
+  sprint is opt-in, and a default-off movie hook can skip only `Movies/Intro/Intro`.
+- **Configuration integration:** the rewritten branch keeps `[Testing] SkipIntro` plus `KZ_SKIP_INTRO` for full
+  startup automation. The precise player option is `[Game] SkipIntro`, with `KZ_SKIP_LONG_INTRO` as its non-colliding
+  one-run override.
+- **Integration validation:** the MSVC test build passed; the complete ISO-free suite passed 14/14, including the new
+  exact-once host-log/rotation component test. Strict dependency verification passed 31 checks with zero warnings or
+  failures against the canonical reconstruction of the locked PS2Recomp tree. Generated inventory passed with
+  31,996 translation units, 31,995 functions, 132,656 dispatch entries, 100,661 resume cases and 58 hook signatures;
+  the independent resume-table check reported the same dispatch/resume counts.
+- **Earlier BYOD acceptance:** three 60-second `PS2X_STRESS_YIELD=2` boots loaded 13 modules exactly once, advanced
+  DMA continuously, skipped only the requested intro movie, reached the rendered menu and showed no arena exhaustion.
+  A normal scripted run reached first-mission gameplay with its story movie intact; a 240-second idle run played the
+  attract movie and returned to the menu.
+- **Residual risk:** a hands-on sniper-scope pass remains useful. The superproject's pre-existing PS2Recomp gitlink
+  `93d19aaa4f933787df05eed348a8283aa249a22b` is no longer advertised by its remote; its canonical 65-path patch still
+  reconstructs the locked tree `8c10f68b5adf588f434c84a3baa990120963e780` exactly.
 
 ## Inherited upstream baseline (before the fork)
 
