@@ -354,7 +354,8 @@ supported executable.
 
 ## License
 
-GPL-3.0 (see `LICENSE`). The port links PCSX2 (GPL-3.0-or-later) and PS2Recomp (GPL-3.0).
+GPL-3.0 (see `LICENSE`). The port links PCSX2 (GPL-3.0-or-later) and PS2Recomp (GPL-3.0), and vendors
+[xBRZ](ext/kzgs/third_party/xbrz/README.md) under its GPL notice and MAME linking exception.
 Killzone is a trademark of Sony Interactive Entertainment; this project is not affiliated with Sony or Guerrilla Games.
 
 The owner-approved distribution disposition is recorded under LEGAL-01 in [`WORKDONE.md`](WORKDONE.md). Retail and

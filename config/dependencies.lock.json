@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-10-20",
+  "generated_at": "2026-10-24",
   "project": {
     "repository": "https://github.com/Tzeentchnet/KillzoneRecomp-Extended.git",
     "audited_baseline": "5f0700079f9ac4e14799d66d01747dbcdcec55f6",
@@ -172,6 +172,46 @@
         "required_in_strict": true,
         "clean": true
       }
+    },
+    {
+      "id": "xbrz",
+      "kind": "vendored-source",
+      "source_url": "https://github.com/Tzeentchnet/psp-recomp.git",
+      "revision": "138c2b8bc96ac5ec7e4f7b4224b37b28b9375ee5",
+      "license": "GNU GPL with MAME linking exception",
+      "redistribution": "Copyleft; retain the xBRZ copyright, GPL notice, and MAME linking exception.",
+      "acquisition": "Vendor the exact third_party/xbrz directory from the locked psp-recomp commit and preserve normalized file contents.",
+      "local": {
+        "directory": "ext/kzgs/third_party/xbrz",
+        "files": [
+          {
+            "path": "README.md",
+            "sha256": "178f69b186531fbea6cad6a87cfe8fa60eb33e541783dd09f6a3ffc0024eb165"
+          },
+          {
+            "path": "config.h",
+            "sha256": "bbb7d3ab1c25851673a71c126188cc1f02dc483819f04af8a8241dac71e9fe1a"
+          },
+          {
+            "path": "xbrz.cpp",
+            "sha256": "35283301d48ff518c8394c674195d086325697a51bf4d72213e636f1df213c7e"
+          },
+          {
+            "path": "xbrz.h",
+            "sha256": "4d458002afe225303cb013191466196104ea12cf5d3526f031f2df3a8add52d7"
+          }
+        ],
+        "required_in_strict": true
+      },
+      "declaration_checks": [
+        {
+          "file": "ext/kzgs/CMakeLists.txt",
+          "contains": [
+            "add_library(kzgs_xbrz STATIC",
+            "third_party/xbrz/xbrz.cpp"
+          ]
+        }
+      ]
     },
     {
       "id": "sdl3-vc",

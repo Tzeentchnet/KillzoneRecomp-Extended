@@ -21,7 +21,7 @@ set(KZGS_PCSX2_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../pcsx2" CACHE PATH "PCSX2 sour
 set(KZGS_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps/deps" CACHE PATH "Extracted pcsx2-windows-dependencies bundle")
 set(KZGS_ISA "AVX2" CACHE STRING "Vector ISA the GS is compiled for (SSE4, AVX, AVX2)")
 set_property(CACHE KZGS_ISA PROPERTY STRINGS SSE4 AVX AVX2)
-option(KZGS_BUILD_TEST "Build the kzgs_test executable" ${PROJECT_IS_TOP_LEVEL})
+option(KZGS_BUILD_TEST "Build the kzgs test executables" ${PROJECT_IS_TOP_LEVEL})
 option(KZGS_BUILD_TOOLS "Build kzgs debug tools (kzgs_replay)" ${PROJECT_IS_TOP_LEVEL})
 option(KZGS_ADDRESS_SANITIZER "Instrument kzgs with clang-cl AddressSanitizer" OFF)
 
@@ -306,6 +306,22 @@ target_link_libraries(kzgs_gs PRIVATE kzgs_flags kz_host_core)
 target_precompile_headers(kzgs_gs PRIVATE "${P2SRC}/PrecompiledHeader.h")
 
 # ---------------------------------------------------------------------------------------------------------------------
+# xBRZ texture scaler (kept independent of PCSX2 headers and precompiled headers).
+# ---------------------------------------------------------------------------------------------------------------------
+add_library(kzgs_xbrz STATIC
+	"${KZGS_ROOT}/src/kz_xbrz.cpp"
+	"${KZGS_ROOT}/src/kz_xbrz.h"
+	"${KZGS_ROOT}/third_party/xbrz/xbrz.cpp"
+)
+target_include_directories(kzgs_xbrz
+	PUBLIC "${KZGS_ROOT}/src"
+	PRIVATE "${KZGS_ROOT}/third_party/xbrz"
+)
+target_compile_features(kzgs_xbrz PUBLIC cxx_std_20)
+target_compile_definitions(kzgs_xbrz PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(kzgs_xbrz PRIVATE /utf-8 /W1)
+
+# ---------------------------------------------------------------------------------------------------------------------
 # kzgs: the public static library
 # ---------------------------------------------------------------------------------------------------------------------
 add_library(kzgs STATIC
@@ -320,7 +336,7 @@ add_library(kzgs STATIC
 	$<TARGET_OBJECTS:kzgs_common>
 	$<TARGET_OBJECTS:kzgs_gs>
 )
-target_link_libraries(kzgs PRIVATE kzgs_flags)
+target_link_libraries(kzgs PRIVATE kzgs_flags kzgs_xbrz)
 target_link_libraries(kzgs PUBLIC kz_host_core)
 target_precompile_headers(kzgs PRIVATE "${P2SRC}/PrecompiledHeader.h")
 target_include_directories(kzgs PUBLIC "${KZGS_ROOT}/include")
@@ -378,6 +394,10 @@ if(KZGS_BUILD_TEST)
 	add_executable(kzgs_palette_test "${KZGS_ROOT}/test/kzgs_palette_test.cpp")
 	target_link_libraries(kzgs_palette_test PRIVATE kzgs kzgs_flags)
 	target_compile_features(kzgs_palette_test PRIVATE cxx_std_20)
+
+	add_executable(kzgs_xbrz_test "${KZGS_ROOT}/test/kzgs_xbrz_test.cpp")
+	target_link_libraries(kzgs_xbrz_test PRIVATE kzgs_xbrz)
+	target_compile_features(kzgs_xbrz_test PRIVATE cxx_std_20)
 endif()
 
 if(KZGS_BUILD_TOOLS)

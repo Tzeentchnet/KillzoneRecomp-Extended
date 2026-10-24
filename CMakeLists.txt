@@ -230,12 +230,14 @@ if(BUILD_TESTING)
         --renderer d3d11 --warp --frames 2 --stress-uploads 64
         --out "${KZ_TEST_STATE_DIR}/kzgs/component")
     kz_add_iso_free_test(kzgs_palette_guard kzgs_palette_test)
+    kz_add_iso_free_test(kzgs_xbrz_scaler kzgs_xbrz_test)
     set_tests_properties(
         kz_spu2_component
         kz_vu1_component
         kz_vu0_component
         kz_gs_component
         kzgs_palette_guard
+        kzgs_xbrz_scaler
         PROPERTIES LABELS "iso-free;component")
     set_tests_properties(kz_gs_component PROPERTIES RESOURCE_LOCK kzgs_gpu)
 

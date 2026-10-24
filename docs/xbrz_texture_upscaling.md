@@ -1,6 +1,6 @@
 # xBRZ texture upscaling
 
-**Status:** Prototype specification
+**Status:** Scaler foundation implemented; private visual probe next
 
 **Started:** 2026-10-24
 
@@ -90,6 +90,18 @@ project's release notices and SBOM.
 Killzone must vendor the reviewed source under
 `ext/kzgs/third_party/xbrz/`. It must not depend on a developer-specific
 `D:\Github\psp-recomp` checkout.
+
+The foundation imports the reviewed source byte-for-byte from
+`Tzeentchnet/psp-recomp` commit
+`138c2b8bc96ac5ec7e4f7b4224b37b28b9375ee5` (`Add hardware texture scaling
+controls`). The dependency lock verifies these normalized SHA-256 values:
+
+| File | Normalized SHA-256 |
+|---|---|
+| `README.md` | `178f69b186531fbea6cad6a87cfe8fa60eb33e541783dd09f6a3ffc0024eb165` |
+| `config.h` | `bbb7d3ab1c25851673a71c126188cc1f02dc483819f04af8a8241dac71e9fe1a` |
+| `xbrz.cpp` | `35283301d48ff518c8394c674195d086325697a51bf4d72213e636f1df213c7e` |
+| `xbrz.h` | `4d458002afe225303cb013191466196104ea12cf5d3526f031f2df3a8add52d7` |
 
 ## Killzone renderer path
 
@@ -217,6 +229,14 @@ The missing-PS2Recomp-gitlink incident must not be repeated.
 - Establish this document and the feature branch.
 - Keep product behavior unchanged.
 
+### Stage 0A: scaler foundation
+
+- Vendor the reviewed xBRZ source with provenance, notices, and immutable
+  normalized hashes.
+- Add a checked, allocation-free 2x wrapper and an ISO-free unit test.
+- Register the source with strict dependency verification.
+- Keep the scaler disconnected from the runtime texture path.
+
 ### Stage 1: private visual probe
 
 - Capture representative textures with the existing dump path.
@@ -231,8 +251,6 @@ textures to justify runtime integration.
 
 ### Stage 2: runtime 2x prototype
 
-- Vendor xBRZ with provenance and notices.
-- Add the scaler wrapper and unit tests.
 - Add strict configuration, launcher, and automation surfaces.
 - Integrate 2x generation after manual replacement lookup.
 - Add exclusions, budget enforcement, and instrumentation.
@@ -325,3 +343,5 @@ if any of these remain true after one bounded correction:
 |---|---|---|---|
 | 2026-10-24 | Architecture review | PSP implementation and Killzone/PCSX2 cache paths inspected | 2x hash-cache prototype is feasible; higher factors deferred |
 | 2026-10-24 | Stage 0 | Feature contract and branch created | Product behavior unchanged |
+| 2026-10-24 | Stage 0A | Reviewed xBRZ source vendored from `psp-recomp` commit `138c2b8bc96a`; checked 2x wrapper and ISO-free test added | Product behavior remains unchanged; there is no runtime call site |
+| 2026-10-24 | Foundation verification | `kzgs_test` and `kzgs_xbrz_test` built; focused CTest passed 2/2; strict dependency verification passed 33/33; a deliberately corrupted temporary xBRZ hash was rejected | Foundation gates passed |
