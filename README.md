@@ -21,6 +21,7 @@ Developed with AI assistance.
 | [`HANDOFF.md`](HANDOFF.md) | Session protocol: startup, parallel-work rules, regression set, privacy rules |
 | [`docs/findings.md`](docs/findings.md) | Reverse-engineering notes and measurements, cited from source comments |
 | [`docs/upstream_comparison.md`](docs/upstream_comparison.md) | Audited upstream comparison and the bounded changes selected for this fork |
+| [`docs/xbrz_texture_upscaling.md`](docs/xbrz_texture_upscaling.md) | Feature contract, architecture, safety boundaries and acceptance gates for the xBRZ prototype |
 | [`LEARNINGS.md`](LEARNINGS.md) | Short process lessons: checks that catch mistakes, fastest tools, gate usage |
 | [`docs/assetforms.md`](docs/assetforms.md) | Verified DAT, Core/CoreStream, texture swizzle, model and level format evidence |
 | [`patches/README.md`](patches/README.md) | Rationale and measurements for each PS2Recomp runtime patch |
