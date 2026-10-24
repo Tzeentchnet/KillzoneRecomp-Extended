@@ -64,7 +64,7 @@ Nothing here was built or run. Effort: S = days or less, M = about a week, L = w
 - **Idea:** Confirm what the generated code and runtime are built with. Look for `/Ob1` (the RelWithDebInfo default), `/GS` (cookie checks show up in the profile), CFG (`/guard:cf`, which taxes every indirect call), `/JMC`. Then try `/Ob2`-`/Ob3`, `/GS-`, `/Gw /Gy`, `/GL /LTCG`, and MSVC PGO or clang-cl `-fprofile-use` trained on a gameplay run. Try clang-cl: XenonRecomp says its optimisations "depend on Clang's code generation".
 - **Source:** https://github.com/hedge-dev/XenonRecomp/blob/main/README.md (clang recommended for recompiler output). N64Recomp emits one function per file by default, which blocks inlining, and notes grouping as an option: https://github.com/N64Recomp/N64Recomp.
 - **Why here:** 82k generated functions, unity batches of 128, huge switch-dispatch prologues. PGO helps precisely this shape (branch layout, hot/cold split, inlining of tiny leaf functions).
-- **Effort:** S to M (a 15-minute full rebuild per experiment, per `CMakeLists.txt`).
+- **Effort:** S to M (a full rebuild per experiment: about 2 minutes with MSVC, 1 with clang-cl, on 16 cores).
 - **Payoff:** 10-25% if flags are currently untuned. Verify first; not asserted.
 
 ### 6. Idle-loop / spin-wait skipping
