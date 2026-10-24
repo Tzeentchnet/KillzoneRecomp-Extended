@@ -239,6 +239,11 @@ if(BUILD_TESTING)
         kzgs_palette_guard
         kzgs_xbrz_scaler
         PROPERTIES LABELS "iso-free;component")
+    if(TARGET kzgs_xbrz_probe)
+        kz_add_iso_free_test(kzgs_xbrz_probe kzgs_xbrz_probe
+            --self-test "${KZ_TEST_STATE_DIR}/kzgs/xbrz-probe")
+        set_tests_properties(kzgs_xbrz_probe PROPERTIES LABELS "iso-free;component")
+    endif()
     set_tests_properties(kz_gs_component PROPERTIES RESOURCE_LOCK kzgs_gpu)
 
     kz_add_iso_free_test(kzgs_d3d11_golden kzgs_test

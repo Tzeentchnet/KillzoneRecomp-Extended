@@ -19,3 +19,4 @@ dist/
 tools/pcsx2_par/
 /dia_symbols.obj
 /gs_trace_summary.obj
+/textures/

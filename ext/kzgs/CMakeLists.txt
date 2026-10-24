@@ -23,6 +23,7 @@ set(KZGS_ISA "AVX2" CACHE STRING "Vector ISA the GS is compiled for (SSE4, AVX, 
 set_property(CACHE KZGS_ISA PROPERTY STRINGS SSE4 AVX AVX2)
 option(KZGS_BUILD_TEST "Build the kzgs test executables" ${PROJECT_IS_TOP_LEVEL})
 option(KZGS_BUILD_TOOLS "Build kzgs debug tools (kzgs_replay)" ${PROJECT_IS_TOP_LEVEL})
+option(KZGS_BUILD_XBRZ_PROBE "Build the private xBRZ visual-probe tool" ${KZGS_BUILD_TEST})
 option(KZGS_ADDRESS_SANITIZER "Instrument kzgs with clang-cl AddressSanitizer" OFF)
 
 get_filename_component(KZGS_PCSX2_DIR "${KZGS_PCSX2_DIR}" ABSOLUTE)
@@ -321,6 +322,14 @@ target_compile_features(kzgs_xbrz PUBLIC cxx_std_20)
 target_compile_definitions(kzgs_xbrz PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_compile_options(kzgs_xbrz PRIVATE /utf-8 /W1)
 
+if(KZGS_BUILD_XBRZ_PROBE)
+	add_executable(kzgs_xbrz_probe "${KZGS_ROOT}/tools/kzgs_xbrz_probe.cpp")
+	target_link_libraries(kzgs_xbrz_probe PRIVATE kzgs_xbrz windowscodecs.lib ole32.lib)
+	target_compile_features(kzgs_xbrz_probe PRIVATE cxx_std_20)
+	target_compile_definitions(kzgs_xbrz_probe PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _UNICODE UNICODE)
+	target_compile_options(kzgs_xbrz_probe PRIVATE /utf-8 /W4)
+endif()
+
 # ---------------------------------------------------------------------------------------------------------------------
 # kzgs: the public static library
 # ---------------------------------------------------------------------------------------------------------------------
@@ -398,6 +407,9 @@ if(KZGS_BUILD_TEST)
 	add_executable(kzgs_xbrz_test "${KZGS_ROOT}/test/kzgs_xbrz_test.cpp")
 	target_link_libraries(kzgs_xbrz_test PRIVATE kzgs_xbrz)
 	target_compile_features(kzgs_xbrz_test PRIVATE cxx_std_20)
+	if(TARGET kzgs_xbrz_probe)
+		add_dependencies(kzgs_xbrz_test kzgs_xbrz_probe)
+	endif()
 endif()
 
 if(KZGS_BUILD_TOOLS)

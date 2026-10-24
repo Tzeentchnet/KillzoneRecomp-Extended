@@ -1,6 +1,6 @@
 # xBRZ texture upscaling
 
-**Status:** Scaler foundation implemented; private visual probe next
+**Status:** Private visual-probe tooling ready; authorized A/B capture pending
 
 **Started:** 2026-10-24
 
@@ -242,8 +242,8 @@ The missing-PS2Recomp-gitlink incident must not be repeated.
 - Capture representative textures with the existing dump path.
 - Run the reviewed xBRZ implementation over the private dumps.
 - Load the results through existing replacement-texture support.
-- Compare menu, HUD, weapons, characters, environment surfaces, effects, and
-  movies at native and high internal resolution.
+- Compare menu, HUD, weapons, characters, environment surfaces, and effects
+  at native and high internal resolution; verify movies remain unmodified.
 - Do not commit or distribute dumped or generated game-derived images.
 
 This stage decides whether xBRZ is visually suitable for enough Killzone
@@ -268,6 +268,52 @@ textures to justify runtime integration.
 Three-times and higher scaling, GPU compute scaling, automatic per-texture
 classification, and prebuilt texture packs are outside the initial prototype.
 
+## Private visual-probe workflow
+
+The offline `kzgs_xbrz_probe` tool exercises the production scaler wrapper
+without adding a runtime texture-cache call site. It uses Windows Imaging
+Component to decode and encode PNGs, preserves PCSX2's relative filenames, and
+does not require an ISO.
+
+Build and verify it from the repository root:
+
+```powershell
+tools\scripts\vsenv.bat cmake --build --preset win-msvc-tests --target kzgs_xbrz_probe
+build\win-msvc-rel\ext\kzgs\kzgs_xbrz_probe.exe --self-test build\win-msvc-rel\test-state\xbrz-probe
+```
+
+For an authorized private capture:
+
+1. Set `KZ_TEX_DUMP=1`, start the game normally, and capture only the short
+   scene needed for the comparison.
+2. Clear `KZ_TEX_DUMP` immediately after the capture. Dumps are written to
+   `<exe>\textures\SCUS-97402\dumps`.
+3. Copy a curated set of non-FMV PNGs into an ignored private directory such
+   as `work\xbrz-probe\selected`. Keep every PCSX2 filename unchanged.
+4. Preview eligibility without writing output:
+
+   ```powershell
+   build\win-msvc-rel\ext\kzgs\kzgs_xbrz_probe.exe `
+     --input work\xbrz-probe\selected `
+     --output build\win-msvc-rel\textures\SCUS-97402\replacements `
+     --dry-run
+   ```
+
+5. Remove `--dry-run` to generate the private replacement PNGs. Existing
+   replacements are preserved unless `--overwrite` is supplied explicitly.
+6. Restart the game with `KZ_TEX_REPLACE=0` for the baseline and
+   `KZ_TEX_REPLACE=1` for the xBRZ comparison. Record the renderer, internal
+   resolution, scene, source dimensions, and visual result.
+
+The current dump switch also permits dumps while an FMV is active. The probe
+cannot identify movies from a hash filename, so FMV selection must be excluded
+manually. Inputs over 1024 pixels in either dimension are reported and skipped.
+The output directory is refused when it is the input directory or one of its
+descendants.
+
+Keep all dumped and generated images in ignored build/work locations or
+outside the repository. Never stage, commit, publish, or distribute them.
+
 ## Validation matrix
 
 ### ISO-free
@@ -277,6 +323,13 @@ classification, and prebuilt texture packs are outside the initial prototype.
   - Preserve alpha.
   - Produce deterministic 2x output.
   - Preserve a single-color image exactly.
+- Offline probe:
+  - Round-trip a synthetic BGRA8 PNG through WIC and xBRZ without changing
+    color or alpha.
+  - Accept a 1024-pixel input dimension and reject 1025 pixels.
+  - Make `--dry-run` write no output.
+  - Preserve existing replacements unless overwrite is explicit.
+  - Reject an output directory nested under the input directory.
 - Configuration:
   - Missing setting defaults to `Off`.
   - Valid values round-trip.
@@ -345,3 +398,4 @@ if any of these remain true after one bounded correction:
 | 2026-10-24 | Stage 0 | Feature contract and branch created | Product behavior unchanged |
 | 2026-10-24 | Stage 0A | Reviewed xBRZ source vendored from `psp-recomp` commit `138c2b8bc96a`; checked 2x wrapper and ISO-free test added | Product behavior remains unchanged; there is no runtime call site |
 | 2026-10-24 | Foundation verification | `kzgs_test` and `kzgs_xbrz_test` built; focused CTest passed 2/2; strict dependency verification passed 33/33; a deliberately corrupted temporary xBRZ hash was rejected | Foundation gates passed |
+| 2026-10-24 | Stage 1 tooling | Added WIC-based private PNG probe with dry-run, exact 1024/1025 eligibility boundary, existing-file protection, atomic output, and a synthetic round-trip self-test | Probe/scaler/GS CTest passed 3/3; CLI guard paths passed; authorized visual A/B evidence is still required |
