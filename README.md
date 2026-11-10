@@ -1,15 +1,21 @@
-# KillzoneRecomp-Extended
+# Killzone Recomp Extended: Native Killzone PS2 Port for Windows PC
 
-A native Windows PC port of **Killzone** (PlayStation 2, 2004), built by statically recompiling the game's PS2 code
-with [PS2Recomp](https://github.com/ran-j/PS2Recomp) and using PCSX2-based GS, microVU, IPU, and SPU2 components.
+**Killzone Recomp Extended** is an unofficial native Windows PC port of **Killzone** (2004) for PlayStation 2 (PS2),
+built through static recompilation. It combines the
+[PS2Recomp static recompiler](https://github.com/ran-j/PS2Recomp) with PCSX2-based GS, microVU, IPU, and SPU2
+components.
+
+The port supports Direct3D 11, Direct3D 12, and Vulkan rendering, high-refresh gameplay, ultrawide displays,
+mouse-and-keyboard controls, gamepads, internal resolution scaling, and optional AMD FidelityFX FSR 1.
 
 > **Bring your own disc.** This repository contains no game code or data. You need a supported Killzone NTSC-U
 > (`SCUS-97402`) or PAL (`SCES-52893`, English/Russian/Greek) disc image.
 
-This project continues [drakolordx7/KillzoneRecomp](https://github.com/drakolordx7/KillzoneRecomp) with additional
-graphics, display, input, configuration, testing, and runtime work. The active target is Windows x64.
+This community project continues [drakolordx7/KillzoneRecomp](https://github.com/drakolordx7/KillzoneRecomp) with
+additional graphics, display, input, configuration, testing, and runtime work. The active development target is
+Windows x64.
 
-## Highlights
+## Killzone PC port features
 
 - D3D11, D3D12, and Vulkan renderers with internal resolution scaling up to 8x.
 - Native 4:3 and 16:9 plus automatic, 21:9, and 32:9 ultrawide modes with centered HUD and menu presentation.
@@ -23,9 +29,9 @@ graphics, display, input, configuration, testing, and runtime work. The active t
 - Launcher-managed display, graphics, controls, audio, disc, and isolated testing settings.
 - US and PAL runtime support from separately generated code sets in one executable.
 
-## Getting started
+## Build and play on Windows
 
-### Requirements
+### System and build requirements
 
 - Windows 10/11 x64
 - Visual Studio Build Tools 2022 or newer with **Desktop development with C++**
@@ -39,12 +45,14 @@ git clone --recursive https://github.com/Tzeentchnet/KillzoneRecomp-Extended
 Set-Location .\KillzoneRecomp-Extended
 ```
 
-Follow the [building guide](docs/building.md) to provision locked dependencies, generate private game-derived C++,
-and build `killzone.exe`. Start `launch_launcher.bat`, select your disc image, and configure the port.
+Follow the [Killzone Recomp Extended building guide](docs/building.md) to provision locked dependencies, generate
+private game-derived C++, and build `killzone.exe`. Start `launch_launcher.bat`, select your disc image, and configure
+the port.
 
-Player settings and bindings are documented in [Configuration and controls](docs/configuration.md).
+Player settings and bindings are documented in the
+[configuration and controls guide](docs/configuration.md).
 
-## Project status
+## Killzone PC port compatibility and status
 
 This is a test build, not an official release.
 
@@ -67,7 +75,7 @@ Not implemented:
 Technical status and evidence live in [Findings](docs/findings.md). Archived online research is preserved under
 [Multiplayer](docs/multiplayer/README.md).
 
-## Development
+## Build, test, and contribute
 
 The checked Windows workflow is:
 
