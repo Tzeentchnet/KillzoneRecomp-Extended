@@ -137,6 +137,7 @@ namespace
     int runSelfTest()
     {
         int failures = kzConfigSelfTest();
+        failures += kzWideSelfTest();
         failures += kzGsSelfTest();
         failures += kzPostSelfTest();
         kzInputInit(std::filesystem::temp_directory_path() / "kz_missing.ini");

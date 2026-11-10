@@ -29,3 +29,4 @@ bool kzWideTakeFrameFlag();
 void kzWideSetFov(float worldDegrees, float weaponDegrees);
 float kzFovNativeWorld();  // 87.1: 56.25 degrees vertical at 16:9
 float kzFovNativeWeapon(); // 72.7: 45 degrees vertical at 16:9
+int kzWideSelfTest();

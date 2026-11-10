@@ -436,6 +436,53 @@ void kzWideSetFov(float worldDegrees, float weaponDegrees)
                 g_fovScale.load(), weaponDegrees > 0.0f ? weaponDegrees : kzFovNativeWeapon(), g_weaponFovScale.load());
 }
 
+int kzWideSelfTest()
+{
+    int failures = 0;
+    const auto check = [&](bool condition, const char *label)
+    {
+        if (!condition)
+        {
+            std::fprintf(stderr, "[selftest] FAIL: %s\n", label);
+            ++failures;
+        }
+    };
+    const auto near = [](float actual, float expected, float tolerance)
+    {
+        return std::fabs(actual - expected) <= tolerance;
+    };
+
+    const float nativeWorld = kzFovNativeWorld();
+    const float nativeWeapon = kzFovNativeWeapon();
+    check(near(nativeWorld, 87.08f, 0.02f), "native world horizontal FOV");
+    check(near(nativeWeapon, 72.73f, 0.02f), "native weapon horizontal FOV");
+    check(tanScale(0.0f, nativeWorld) == 1.0f && tanScale(0.0f, nativeWeapon) == 1.0f,
+          "disabled FOV scale");
+    check(near(tanScale(nativeWorld, nativeWorld), 1.0f, 0.00001f) &&
+              near(tanScale(nativeWeapon, nativeWeapon), 1.0f, 0.00001f),
+          "native FOV scale");
+
+    const float worldScale = tanScale(110.0f, nativeWorld);
+    check(near(hFrom(scaleFov(56.25f, worldScale)), 110.0f, 0.01f), "requested world horizontal FOV");
+    const float weaponScale = tanScale(90.0f, nativeWeapon);
+    check(near(hFrom(scaleFov(45.0f, weaponScale)), 90.0f, 0.01f), "requested weapon horizontal FOV");
+
+    constexpr float zoomDegrees = 35.0f;
+    const float degreeRatio =
+        std::tan(scaleFov(zoomDegrees, worldScale) * kPi / 360.0f) /
+        std::tan(zoomDegrees * kPi / 360.0f);
+    check(near(degreeRatio, worldScale, 0.00001f), "degree FOV preserves tangent-space zoom ratio");
+
+    constexpr float zoomRadians = 1.0f;
+    const float radianRatio =
+        std::tan(scaleFov(zoomRadians, weaponScale) * 0.5f) / std::tan(zoomRadians * 0.5f);
+    check(near(radianRatio, weaponScale, 0.00001f), "radian FOV preserves tangent-space zoom ratio");
+    check(near(scaleFov(56.25f, 1.0f), 56.25f, 0.00001f) &&
+              near(scaleFov(zoomRadians, 1.0f), zoomRadians, 0.00001f),
+          "unit FOV scale is a no-op");
+    return failures;
+}
+
 void kzWideInstall(PS2Runtime &runtime)
 {
     g_log = std::getenv("KZ_WIDE_LOG") != nullptr;

@@ -240,6 +240,19 @@ namespace
             return it == m_ini.latest.end() ? nullptr : &m_ini.entries[it->second];
         }
 
+        const RawSetting *findWithAlias(const char *section, const char *key, const char *alias)
+        {
+            const RawSetting *setting = find(section, key);
+            const RawSetting *aliasSetting = find(section, alias);
+            if (setting && aliasSetting)
+            {
+                addDiagnostic(m_ini, DiagnosticLevel::Warning, aliasSetting->line, aliasSetting->section,
+                              aliasSetting->key, aliasSetting->value, true,
+                              std::string("legacy alias ignored because ") + key + " is present");
+            }
+            return setting ? setting : aliasSetting;
+        }
+
         bool contains(const char *section, const char *key)
         {
             return find(section, key) != nullptr;
@@ -281,25 +294,13 @@ namespace
 
         float number(const char *section, const char *key, float fallback, float minimum, float maximum)
         {
-            const RawSetting *setting = find(section, key);
-            if (!setting)
-                return fallback;
-            float value = 0.0f;
-            if (!parseFloat(setting->value, value))
-            {
-                reject(*setting, "expected a finite number");
-                return fallback;
-            }
-            if (value < minimum || value > maximum)
-            {
-                std::ostringstream message;
-                message.imbue(std::locale::classic());
-                message << "out of range; clamped to " << std::clamp(value, minimum, maximum);
-                addDiagnostic(m_ini, DiagnosticLevel::Warning, setting->line, setting->section, setting->key,
-                              setting->value, false, message.str());
-                return std::clamp(value, minimum, maximum);
-            }
-            return value;
+            return number(find(section, key), fallback, minimum, maximum);
+        }
+
+        float numberWithAlias(const char *section, const char *key, const char *alias, float fallback,
+                              float minimum, float maximum)
+        {
+            return number(findWithAlias(section, key, alias), fallback, minimum, maximum);
         }
 
         template <typename E, size_t N>
@@ -342,6 +343,28 @@ namespace
         }
 
     private:
+        float number(const RawSetting *setting, float fallback, float minimum, float maximum)
+        {
+            if (!setting)
+                return fallback;
+            float value = 0.0f;
+            if (!parseFloat(setting->value, value))
+            {
+                reject(*setting, "expected a finite number");
+                return fallback;
+            }
+            if (value < minimum || value > maximum)
+            {
+                std::ostringstream message;
+                message.imbue(std::locale::classic());
+                message << "out of range; clamped to " << std::clamp(value, minimum, maximum);
+                addDiagnostic(m_ini, DiagnosticLevel::Warning, setting->line, setting->section, setting->key,
+                              setting->value, false, message.str());
+                return std::clamp(value, minimum, maximum);
+            }
+            return value;
+        }
+
         void reject(const RawSetting &setting, std::string message)
         {
             addDiagnostic(m_ini, DiagnosticLevel::Error, setting.line, setting.section, setting.key, setting.value,
@@ -413,8 +436,9 @@ namespace
         c.lensBlur = reader.boolean("Graphics", "LensBlur", c.lensBlur);
         c.renderDistance = reader.number("Graphics", "RenderDistance", c.renderDistance, 1.0f, 2.0f);
         c.lodScale = reader.number("Graphics", "LodScale", c.lodScale, 1.0f, 1.0f);
-        c.fov = reader.number("Graphics", "Fov", c.fov, 0.0f, 180.0f);
-        c.weaponFov = reader.number("Graphics", "WeaponFov", c.weaponFov, 0.0f, 180.0f);
+        c.fov = reader.numberWithAlias("Graphics", "FieldOfView", "Fov", c.fov, 0.0f, 180.0f);
+        c.weaponFov =
+            reader.numberWithAlias("Graphics", "WeaponFieldOfView", "WeaponFov", c.weaponFov, 0.0f, 180.0f);
         c.mouseSensitivity = reader.number("Input", "MouseSensitivity", c.mouseSensitivity, 0.05f, 20.0f);
         c.invertY = reader.boolean("Input", "InvertY", c.invertY);
         c.rawMouse = reader.boolean("Input", "RawMouse", c.rawMouse);
@@ -542,7 +566,8 @@ namespace
           << "\nSharpen=" << c.sharpen << "\nNoiseFilter=" << (c.noiseFilter ? 1 : 0)
           << "\nMotionBlur=" << (c.motionBlur ? 1 : 0) << "\nGlow=" << (c.glow ? 1 : 0)
           << "\nLensBlur=" << (c.lensBlur ? 1 : 0) << "\nRenderDistance=" << c.renderDistance
-          << "\nLodScale=" << c.lodScale << "\nFov=" << c.fov << "\nWeaponFov=" << c.weaponFov << '\n';
+          << "\nLodScale=" << c.lodScale << "\nFieldOfView=" << c.fov
+          << "\nWeaponFieldOfView=" << c.weaponFov << '\n';
         writeExtras("Graphics", false);
         o << "\n[Input]\nMouseSensitivity=" << c.mouseSensitivity << "\nInvertY=" << (c.invertY ? 1 : 0)
           << "\nRawMouse=" << (c.rawMouse ? 1 : 0) << "\nAimMode=" << (c.holdAim ? "Hold" : "Toggle")
@@ -775,6 +800,47 @@ int kzConfigSelfTest()
     const ConfigLoadResult missing = loadConfigFile(root / "missing.ini");
     check(sameConfig(missing.config, KzConfig{}), "missing file defaults");
     check(missing.document.diagnostics.empty(), "missing file diagnostics");
+
+    const std::filesystem::path canonicalFovPath = root / "canonical-fov.ini";
+    check(writeText(canonicalFovPath,
+                    "[Config]\nVersion=3\n[Graphics]\nFieldOfView=105.5\nWeaponFieldOfView=80.5\n"),
+          "write canonical FOV fixture");
+    const ConfigLoadResult canonicalFov = loadConfigFile(canonicalFovPath);
+    check(canonicalFov.config.fov == 105.5f && canonicalFov.config.weaponFov == 80.5f,
+          "canonical FOV keys");
+    check(canonicalFov.document.diagnostics.empty(), "canonical FOV diagnostics");
+
+    const std::filesystem::path aliasFovPath = root / "alias-fov.ini";
+    check(writeText(aliasFovPath, "[Config]\nVersion=3\n[Graphics]\nFov=101.5\nWeaponFov=84.5\n"),
+          "write alias FOV fixture");
+    const ConfigLoadResult aliasFov = loadConfigFile(aliasFovPath);
+    check(aliasFov.config.fov == 101.5f && aliasFov.config.weaponFov == 84.5f, "FOV migration aliases");
+    check(aliasFov.document.diagnostics.empty(), "FOV migration alias diagnostics");
+    check(saveConfigFile(aliasFovPath, aliasFov.config, false), "save FOV alias fixture");
+    const std::string aliasFovSaved = readText(aliasFovPath);
+    check(aliasFovSaved.find("FieldOfView=101.5") != std::string::npos &&
+              aliasFovSaved.find("WeaponFieldOfView=84.5") != std::string::npos &&
+              aliasFovSaved.find("\nFov=") == std::string::npos &&
+              aliasFovSaved.find("\nWeaponFov=") == std::string::npos,
+          "FOV aliases migrate to canonical keys");
+    check(sameConfig(loadConfigFile(aliasFovPath).config, aliasFov.config), "FOV alias migration round-trip");
+
+    const std::filesystem::path precedenceFovPath = root / "precedence-fov.ini";
+    check(writeText(precedenceFovPath,
+                    "[Config]\nVersion=3\n[Graphics]\n"
+                    "FieldOfView=112\nFov=90\nWeaponFieldOfView=88\nWeaponFov=70\n"),
+          "write FOV precedence fixture");
+    const ConfigLoadResult precedenceFov = loadConfigFile(precedenceFovPath);
+    check(precedenceFov.config.fov == 112.0f && precedenceFov.config.weaponFov == 88.0f,
+          "canonical FOV key precedence");
+    check(hasDiagnostic(precedenceFov, DiagnosticLevel::Warning, "Graphics", "Fov", "90") &&
+              hasDiagnostic(precedenceFov, DiagnosticLevel::Warning, "Graphics", "WeaponFov", "70"),
+          "ignored FOV alias diagnostics");
+    check(saveConfigFile(precedenceFovPath, precedenceFov.config, false), "save FOV precedence fixture");
+    const std::string precedenceFovSaved = readText(precedenceFovPath);
+    check(precedenceFovSaved.find("\nFov=") == std::string::npos &&
+              precedenceFovSaved.find("\nWeaponFov=") == std::string::npos,
+          "ignored FOV aliases removed on save");
 
     const std::filesystem::path partialPath = root / "partial.ini";
     check(writeText(partialPath, "[Config]\nVersion=3\n[Display]\nVSync=0\n"), "write partial fixture");
