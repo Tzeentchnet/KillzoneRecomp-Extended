@@ -27,8 +27,8 @@ The renderer also builds the [Tzeentchnet/pcsx2](https://github.com/Tzeentchnet/
 `1fb920189c12766af55bdc9178619c0c66eb1a5e`, pinned in
 [`config/dependencies.lock.json`](../config/dependencies.lock.json). It is GPL-3.0-or-later; provide the
 corresponding source and notices for the exact distributed build, not just a link to unmodified upstream PCSX2.
-As of 2026-11-10 this companion revision is unpublished, so clean acquisition and corresponding-source availability
-remain release blockers until the separate publication work is complete.
+The companion revision is published on `feature/kzgs-upscaler-foundation`; retain that exact revision and its
+corresponding source when preparing a release.
 Optional local vendor builds have separate [license and provenance records](vendor-upscalers.md); their
 redistribution, including any combined binary, is not approved by this work.
 

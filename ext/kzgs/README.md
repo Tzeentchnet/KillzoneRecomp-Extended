@@ -7,8 +7,8 @@ replaced by small stubs in `shim/`, so the library needs no BIOS, EE/IOP, VIF, D
 - PCSX2 source: `ext/pcsx2`, pinned in `config/dependencies.lock.json` to
   [Tzeentchnet/pcsx2](https://github.com/Tzeentchnet/pcsx2) companion commit
   `1fb920189c12766af55bdc9178619c0c66eb1a5e`. It includes generic presentation, Vulkan device-negotiation,
-  completed-frame, and GS observation hooks. This revision is unpublished as of 2026-11-10; clean remote acquisition
-  is blocked pending publication. It is a separate checkout, not the PS2Recomp submodule.
+  completed-frame, and GS observation hooks. The revision is published on `feature/kzgs-upscaler-foundation` and is
+  available for clean remote acquisition. It is a separate checkout, not the PS2Recomp submodule.
 - Dependencies: the official `pcsx2-windows-dependencies.7z` from the locked PCSX2 Windows dependency release,
   extracted to `ext/kzgs/deps` (so the headers are in
   `ext/kzgs/deps/deps/include`). It is not committed.

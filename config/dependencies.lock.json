@@ -168,10 +168,10 @@
       "kind": "git-checkout",
       "source_url": "https://github.com/Tzeentchnet/pcsx2.git",
       "revision": "1fb920189c12766af55bdc9178619c0c66eb1a5e",
-      "publication_status": "unpublished",
+      "publication_status": "published",
       "license": "GPL-3.0-or-later",
       "redistribution": "Copyleft; distribute corresponding source and notices.",
-      "acquisition": "The pinned companion revision is currently local-only; publication is pending. Until it is published, a clean remote clone cannot provision it. Do not substitute upstream PCSX2.",
+      "acquisition": "Clone the exact revision from the Tzeentchnet/pcsx2 companion repository. Do not substitute upstream PCSX2.",
       "local": {
         "path": "ext/pcsx2",
         "required_in_strict": true,

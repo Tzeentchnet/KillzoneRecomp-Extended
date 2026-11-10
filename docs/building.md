@@ -28,9 +28,8 @@ repository does not contain game code or data.
    - The separate [Tzeentchnet/pcsx2](https://github.com/Tzeentchnet/pcsx2) checkout under `ext\pcsx2`, at
      companion commit `1fb920189c12766af55bdc9178619c0c66eb1a5e` on `feature/kzgs-upscaler-foundation`. It builds on
      PCSX2 baseline `d3e6982a3e36647d642bcd805d3ca5b442d0975c` and contains the presentation and observation hooks.
-     This checkout is not the PS2Recomp submodule. As of 2026-11-10 the locked companion revision is **not
-     published**: a clean remote clone cannot acquire it, and publication is a separate prerequisite. Local
-     dependency verification does not establish remote availability. Do not substitute upstream PCSX2.
+     This checkout is not the PS2Recomp submodule. The locked companion revision is published on
+     `feature/kzgs-upscaler-foundation` and can be acquired by a clean remote clone. Do not substitute upstream PCSX2.
    - The locked PCSX2 Windows dependency archive retained and extracted under `ext\kzgs\deps`.
    - The locked SDL3 VC development archive retained and extracted under `ext\sdl3`.
    - For macOS experiments, the locked SDL3 source archive extracted as `ext\sdl3\SDL3-3.4.16-source`.
