@@ -191,6 +191,10 @@ int main()
 		check(afterRetire.abandoned == beforeRetire.abandoned + 1 &&
 			afterRetire.destroyed == beforeRetire.destroyed && afterRetire.deviceLost == beforeRetire.deviceLost,
 			"uncertain completion never explicitly destroys FSR1 children or reports device loss");
+		KzgsUpscalerStatus retirementStatus;
+		check(kzgsGetUpscalerStatus(retirementStatus) &&
+			retirementStatus.reason == KzgsUpscalerReason::InitializationFailed,
+			"non-device-loss retirement failure reports initialization failure");
 		const bool actuallyIdle = vkDeviceWaitIdle(device->GetDevice()) == VK_SUCCESS;
 		check(actuallyIdle, "test GPU becomes idle before releasing retained fixtures");
 		if (!actuallyIdle)
@@ -223,6 +227,9 @@ int main()
 			afterRetire.deviceLost == beforeRetire.deviceLost + 1 &&
 			afterRetire.abandoned == beforeRetire.abandoned,
 			"terminal device loss is distinguished from uncertain completion");
+		check(kzgsGetUpscalerStatus(retirementStatus) &&
+			retirementStatus.reason == KzgsUpscalerReason::DeviceLost,
+			"terminal retirement reports device loss distinctly");
 	});
 
 	kzgsClose();
