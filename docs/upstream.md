@@ -23,7 +23,7 @@ game code, screenshots, traces containing protected content, or paths to local d
 
 | Date | Submission | Status | Validation |
 |---|---|---|---|
-| 2026-11-10 | [ran-j/PS2Recomp#436](https://github.com/ran-j/PS2Recomp/pull/436) - avoid broad fallback for unresolved JALR calls | Open | Windows Release, MSVC and ClangCL: 446/446 tests passed |
+| 2026-11-10 | [ran-j/PS2Recomp#436](https://github.com/ran-j/PS2Recomp/pull/436) - avoid broad fallback for unresolved JALR calls | Open | Windows Release, MSVC and ClangCL: 447/447 tests passed |
 | 2026-11-10 | [ran-j/PS2Recomp#437](https://github.com/ran-j/PS2Recomp/pull/437) - wrap VIF MPG uploads within VU micro memory | Open | Windows Release, MSVC and ClangCL: 448/448 tests passed |
 | 2026-11-10 | [ran-j/PS2Recomp#438](https://github.com/ran-j/PS2Recomp/issues/438) - RFC for multiple recompiled images in one executable | Open | Design discussion backed by a tested downstream prototype |
 
@@ -68,15 +68,16 @@ micro memory. This matches the address masking and split-write behavior in PCSX2
 
 **Filed:** [ran-j/PS2Recomp#436](https://github.com/ran-j/PS2Recomp/pull/436) on 2026-11-10.
 
-An unresolved `JALR` is an indirect call. The caller needs a resume label at `pc + 8`, but treating it like an
-unresolved local jump promotes broad portions of the caller to indirect fallback entries. In the Killzone generated
-set this produced labels and switch cases throughout roughly 4,000 functions and inhibited optimization across
-ordinary instructions.
+A `JALR` with a nonzero link destination is an indirect call. The caller needs a resume label at `pc + 8`, but
+treating it like an unresolved local jump promotes broad portions of the caller to indirect fallback entries. In the
+Killzone generated set this produced labels and switch cases throughout roughly 4,000 functions and inhibited
+optimization across ordinary instructions. `JALR $zero, $rs` produces no return link and must remain on the unresolved
+indirect-jump fallback path.
 
 - Local change:
   [`0014-jalr-resume-only-return.patch`](../patches/ps2recomp/0014-jalr-resume-only-return.patch).
 - Submitted implementation:
-  [`f07c61b`](https://github.com/Tzeentchnet/PS2Recomp/commit/f07c61be385400d7d8a40c0fa763bed34f9229c5).
+  [`7035404`](https://github.com/Tzeentchnet/PS2Recomp/commit/70354045ef118b11452d16f835575efa359c816f).
 - Duplicate search: no matching open issue or PR was found.
 - Related but distinct:
   [ran-j/PS2Recomp#260](https://github.com/ran-j/PS2Recomp/issues/260) concerns resuming inside an
@@ -84,9 +85,10 @@ ordinary instructions.
   [ran-j/PS2Recomp#415](https://github.com/ran-j/PS2Recomp/pull/415) concerns a real delay slot located at the next
   function.
 
-The canonical test verifies that `pc + 8` remains a resume entry and emitted label, unrelated caller instructions are
-not promoted, and no jump-table target is fabricated. The existing unresolved-`JR` fallback test remains unchanged.
-The full Windows Release suite passed 446/446 tests under MSVC 19.44 and ClangCL 19.1.5.
+The canonical tests verify that `pc + 8` remains a resume entry and emitted label for link-producing JALRs, unrelated
+caller instructions are not promoted, `JALR $zero` retains broad fallback without a return entry, and no jump-table
+target is fabricated. The existing unresolved-`JR` fallback test remains unchanged. The full Windows Release suite
+passed 447/447 tests under MSVC 19.44 and ClangCL 19.1.5.
 
 #### VIF STCYCL `CL=0` should mean 256
 
