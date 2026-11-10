@@ -21,6 +21,7 @@
 // forwarding packets, and raise INTC_GS itself.
 #pragma once
 
+#include "kzgs_upscaler.h"
 #include "kz_host/core.h"
 
 #include <cstdint>
@@ -61,6 +62,8 @@ struct KzgsConfig
 {
 	KzgsRenderer renderer = KzgsRenderer::D3D11;
 	int upscale = 1;                                   // internal resolution multiplier, 1..8
+	KzgsUpscaler upscaler = KzgsUpscaler::Off;         // requested presentation provider; independent of upscale
+	int upscalerSharpening = 0;                        // provider-owned sharpening, 0..100; not CAS
 	KzgsTextureFilter textureFiltering = KzgsTextureFilter::PS2;
 	int anisotropy = 0;                                // 0 (off), 2, 4, 8, 16
 	KzgsMipmapMode mipmapMode = KzgsMipmapMode::PS2;   // BaseOnly disables mip selection and samples level zero
@@ -126,6 +129,10 @@ bool kzgsOpen(const kz::host::NativeWindow& window, const KzgsConfig& cfg, uint8
 void kzgsClose();
 
 bool kzgsIsOpen();
+
+// Last GS-thread-applied request and actual provider. False while closed; after kzgsUpdateConfig, kzgsSync waits for
+// the new status. Providers are currently unavailable, so non-Off requests fall back to the existing presentation.
+bool kzgsGetUpscalerStatus(KzgsUpscalerStatus& out);
 
 // Queues a GIF packet (sequence of GIFtags + data) for PATH 1, 2 or 3. `qwords` is the size in 16-byte units.
 // The data is copied; the caller may reuse its buffer immediately. PATH1 transfers stop at the first EOP, as on

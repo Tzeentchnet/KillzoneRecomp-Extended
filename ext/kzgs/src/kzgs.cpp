@@ -135,12 +135,61 @@ namespace
 	static int s_max_queued_frames = 2;
 	static bool s_self_contained_packets = true;
 	static KzgsLogFn s_log_fn = nullptr;
+	static std::mutex s_upscaler_mutex;
+	static KzgsUpscalerStatus s_upscaler_status;
 	static KzgsTraceFn s_trace_fn = nullptr;
 	static s64 s_trace_idle_ns = 0; // GS thread only
 	static inline void Trace(int id, u32 a = 0)
 	{
 		if (KzgsTraceFn fn = s_trace_fn)
 			fn(id, a);
+	}
+
+	static bool ValidateUpscalerConfig(const KzgsConfig& cfg, std::string& error)
+	{
+		if (!kzgsIsValidUpscaler(cfg.upscaler))
+		{
+			error = "upscaler must be off, fsr1, dlss or xess";
+			return false;
+		}
+		if (cfg.upscalerSharpening < 0 || cfg.upscalerSharpening > 100)
+		{
+			error = "upscaler sharpening must be an integer from 0 to 100";
+			return false;
+		}
+		return true;
+	}
+
+	static void ResetUpscalerStatus()
+	{
+		std::lock_guard lock(s_upscaler_mutex);
+		s_upscaler_status = {};
+	}
+
+	static void PublishUpscalerStatus(const KzgsConfig& cfg)
+	{
+		KzgsUpscalerStatus status;
+		status.requested = cfg.upscaler;
+		status.requestedSharpening = cfg.upscalerSharpening;
+		status.reason = cfg.upscaler == KzgsUpscaler::Off
+			? KzgsUpscalerReason::Disabled : KzgsUpscalerReason::NotImplemented;
+		bool changed;
+		{
+			std::lock_guard lock(s_upscaler_mutex);
+			changed = status.requested != s_upscaler_status.requested ||
+				status.requestedSharpening != s_upscaler_status.requestedSharpening;
+			s_upscaler_status = status;
+		}
+		if (changed && status.requested != KzgsUpscaler::Off)
+		{
+			const std::string message = std::string("experimental presentation upscaler ") +
+				kzgsUpscalerName(status.requested) +
+				" is not implemented; using existing presentation (provider sharpening inactive)";
+			if (s_log_fn)
+				s_log_fn(1, message.c_str());
+			else
+				std::fprintf(stderr, "[kzgs] %s\n", message.c_str());
+		}
 	}
 
 	static constexpr u32 Align16(u32 v) { return (v + 15u) & ~15u; }
@@ -745,6 +794,7 @@ namespace
 					kzgs::SmaaInstall();
 					if (vsync_changed)
 						GSSetVSyncMode(opts.VsyncEnable ? GSVSyncMode::FIFO : GSVSyncMode::Disabled, false);
+					PublishUpscalerStatus(*cfg);
 				}
 				break;
 
@@ -826,6 +876,7 @@ namespace
 		}
 
 		kzgs::SmaaInstall();
+		PublishUpscalerStatus(cfg);
 		result->ok = true;
 		result->sync.Signal();
 		result = nullptr; // owned by the opener, which has returned
@@ -854,6 +905,13 @@ bool kzgsOpen(const kz::host::NativeWindow& window, const KzgsConfig& cfg, uint8
 			*err = "privRegs must point to a 0x2000-byte register block";
 		return false;
 	}
+	std::string config_error;
+	if (!ValidateUpscalerConfig(cfg, config_error))
+	{
+		if (err)
+			*err = config_error;
+		return false;
+	}
 
 	Log::SetHostOutputLevel(LOGLEVEL_INFO, LogCallback);
 
@@ -864,6 +922,7 @@ bool kzgsOpen(const kz::host::NativeWindow& window, const KzgsConfig& cfg, uint8
 	s_local_write = 0;
 	s_queued_frames.store(0);
 	ResetResolutionInfo();
+	ResetUpscalerStatus();
 
 	s_caller_regs = privRegs;
 	std::memcpy(s_gs_regs, privRegs, sizeof(s_gs_regs));
@@ -903,11 +962,21 @@ void kzgsClose()
 	s_open.store(false);
 	s_caller_regs = nullptr;
 	ResetResolutionInfo();
+	ResetUpscalerStatus();
 }
 
 bool kzgsIsOpen()
 {
 	return s_open.load();
+}
+
+bool kzgsGetUpscalerStatus(KzgsUpscalerStatus& out)
+{
+	std::lock_guard lock(s_upscaler_mutex);
+	if (!s_open.load(std::memory_order_acquire))
+		return false;
+	out = s_upscaler_status;
+	return true;
 }
 
 void kzgsGifTransfer(int path, const uint8_t* data, uint32_t qwords)
@@ -1043,8 +1112,19 @@ bool kzgsGetResolutionInfo(KzgsResolutionInfo& out)
 
 void kzgsUpdateConfig(const KzgsConfig& cfg)
 {
-	if (s_open.load(std::memory_order_relaxed))
-		PushPtr(Cmd::UpdateConfig, new KzgsConfig(cfg));
+	if (!s_open.load(std::memory_order_relaxed))
+		return;
+	std::string error;
+	if (!ValidateUpscalerConfig(cfg, error))
+	{
+		const std::string message = "configuration update rejected: " + error;
+		if (s_log_fn)
+			s_log_fn(0, message.c_str());
+		else
+			std::fprintf(stderr, "[kzgs] %s\n", message.c_str());
+		return;
+	}
+	PushPtr(Cmd::UpdateConfig, new KzgsConfig(cfg));
 }
 
 void kzgsSync()

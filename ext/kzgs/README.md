@@ -74,6 +74,7 @@ bool kzgsOpen(const kz::host::NativeWindow& window, const KzgsConfig& cfg,
               uint8_t* privRegs, std::string* err = nullptr);
 void kzgsClose();
 bool kzgsIsOpen();
+bool kzgsGetUpscalerStatus(KzgsUpscalerStatus& out);  // last applied request, effective provider and fallback reason
 void kzgsGifTransfer(int path /*1..3*/, const uint8_t* data, uint32_t qwords);
 void kzgsVsync(int field, bool regsWritten = true);   // presents a frame
 void kzgsWriteCSR(uint32_t csr);                      // RESET bit
@@ -94,6 +95,8 @@ bool kzgsBurstTake(std::vector<KzgsBurstFrame>& out);
 `KzgsConfig` has these settings:
 - `renderer`: D3D11, D3D12, Vulkan, or Software (PCSX2's software rasterizer, useful as a reference when debugging)
 - `upscale`: 1 to 8
+- `upscaler` and `upscalerSharpening`: experimental presentation request, default Off/0; independent of integer
+  `upscale` and `casSharpness`. Providers currently report `not_implemented` and do not alter presentation.
 - `textureFiltering`: PCSX2 `BiFiltering`
 - `anisotropy`
 - `fxaa`
@@ -113,6 +116,8 @@ bool kzgsBurstTake(std::vector<KzgsBurstFrame>& out);
 
 Pass `hwnd = nullptr` to open without a window (a surfaceless device). This still renders and supports
 `kzgsReadback`, so it can be used for headless screenshot tests.
+`kzgsGetUpscalerStatus` returns false while closed. After `kzgsUpdateConfig`, call `kzgsSync` before querying the
+new status.
 
 ### Privileged registers
 
@@ -239,6 +244,9 @@ ext/kzgs/build/kzgs_replay.exe work/trace_full2.bin work/kzdbg/out --every 100 [
   `--sharp 0|1`, `--bilinear 0|1`, `--cas N`, `--filter N` set the final-scaling and texture-filter fields. `--skip-idle` skips
   vblanks without new GIF packets like the game does, `--single-circuit` applies the game's display-register rewrite
   (read circuit 2 := read circuit 1, see docs/findings.md "Menu jitter and blur").
+- `--upscaler off|fsr1|dlss|xess` and `--upscaler-sharpening 0..100` request the experimental presentation contract;
+  all providers currently report `not_implemented` and use the unchanged presentation path. These do not change
+  `--upscale` or `--cas`. The game and both replay tools share the same strict CLI/environment parsing.
 - `--sleep MS [--sleep-from N]` waits between vsyncs, so the GS thread has idle time as in the game (a replay without
   pacing keeps the GS thread saturated and hides pacing-dependent renderer bugs).
 - `--dump-draws F:N` turns on PCSX2's own per-draw dumps (context registers, vertices, transfers) for N draws

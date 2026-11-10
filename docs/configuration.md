@@ -51,6 +51,28 @@ preserved, and saves retain the disc path and all bindings. A build refuses to o
   (approximately 87 degrees world and 73 degrees weapon). Zooming retains its tangent-space magnification.
   `Fov` and `WeaponFov` remain accepted migration aliases; canonical names win and are written on save.
 
+### Experimental presentation upscaler
+
+These settings are configuration/diagnostic plumbing only; there are no launcher controls or implemented providers yet:
+
+```ini
+[Graphics]
+Upscaler=off
+UpscalerSharpening=0
+```
+
+`Upscaler` accepts `off`, `fsr1`, `dlss`, or `xess` (case-insensitive); saves use these lowercase names.
+`UpscalerSharpening` is an integer from 0 to 100, owned by the selected provider. It is separate from the existing
+`Sharpen`/CAS setting. The existing integer `Upscale` remains the GS supersampling multiplier and is unchanged.
+All provider requests currently report `not_implemented` and fall back to the existing presentation path; provider
+sharpening is inactive. No vendor SDK is included or required.
+
+For a single run, use `KZ_UPSCALER` and `KZ_UPSCALER_SHARPENING`, or pass e.g.
+`--upscaler fsr1 --upscaler-sharpening 35` (`--option=value` also works). Each CLI setting takes precedence over
+its environment variable, which takes precedence over the INI setting. The launcher never saves these overrides.
+Invalid INI/environment values are reported and rejected; invalid or incomplete CLI options terminate with an error.
+Both GS replay tools accept the same environment variables and CLI options; they do not read `killzone.ini`.
+
 The launcher's **Validated enhancements** preset selects the measured stock-game setup: D3D12, VSync, automatic
 internal scale, 16x anisotropy, highest mip detail, clean PS2 effects, replacement textures off, 2x view distance,
 and 30% sharpening.

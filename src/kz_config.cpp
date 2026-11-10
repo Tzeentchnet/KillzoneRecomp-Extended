@@ -324,6 +324,20 @@ namespace
             return fallback;
         }
 
+        template <typename T>
+        T validated(const char *section, const char *key, T fallback,
+                    bool (*parse)(std::string_view, T &), const char *expected)
+        {
+            const RawSetting *setting = find(section, key);
+            if (!setting)
+                return fallback;
+            T value{};
+            if (parse(setting->value, value))
+                return value;
+            reject(*setting, expected);
+            return fallback;
+        }
+
         std::string text(const char *section, const char *key, std::string fallback)
         {
             const RawSetting *setting = find(section, key);
@@ -420,6 +434,11 @@ namespace
         c.threadedGraphics = reader.integer("Display", "ThreadedGraphics", c.threadedGraphics, -1, 1);
         c.renderer = reader.enumeration("Graphics", "Renderer", c.renderer, kRenderers);
         c.upscale = reader.integer("Graphics", "Upscale", c.upscale, 0, 8);
+        c.upscaler = reader.validated("Graphics", "Upscaler", c.upscaler, &kzgsParseUpscaler,
+                                      "expected off, fsr1, dlss or xess");
+        c.upscalerSharpening = reader.validated("Graphics", "UpscalerSharpening", c.upscalerSharpening,
+                                                &kzgsParseUpscalerSharpening,
+                                                "expected an integer from 0 to 100");
         c.aspect = reader.enumeration("Graphics", "Aspect", c.aspect, kAspects);
         c.anisotropy = reader.integer("Graphics", "Anisotropy", c.anisotropy, 0, 16);
         c.mipmapMode = reader.enumeration("Graphics", "Mipmapping", c.mipmapMode, kMipmapModes);
@@ -557,6 +576,8 @@ namespace
           << "\nShowFps=" << (c.showFps ? 1 : 0) << "\nThreadedGraphics=" << c.threadedGraphics << '\n';
         writeExtras("Display", false);
         o << "\n[Graphics]\nRenderer=" << toName(kRenderers, c.renderer) << "\nUpscale=" << c.upscale
+          << "\nUpscaler=" << kzgsUpscalerName(c.upscaler)
+          << "\nUpscalerSharpening=" << c.upscalerSharpening
           << "\nAspect=" << toName(kAspects, c.aspect) << "\nAnisotropy=" << c.anisotropy
           << "\nMipmapping=" << toName(kMipmapModes, c.mipmapMode)
           << "\nFXAA=" << (c.fxaa ? 1 : 0) << "\nSMAA=" << (c.smaa ? 1 : 0)
@@ -627,6 +648,9 @@ namespace
         return a.windowMode == b.windowMode && a.width == b.width && a.height == b.height && a.vsync == b.vsync &&
                a.fpsLimit == b.fpsLimit && a.showFps == b.showFps &&
                a.threadedGraphics == b.threadedGraphics && a.renderer == b.renderer && a.upscale == b.upscale &&
+               a.upscaler == b.upscaler && a.upscalerSharpening == b.upscalerSharpening &&
+               a.upscalerOverrides.provider == b.upscalerOverrides.provider &&
+               a.upscalerOverrides.sharpening == b.upscalerOverrides.sharpening &&
                a.aspect == b.aspect && a.anisotropy == b.anisotropy && a.mipmapMode == b.mipmapMode &&
                a.fxaa == b.fxaa && a.smaa == b.smaa &&
                a.smaaThreshold == b.smaaThreshold && a.textureReplacement == b.textureReplacement &&
@@ -693,6 +717,8 @@ KzConfig kzLoadConfig(const std::filesystem::path &path)
     ConfigLoadResult result = loadConfigFile(path);
     emitDiagnostics(path, result.document);
     KzConfig &config = result.config;
+    config.upscalerOverrides = kzgsUpscalerEnvironmentOverrides(
+        std::getenv("KZ_UPSCALER"), std::getenv("KZ_UPSCALER_SHARPENING"), std::cerr);
     if (const char *value = std::getenv("KZ_ASPECT"); value && *value && !fromName(kAspects, value, config.aspect))
         std::cerr << "[kz-config] error: KZ_ASPECT rejected value '" << value
                   << "': expected 16:9, 4:3, stretch, auto, 21:9 or 32:9\n";
@@ -778,6 +804,8 @@ int kzConfigSelfTest()
     check(baselineBindings == kzInputBindingPairs(baselinePath), "baseline bindings round-trip");
     check(readText(baselinePath).find("[Config]\nVersion=3") != std::string::npos,
           "baseline schema version round-trip");
+    check(readText(baselinePath).find("\nUpscaler=off\nUpscalerSharpening=0\n") != std::string::npos,
+          "default upscaler canonical serialization");
     KzConfig editedBaseline = baselineRoundTrip.config;
     editedBaseline.vsync = false;
     editedBaseline.sharpen = 45;
@@ -800,6 +828,164 @@ int kzConfigSelfTest()
     const ConfigLoadResult missing = loadConfigFile(root / "missing.ini");
     check(sameConfig(missing.config, KzConfig{}), "missing file defaults");
     check(missing.document.diagnostics.empty(), "missing file diagnostics");
+    check(missing.config.upscaler == KzgsUpscaler::Off && missing.config.upscalerSharpening == 0 &&
+              !missing.config.upscalerOverrides.provider && !missing.config.upscalerOverrides.sharpening,
+          "presentation upscaler defaults to off with no one-run overrides");
+
+    struct UpscalerCase
+    {
+        const char *input;
+        const char *canonical;
+        KzgsUpscaler provider;
+        int sharpening;
+    };
+    const UpscalerCase upscalerCases[] = {
+        {"OFF", "off", KzgsUpscaler::Off, 0},
+        {"FsR1", "fsr1", KzgsUpscaler::FSR1, 100},
+        {"DlSs", "dlss", KzgsUpscaler::DLSS, 37},
+        {"XESS", "xess", KzgsUpscaler::XeSS, 1},
+    };
+    for (const UpscalerCase &test : upscalerCases)
+    {
+        const std::filesystem::path path = root / (std::string("upscaler-") + test.canonical + ".ini");
+        check(writeText(path, std::string("[Config]\nVersion=3\n[Graphics]\nUpscale=4\nUpscaler=") +
+                                  test.input + "\nUpscalerSharpening=" + std::to_string(test.sharpening) +
+                                  "\nSharpen=35\n"),
+              "write presentation upscaler fixture");
+        const ConfigLoadResult loaded = loadConfigFile(path);
+        check(loaded.document.diagnostics.empty() && loaded.config.upscale == 4 &&
+                  loaded.config.upscaler == test.provider && loaded.config.upscalerSharpening == test.sharpening &&
+                  loaded.config.sharpen == 35,
+              "presentation provider parsing preserves integer upscale and CAS");
+        check(saveConfigFile(path, loaded.config, false), "save presentation upscaler fixture");
+        const std::string saved = readText(path);
+        check(saved.find(std::string("\nUpscaler=") + test.canonical +
+                         "\nUpscalerSharpening=" + std::to_string(test.sharpening) + "\n") != std::string::npos,
+              "presentation provider canonical serialization");
+        check(sameConfig(loadConfigFile(path).config, loaded.config), "presentation provider round-trip");
+    }
+
+    const std::filesystem::path invalidUpscalerPath = root / "invalid-upscaler.ini";
+    check(writeText(invalidUpscalerPath,
+                    "[Config]\nVersion=3\n[Graphics]\nUpscaler=fsr2\nUpscalerSharpening=-1\n"),
+          "write invalid presentation fixture");
+    const ConfigLoadResult invalidUpscaler = loadConfigFile(invalidUpscalerPath);
+    check(invalidUpscaler.config.upscaler == KzgsUpscaler::Off && invalidUpscaler.config.upscalerSharpening == 0 &&
+              hasDiagnostic(invalidUpscaler, DiagnosticLevel::Error, "Graphics", "Upscaler", "fsr2") &&
+              hasDiagnostic(invalidUpscaler, DiagnosticLevel::Error, "Graphics", "UpscalerSharpening", "-1"),
+          "invalid presentation INI values are rejected and diagnosed");
+    for (const char *value : {"101", "12junk", "", "999999999999999999999"})
+    {
+        check(writeText(invalidUpscalerPath, std::string("[Config]\nVersion=3\n[Graphics]\nUpscalerSharpening=") +
+                                                 value + "\n"),
+              "write invalid sharpening fixture");
+        const ConfigLoadResult invalid = loadConfigFile(invalidUpscalerPath);
+        check(invalid.config.upscalerSharpening == 0 &&
+                  hasDiagnostic(invalid, DiagnosticLevel::Error, "Graphics", "UpscalerSharpening", value),
+              "out-of-range or malformed sharpening is rejected");
+    }
+
+    const std::filesystem::path precedenceUpscalerPath = root / "precedence-upscaler.ini";
+    check(writeText(precedenceUpscalerPath,
+                    "[Config]\nVersion=3\n[Graphics]\nUpscale=5\nUpscaler=FSR1\nUpscalerSharpening=10\n"
+                    "Sharpen=40\nFutureFilter=quincunx\n"),
+          "write presentation precedence fixture");
+    KzConfig upscalerConfig = loadConfigFile(precedenceUpscalerPath).config;
+    std::ostringstream overrideDiagnostics;
+    upscalerConfig.upscalerOverrides = kzgsUpscalerEnvironmentOverrides("DLSS", "45", overrideDiagnostics);
+    check(overrideDiagnostics.str().empty() &&
+              upscalerConfig.upscalerOverrides.provider.value_or(upscalerConfig.upscaler) == KzgsUpscaler::DLSS &&
+              upscalerConfig.upscalerOverrides.sharpening.value_or(upscalerConfig.upscalerSharpening) == 45,
+          "environment overrides INI independently");
+    KzgsUpscalerOverrides cliOverrides;
+    bool consumeNext = false;
+    check(kzgsParseUpscalerOption("--upscaler", "XeSS", cliOverrides, consumeNext, overrideDiagnostics) ==
+                  KzgsUpscalerOptionResult::Parsed && consumeNext,
+          "parse separate upscaler CLI argument");
+    kzgsMergeUpscalerOverrides(upscalerConfig.upscalerOverrides, cliOverrides);
+    check(upscalerConfig.upscalerOverrides.provider.value_or(upscalerConfig.upscaler) == KzgsUpscaler::XeSS &&
+              upscalerConfig.upscalerOverrides.sharpening.value_or(upscalerConfig.upscalerSharpening) == 45,
+          "CLI provider wins while environment sharpening remains");
+    check(kzgsParseUpscalerOption("--upscaler-sharpening=0", nullptr, cliOverrides, consumeNext,
+                                 overrideDiagnostics) == KzgsUpscalerOptionResult::Parsed && !consumeNext,
+          "parse inline CLI sharpening including zero");
+    kzgsMergeUpscalerOverrides(upscalerConfig.upscalerOverrides, cliOverrides);
+    check(upscalerConfig.upscalerOverrides.provider.value_or(upscalerConfig.upscaler) == KzgsUpscaler::XeSS &&
+              upscalerConfig.upscalerOverrides.sharpening.value_or(upscalerConfig.upscalerSharpening) == 0,
+          "CLI overrides environment and INI per setting");
+    check(kzSaveConfig(precedenceUpscalerPath, upscalerConfig), "launcher save with one-run overrides active");
+    const std::string precedenceUpscalerSaved = readText(precedenceUpscalerPath);
+    check(precedenceUpscalerSaved.find("\nUpscale=5\nUpscaler=fsr1\nUpscalerSharpening=10\n") !=
+                  std::string::npos &&
+              precedenceUpscalerSaved.find("\nSharpen=40\n") != std::string::npos &&
+              precedenceUpscalerSaved.find("FutureFilter=quincunx") != std::string::npos,
+          "launcher save ignores one-run overrides and retains unknown settings");
+    const KzConfig afterOverrides = loadConfigFile(precedenceUpscalerPath).config;
+    check(afterOverrides.upscaler == KzgsUpscaler::FSR1 && afterOverrides.upscalerSharpening == 10 &&
+              !afterOverrides.upscalerOverrides.provider && !afterOverrides.upscalerOverrides.sharpening,
+          "one-run overrides do not survive a fresh INI load");
+
+    const auto savedEnvironment = [](const char *name) -> std::optional<std::string> {
+        const char *value = std::getenv(name);
+        return value ? std::optional<std::string>(value) : std::nullopt;
+    };
+    const auto oldProvider = savedEnvironment("KZ_UPSCALER");
+    const auto oldSharpening = savedEnvironment("KZ_UPSCALER_SHARPENING");
+    kz::host::setEnvironment("KZ_UPSCALER", "dlss");
+    kz::host::setEnvironment("KZ_UPSCALER_SHARPENING", "60");
+    const std::filesystem::path environmentPath = root / "upscaler-fsr1.ini";
+    KzConfig actualEnvironment = kzLoadConfig(environmentPath);
+    check(actualEnvironment.upscaler == KzgsUpscaler::FSR1 && actualEnvironment.upscalerSharpening == 100 &&
+              actualEnvironment.upscalerOverrides.provider == KzgsUpscaler::DLSS &&
+              actualEnvironment.upscalerOverrides.sharpening == 60,
+          "config loader reads real environment into one-run overrides");
+    kzgsMergeUpscalerOverrides(actualEnvironment.upscalerOverrides, cliOverrides);
+    check(kzSaveConfig(environmentPath, actualEnvironment), "launcher save with real environment and CLI overrides");
+    const KzConfig environmentSaved = loadConfigFile(environmentPath).config;
+    check(environmentSaved.upscaler == KzgsUpscaler::FSR1 && environmentSaved.upscalerSharpening == 100,
+          "real environment and CLI overrides are not persisted");
+    kz::host::setEnvironment("KZ_UPSCALER", oldProvider.value_or(""));
+    kz::host::setEnvironment("KZ_UPSCALER_SHARPENING", oldSharpening.value_or(""));
+
+    for (const char *value : {"", "fsr2", "fsr1 trailing"})
+    {
+        std::ostringstream errors;
+        const KzgsUpscalerOverrides invalid = kzgsUpscalerEnvironmentOverrides(value, nullptr, errors);
+        check(!invalid.provider && errors.str().find("KZ_UPSCALER rejected value") != std::string::npos,
+              "invalid environment provider is diagnosed and ignored");
+    }
+    for (const char *value : {"", "-1", "101", "3x", "999999999999999999999"})
+    {
+        std::ostringstream errors;
+        const KzgsUpscalerOverrides invalid = kzgsUpscalerEnvironmentOverrides(nullptr, value, errors);
+        check(!invalid.sharpening &&
+                  errors.str().find("KZ_UPSCALER_SHARPENING rejected value") != std::string::npos,
+              "invalid environment sharpening is diagnosed and ignored");
+    }
+    struct InvalidUpscalerOption
+    {
+        const char *argument;
+        const char *next;
+    };
+    const InvalidUpscalerOption invalidOptions[] = {
+        {"--upscaler", nullptr},
+        {"--upscaler=fsr2", nullptr},
+        {"--upscaler-sharpening", nullptr},
+        {"--upscaler-sharpening=-1", nullptr},
+        {"--upscaler-sharpening=101", nullptr},
+        {"--upscaler-sharpening=1x", nullptr},
+        {"--upscaler-unknown", nullptr},
+    };
+    for (const InvalidUpscalerOption &test : invalidOptions)
+    {
+        std::ostringstream errors;
+        KzgsUpscalerOverrides invalid;
+        check(kzgsParseUpscalerOption(test.argument, test.next, invalid, consumeNext, errors) ==
+                      KzgsUpscalerOptionResult::Error &&
+                  !invalid.provider && !invalid.sharpening &&
+                  errors.str().find("[kz-config] error:") != std::string::npos,
+              "invalid or incomplete upscaler CLI option is rejected and diagnosed");
+    }
 
     const std::filesystem::path canonicalFovPath = root / "canonical-fov.ini";
     check(writeText(canonicalFovPath,

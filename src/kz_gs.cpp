@@ -158,6 +158,13 @@ namespace
         return s;
     }
 
+    void applyUpscalerConfig(const KzConfig &config, KzgsConfig &renderer)
+    {
+        renderer.upscaler = config.upscalerOverrides.provider.value_or(config.upscaler);
+        renderer.upscalerSharpening =
+            config.upscalerOverrides.sharpening.value_or(config.upscalerSharpening);
+    }
+
     KzgsConfig toKzgs(
         const KzConfig &c,
         int windowHeight,
@@ -184,6 +191,7 @@ namespace
             scale.effectiveScale = std::max(scale.effectiveScale, std::min(6, (windowWidth + 767) / 768));
         }
         k.upscale = scale.effectiveScale;
+        applyUpscalerConfig(c, k);
         if (scaleContract)
             *scaleContract = scale;
         k.textureFiltering = c.bilinear ? KzgsTextureFilter::PS2 : KzgsTextureFilter::Nearest;
@@ -333,6 +341,8 @@ namespace
             return;
         const KzgsConfig &k = s.activeConfig;
         const KzConfig &c = kzConfig();
+        KzgsUpscalerStatus upscaler;
+        const bool upscalerReported = kzgsGetUpscalerStatus(upscaler);
         const std::string adapter = jsonEscape(k.adapter);
         const auto envBool = [](const char *name, bool fallback)
         {
@@ -359,6 +369,8 @@ namespace
             "\"effective_config\":{\"upscale\":%d,"
             "\"render_scale\":{\"mode\":\"%s\",\"configured\":%d,\"effective\":%d,"
             "\"native_height\":%d,\"target_height\":%d},"
+            "\"presentation_upscaler\":{\"reported\":%s,\"requested\":\"%s\",\"effective\":\"%s\","
+            "\"reason\":\"%s\",\"sharpening_requested\":%d,\"sharpening_effective\":%d},"
             "\"output_resolution\":{\"width\":%d,\"height\":%d},"
             "\"pipeline\":[\"gs_merge\",\"aa\",\"sharp_prescale_if_upscaling\","
             "\"crop_aspect\",\"cas\",\"present_filter\"],"
@@ -374,6 +386,9 @@ namespace
             record, kzTimingRate(), rendererName(k.renderer), adapter.c_str(), k.upscale,
             renderScaleModeName(s.activeScale.mode), s.activeScale.configuredScale, s.activeScale.effectiveScale,
             kReferenceRenderHeight, kReferenceRenderHeight * k.upscale,
+            upscalerReported ? "true" : "false", kzgsUpscalerName(upscaler.requested),
+            kzgsUpscalerName(upscaler.effective), kzgsUpscalerReasonName(upscaler.reason),
+            upscaler.requestedSharpening, upscaler.effectiveSharpening,
             s.windowWidth, s.windowHeight, aspectName(k.aspect),
             k.anisotropy, k.mipmapMode == KzgsMipmapMode::BaseOnly ? "base_only" : "ps2",
             detail.renderDistance, detail.lodScale,
@@ -862,7 +877,11 @@ namespace
             }
             if (s.configPending)
             {
+                const bool upscalerChanged = s.activeConfig.upscaler != s.pendingConfig.upscaler ||
+                    s.activeConfig.upscalerSharpening != s.pendingConfig.upscalerSharpening;
                 kzgsUpdateConfig(s.pendingConfig);
+                if (upscalerChanged)
+                    kzgsSync();
                 s.activeConfig = s.pendingConfig;
                 s.activeScale = s.pendingScale;
                 {
@@ -1065,6 +1084,13 @@ bool kzGsAttach(
               << " (configured " << scale.configuredScale << ", effective " << scale.effectiveScale
               << "x, target height " << kReferenceRenderHeight * scale.effectiveScale << "), output="
               << windowWidth << 'x' << windowHeight << "; resize changes output only" << std::endl;
+    KzgsUpscalerStatus upscaler;
+    if (kzgsGetUpscalerStatus(upscaler))
+        std::cout << "[kz] presentation upscaler: requested=" << kzgsUpscalerName(upscaler.requested)
+                  << ", effective=" << kzgsUpscalerName(upscaler.effective)
+                  << ", reason=" << kzgsUpscalerReasonName(upscaler.reason)
+                  << ", sharpening=" << upscaler.requestedSharpening << " requested / "
+                  << upscaler.effectiveSharpening << " effective" << std::endl;
     std::cout << "[kz] effective post-process: aa=" << effectiveAaName(kc)
               << ", cas=" << kc.casSharpness
               << ", scaling=" << scalingName(kc)
@@ -1239,6 +1265,22 @@ int kzGsSelfTest()
     const RenderScaleContract override = resolveRenderScale(0, 2160, "2");
     check(override.mode == RenderScaleMode::AutomationOverride && override.effectiveScale == 2,
           "automation can request a controlled sub-output input");
+    KzConfig legacy;
+    KzgsConfig renderer;
+    renderer.upscale = 3;
+    renderer.casSharpness = 30;
+    applyUpscalerConfig(legacy, renderer);
+    check(renderer.upscaler == KzgsUpscaler::Off && renderer.upscalerSharpening == 0 &&
+              renderer.upscale == 3 && renderer.casSharpness == 30,
+          "legacy presentation settings leave integer upscale and CAS unchanged");
+    legacy.upscaler = KzgsUpscaler::FSR1;
+    legacy.upscalerSharpening = 25;
+    legacy.upscalerOverrides.provider = KzgsUpscaler::DLSS;
+    legacy.upscalerOverrides.sharpening = 80;
+    applyUpscalerConfig(legacy, renderer);
+    check(renderer.upscaler == KzgsUpscaler::DLSS && renderer.upscalerSharpening == 80 &&
+              renderer.upscale == 3 && renderer.casSharpness == 30,
+          "presentation request and one-run overrides preserve integer upscale and CAS");
     return failures;
 }
 

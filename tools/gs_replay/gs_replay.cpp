@@ -1,6 +1,7 @@
 // Replays a GS trace recorded by the game (KZ_GS_TRACE, see src/kz_gs.cpp) through kzgs and saves output frames.
 //
 // Usage: kz_gs_replay <trace> <outdir> [--every N] [--upscale N] [--renderer d3d11|d3d12|vulkan]
+//        [--upscaler off|fsr1|dlss|xess] [--upscaler-sharpening 0..100]
 //        [--fxaa] [--smaa] [--cas N] [--bilinear 0|1] [--sharp 0|1] [--crop L,T,R,B] [--present WxH]
 //        [--backbuffer] [--stats]
 //   --stats  also prints a histogram of GS registers written (PACKED A+D and PACKED reg descriptors) and the last
@@ -18,8 +19,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <iostream>
 #include <map>
 #include <string>
 #include <vector>
@@ -178,6 +181,7 @@ int main(int argc, char **argv)
     {
         std::fprintf(stderr,
                      "usage: kz_gs_replay <trace> <outdir> [--every N] [--upscale N] "
+                     "[--upscaler off|fsr1|dlss|xess] [--upscaler-sharpening 0..100] "
                      "[--renderer d3d11|d3d12|vulkan] [--fxaa] [--smaa] [--cas N] "
                      "[--aniso N] [--mip ps2|base] [--tex-replace 0|1] [--bilinear 0|1] [--sharp 0|1] "
                      "[--aspect 4:3|16:9|stretch] [--crop L,T,R,B] [--present WxH] [--from N] [--to N] "
@@ -190,9 +194,22 @@ int main(int argc, char **argv)
     uint64_t captureFrom = 1, captureTo = UINT64_MAX;
     bool stats = false, fixDy = false, backbuffer = false;
     KzgsConfig cfg;
+    KzgsUpscalerOverrides upscalerOverrides = kzgsUpscalerEnvironmentOverrides(
+        std::getenv("KZ_UPSCALER"), std::getenv("KZ_UPSCALER_SHARPENING"), std::cerr);
     for (int i = 3; i < argc; ++i)
     {
         const std::string a = argv[i];
+        bool consumeNext = false;
+        const KzgsUpscalerOptionResult option = kzgsParseUpscalerOption(
+            a, i + 1 < argc ? argv[i + 1] : nullptr, upscalerOverrides, consumeNext, std::cerr);
+        if (option == KzgsUpscalerOptionResult::Error)
+            return 2;
+        if (option == KzgsUpscalerOptionResult::Parsed)
+        {
+            if (consumeNext)
+                ++i;
+            continue;
+        }
         if (a == "--every" && i + 1 < argc) every = std::atoi(argv[++i]);
         else if (a == "--from" && i + 1 < argc) captureFrom = std::strtoull(argv[++i], nullptr, 10);
         else if (a == "--to" && i + 1 < argc) captureTo = std::strtoull(argv[++i], nullptr, 10);
@@ -263,6 +280,8 @@ int main(int argc, char **argv)
         }
     }
     cfg.upscale = upscale;
+    cfg.upscaler = upscalerOverrides.provider.value_or(cfg.upscaler);
+    cfg.upscalerSharpening = upscalerOverrides.sharpening.value_or(cfg.upscalerSharpening);
     cfg.vsync = false;
     std::filesystem::create_directories(outDir);
 
@@ -289,6 +308,12 @@ int main(int argc, char **argv)
         std::fprintf(stderr, "kzgsOpen failed: %s\n", err.c_str());
         return 1;
     }
+    KzgsUpscalerStatus upscaler;
+    if (kzgsGetUpscalerStatus(upscaler))
+        std::printf("presentation upscaler: requested=%s effective=%s reason=%s sharpening=%d/%d\n",
+                    kzgsUpscalerName(upscaler.requested), kzgsUpscalerName(upscaler.effective),
+                    kzgsUpscalerReasonName(upscaler.reason),
+                    upscaler.requestedSharpening, upscaler.effectiveSharpening);
 
     Stats st;
     uint64_t frame = 0, packets[4] = {};

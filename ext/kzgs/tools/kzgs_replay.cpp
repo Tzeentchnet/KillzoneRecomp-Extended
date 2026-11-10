@@ -4,6 +4,7 @@
 //   type 1 = GIF packet (arg = PATH 1..3), type 2 = vsync (arg = field, payload = 0x2000-byte GSPrivRegSet block)
 //
 // Usage: kzgs_replay <trace> <outdir> [--every N] [--upscale N] [--renderer d3d11|d3d12|vulkan|sw]
+//                    [--upscaler off|fsr1|dlss|xess] [--upscaler-sharpening 0..100]
 //                    [--vram FBP:FBW[,FBP:FBW...]] [--pcrtc] [--last N]
 //   --vram   at every sampled frame, also decode these CT32 buffers from GS local memory (after a texture-cache
 //            readback on HW renderers) to <outdir>/vram_<fbp>_<frame>.png
@@ -25,8 +26,10 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -235,7 +238,7 @@ int main(int argc, char** argv)
 	SetUnhandledExceptionFilter(CrashFilter);
 	if (argc < 3)
 	{
-		std::fprintf(stderr, "usage: kzgs_replay <trace> <outdir> [--every N] [--upscale N] [--renderer d3d11|d3d12|vulkan|sw] [--vram FBP:FBW,...] [--pcrtc] [--last N]\n");
+		std::fprintf(stderr, "usage: kzgs_replay <trace> <outdir> [--every N] [--upscale N] [--upscaler off|fsr1|dlss|xess] [--upscaler-sharpening 0..100] [--renderer d3d11|d3d12|vulkan|sw] [--vram FBP:FBW,...] [--pcrtc] [--last N]\n");
 		return 2;
 	}
 	const std::string trace = argv[1];
@@ -253,9 +256,22 @@ int main(int argc, char** argv)
 	KzgsConfig cfg;
 	cfg.upscale = 1;
 	cfg.vsync = false;
+	KzgsUpscalerOverrides upscaler_overrides = kzgsUpscalerEnvironmentOverrides(
+		std::getenv("KZ_UPSCALER"), std::getenv("KZ_UPSCALER_SHARPENING"), std::cerr);
 	for (int i = 3; i < argc; i++)
 	{
 		const std::string a = argv[i];
+		bool consume_next = false;
+		const KzgsUpscalerOptionResult option = kzgsParseUpscalerOption(
+			a, i + 1 < argc ? argv[i + 1] : nullptr, upscaler_overrides, consume_next, std::cerr);
+		if (option == KzgsUpscalerOptionResult::Error)
+			return 2;
+		if (option == KzgsUpscalerOptionResult::Parsed)
+		{
+			if (consume_next)
+				++i;
+			continue;
+		}
 		if (a == "--every" && i + 1 < argc) every = std::atoi(argv[++i]);
 		else if (a == "--upscale" && i + 1 < argc) cfg.upscale = std::atoi(argv[++i]);
 		else if (a == "--sleep-from" && i + 1 < argc) sleep_from = std::atoi(argv[++i]);
@@ -319,6 +335,8 @@ int main(int argc, char** argv)
 			}
 		}
 	}
+	cfg.upscaler = upscaler_overrides.provider.value_or(cfg.upscaler);
+	cfg.upscalerSharpening = upscaler_overrides.sharpening.value_or(cfg.upscalerSharpening);
 	std::filesystem::create_directories(out);
 
 	FILE* f = std::fopen(trace.c_str(), "rb");
@@ -344,6 +362,12 @@ int main(int argc, char** argv)
 		std::fprintf(stderr, "kzgsOpen failed: %s\n", err.c_str());
 		return 1;
 	}
+	KzgsUpscalerStatus upscaler;
+	if (kzgsGetUpscalerStatus(upscaler))
+		std::printf("presentation upscaler: requested=%s effective=%s reason=%s sharpening=%d/%d\n",
+			kzgsUpscalerName(upscaler.requested), kzgsUpscalerName(upscaler.effective),
+			kzgsUpscalerReasonName(upscaler.reason),
+			upscaler.requestedSharpening, upscaler.effectiveSharpening);
 
 	auto saveVram = [&](const std::string& path) {
 		kzgs::RunOnGSThread([&]() {

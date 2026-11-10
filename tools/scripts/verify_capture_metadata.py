@@ -126,6 +126,21 @@ def validate(directory: Path, require_fire: bool) -> tuple[list[dict[str, Any]],
             raise ValueError(f"effective_config.{key} is outside its supported range")
     if effective_config.get("mipmap_mode") not in {None, "ps2", "base_only"}:
         raise ValueError("effective_config.mipmap_mode is invalid")
+    upscaler = effective_config.get("presentation_upscaler")
+    if upscaler is not None:
+        if not isinstance(upscaler, dict) or not isinstance(upscaler.get("reported"), bool):
+            raise ValueError("presentation_upscaler must report whether its status is available")
+        for key in ("requested", "effective"):
+            if not isinstance(upscaler.get(key), str) or upscaler[key] not in {"off", "fsr1", "dlss", "xess"}:
+                raise ValueError(f"presentation_upscaler.{key} is invalid")
+        if not isinstance(upscaler.get("reason"), str) or not upscaler["reason"]:
+            raise ValueError("presentation_upscaler.reason must be a nonempty string")
+        for key in ("sharpening_requested", "sharpening_effective"):
+            value = upscaler.get(key)
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
+                raise ValueError(f"presentation_upscaler.{key} must be an integer from 0 to 100")
+        if upscaler["reported"] and upscaler["effective"] == "off" and upscaler["sharpening_effective"] != 0:
+            raise ValueError("a disabled presentation upscaler cannot apply provider sharpening")
 
     frames = [record for record in records if record.get("record") == "frame"]
     events = [record for record in records if record.get("record") == "event"]
@@ -346,6 +361,14 @@ def self_test() -> None:
                         },
                         "output_resolution": {"width": 1920, "height": 1080},
                         "pipeline": PIPELINE_ORDER,
+                        "presentation_upscaler": {
+                            "reported": True,
+                            "requested": "fsr1",
+                            "effective": "off",
+                            "reason": "not_implemented",
+                            "sharpening_requested": 50,
+                            "sharpening_effective": 0,
+                        },
                         "mipmap_mode": "ps2",
                         "render_distance": 1.0,
                         "lod_scale": 1.0,
@@ -400,6 +423,18 @@ def self_test() -> None:
         comparison = compare_summaries(left, right)
         if comparison["max_abs_event_delta"] != 1 or comparison["paired_frame_count"] != 1:
             raise ValueError("self-test comparison produced unexpected alignment")
+        records[0]["effective_config"]["presentation_upscaler"]["sharpening_effective"] = 1
+        (roots[1] / "capture.jsonl").write_text(
+            "".join(json.dumps(record, separators=(",", ":")) + "\n" for record in records),
+            encoding="utf-8",
+        )
+        try:
+            validate(roots[1], True)
+        except ValueError as error:
+            if "cannot apply provider sharpening" not in str(error):
+                raise
+        else:
+            raise ValueError("self-test accepted sharpening with the provider disabled")
 
 
 def main() -> int:

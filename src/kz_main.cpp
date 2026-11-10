@@ -1,6 +1,7 @@
 // Killzone runner entry point. Replaces ps2xRuntime/src/main.cpp so we control boot paths.
 //
 // Usage: killzone.exe [--elf <path to SCUS_974.02 or SCES_528.93>] [--iso <path to Killzone ISO>] [--sample <seconds>]
+//                     [--upscaler off|fsr1|dlss|xess] [--upscaler-sharpening 0..100]
 // Defaults: the ELF extracted from the disc image (killzone.ini [Paths] ISO, or --iso) into the region-specific
 // boot folder next to the settings file. The disc or explicit ELF selects US SCUS-97402 or PAL SCES-52893.
 // With an ISO, its extracted boot files are mounted as cdrom0: and the image backs raw sceCdRead sector reads.
@@ -64,6 +65,8 @@ namespace
         bool selfTest = false;  // --selftest: run unit checks (config, input, disc, launcher render) and exit
         bool noLauncher = false; // --no-launcher: boot straight into the game
         bool forceLauncher = false; // --launcher: show the launcher even if it is turned off in killzone.ini
+        bool valid = true;
+        KzgsUpscalerOverrides upscalerOverrides;
     };
 
     Options parseArgs(int argc, char *argv[])
@@ -72,6 +75,20 @@ namespace
         for (int i = 1; i < argc; ++i)
         {
             const std::string_view arg = argv[i];
+            bool consumeNext = false;
+            const KzgsUpscalerOptionResult upscalerOption = kzgsParseUpscalerOption(
+                arg, i + 1 < argc ? argv[i + 1] : nullptr, opts.upscalerOverrides, consumeNext, std::cerr);
+            if (upscalerOption == KzgsUpscalerOptionResult::Error)
+            {
+                opts.valid = false;
+                return opts;
+            }
+            if (upscalerOption == KzgsUpscalerOptionResult::Parsed)
+            {
+                if (consumeNext)
+                    ++i;
+                continue;
+            }
             if (arg == "--elf" && i + 1 < argc)
             {
                 opts.elf = argv[++i];
@@ -182,6 +199,8 @@ int main(int argc, char *argv[])
         kz::host::setCurrentThreadName("Killzone Main");
         kz::host::installCrashReporterIfRequested();
         const Options opts = parseArgs(argc, argv);
+        if (!opts.valid)
+            return 2;
         if (opts.selfTest)
             return runSelfTest();
         if (openLogFile())
@@ -193,6 +212,7 @@ int main(int argc, char *argv[])
         }
         kzConfig() = kzLoadConfig(kzConfigPath());
         KzConfig &cfg = kzConfig();
+        kzgsMergeUpscalerOverrides(cfg.upscalerOverrides, opts.upscalerOverrides);
         if (!opts.iso.empty())
             cfg.isoPath = std::filesystem::absolute(opts.iso).string();
         const bool headless = std::getenv("PS2X_HEADLESS") && std::getenv("PS2X_HEADLESS")[0] == '1';

@@ -498,6 +498,28 @@ static void CheckResolutionInfo(int render_w, int render_h, int output_w, int ou
 	}
 }
 
+static void CheckUpscalerStatus(KzgsUpscaler requested, int sharpening, KzgsUpscalerReason reason)
+{
+	KzgsUpscalerStatus status;
+	if (!kzgsGetUpscalerStatus(status) || status.requested != requested ||
+		status.effective != KzgsUpscaler::Off || status.requestedSharpening != sharpening ||
+		status.effectiveSharpening != 0 || status.reason != reason)
+	{
+		std::printf("  FAIL presentation upscaler status for %s\n", kzgsUpscalerName(requested));
+		g_failures++;
+	}
+}
+
+static void CheckUpscalerClosed()
+{
+	KzgsUpscalerStatus status;
+	if (kzgsGetUpscalerStatus(status))
+	{
+		std::printf("  FAIL upscaler status available while closed\n");
+		g_failures++;
+	}
+}
+
 int main(int argc, char** argv)
 {
 	KzgsConfig cfg;
@@ -557,6 +579,25 @@ int main(int argc, char** argv)
 	std::string err;
 	std::printf("== open %s%s\n", names[int(cfg.renderer)], cfg.useWarp ? " (WARP)" : "");
 	const kz::host::NativeWindow native_window = kz::host::NativeWindow::win32(hwnd);
+	CheckUpscalerClosed();
+	KzgsConfig invalid = cfg;
+	invalid.upscalerSharpening = 101;
+	if (kzgsOpen(native_window, invalid, g_regs, &err) || err.find("upscaler sharpening") == std::string::npos)
+	{
+		std::printf("  FAIL invalid upscaler sharpening accepted at open\n");
+		g_failures++;
+		if (kzgsIsOpen())
+			kzgsClose();
+	}
+	invalid = cfg;
+	invalid.upscaler = static_cast<KzgsUpscaler>(999);
+	if (kzgsOpen(native_window, invalid, g_regs, &err) || err.find("upscaler must") == std::string::npos)
+	{
+		std::printf("  FAIL invalid upscaler provider accepted at open\n");
+		g_failures++;
+		if (kzgsIsOpen())
+			kzgsClose();
+	}
 	bool opened = kzgsOpen(native_window, cfg, g_regs, &err);
 	if (!opened && !cfg.useWarp && cfg.renderer != KzgsRenderer::Vulkan)
 	{
@@ -570,10 +611,67 @@ int main(int argc, char** argv)
 		return 3;
 	}
 	std::printf("opened %s on %s adapter\n", names[int(cfg.renderer)], cfg.useWarp ? "WARP" : "default");
+	CheckUpscalerStatus(KzgsUpscaler::Off, 0, KzgsUpscalerReason::Disabled);
 
 	const std::vector<uint8_t> scene = BuildScene();
 	std::printf("== 1x (%d frames, PATH3 packet %zu qwords)\n", frames, scene.size() / 16);
 	RenderAndCheck(scene, frames, 1, "out.png");
+
+	std::vector<uint8_t> baseline_backbuffer;
+	const auto capture_backbuffer = [&](std::vector<uint8_t>& pixels) {
+		kzgsBurstArm(1, -1, -1);
+		PresentFrames(scene, frames, 3);
+		kzgsSync();
+		std::vector<KzgsBurstFrame> captured;
+		if (!kzgsBurstTake(captured) || captured.size() != 1 || captured[0].rgba.empty())
+		{
+			std::printf("  FAIL upscaler fallback backbuffer capture\n");
+			g_failures++;
+			return false;
+		}
+		pixels = std::move(captured[0].rgba);
+		return true;
+	};
+	// Keep swap-chain capture separate from the full test's later renderer-switch stress.
+	if (golden_only && cfg.renderer == KzgsRenderer::D3D11)
+	{
+		cfg.casSharpness = 30;
+		kzgsUpdateConfig(cfg);
+		kzgsSync();
+		capture_backbuffer(baseline_backbuffer);
+	}
+	for (const KzgsUpscaler provider : {KzgsUpscaler::FSR1, KzgsUpscaler::DLSS, KzgsUpscaler::XeSS})
+	{
+		cfg.upscaler = provider;
+		cfg.upscalerSharpening = 100;
+		kzgsUpdateConfig(cfg);
+		kzgsSync();
+		CheckUpscalerStatus(provider, 100, KzgsUpscalerReason::NotImplemented);
+		if (golden_only && provider == KzgsUpscaler::FSR1 && cfg.renderer == KzgsRenderer::D3D11)
+		{
+			std::vector<uint8_t> fallback_backbuffer;
+			if (capture_backbuffer(fallback_backbuffer) && fallback_backbuffer != baseline_backbuffer)
+			{
+				std::printf("  FAIL unavailable upscaler changed presented pixels or CAS\n");
+				g_failures++;
+			}
+		}
+	}
+	invalid = cfg;
+	invalid.upscalerSharpening = -1;
+	kzgsUpdateConfig(invalid);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::XeSS, 100, KzgsUpscalerReason::NotImplemented);
+	cfg.upscaler = KzgsUpscaler::Off;
+	cfg.upscalerSharpening = 75;
+	kzgsUpdateConfig(cfg);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::Off, 75, KzgsUpscalerReason::Disabled);
+	cfg.upscalerSharpening = 0;
+	cfg.casSharpness = 0;
+	kzgsUpdateConfig(cfg);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::Off, 0, KzgsUpscalerReason::Disabled);
 
 	std::printf("== 2x upscale\n");
 	cfg.upscale = 2;
@@ -582,6 +680,7 @@ int main(int argc, char** argv)
 	if (golden_only)
 	{
 		kzgsClose();
+		CheckUpscalerClosed();
 		DestroyWindow(hwnd);
 		std::printf("%s (%d failure%s)\n", g_failures ? "FAIL" : "PASS", g_failures, g_failures == 1 ? "" : "s");
 		return g_failures ? 1 : 0;
@@ -712,6 +811,7 @@ int main(int argc, char** argv)
 	}
 
 	kzgsClose();
+	CheckUpscalerClosed();
 	DestroyWindow(hwnd);
 
 	std::printf("%s (%d failure%s)\n", g_failures ? "FAIL" : "PASS", g_failures, g_failures == 1 ? "" : "s");

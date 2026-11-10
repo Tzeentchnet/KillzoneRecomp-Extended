@@ -3,6 +3,8 @@
 // PC port settings, stored in killzone.ini next to the executable. Every field has a default so a missing or partial
 // file is valid. The launcher edits these; the runtime reads them at boot (and some live, e.g. sensitivity).
 
+#include "kzgs_upscaler.h"
+
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -53,6 +55,9 @@ struct KzConfig
     // Graphics
     KzRenderer renderer = KzRenderer::D3D11;
     int upscale = 0; // integer GS render multiplier; 0 = auto from physical output height
+    KzgsUpscaler upscaler = KzgsUpscaler::Off; // experimental presentation provider, independent of Upscale
+    int upscalerSharpening = 0; // provider-owned sharpening, 0..100; independent of Sharpen/CAS
+    KzgsUpscalerOverrides upscalerOverrides; // one-run environment/CLI values; never serialized
     KzAspect aspect = KzAspect::Widescreen16x9;
     int anisotropy = 16;     // 0/2/4/8/16
     KzMipmapMode mipmapMode = KzMipmapMode::PS2;

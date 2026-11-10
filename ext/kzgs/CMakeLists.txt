@@ -328,6 +328,7 @@ target_precompile_headers(kzgs_gs PRIVATE "${P2SRC}/PrecompiledHeader.h")
 # ---------------------------------------------------------------------------------------------------------------------
 add_library(kzgs STATIC
 	"${KZGS_ROOT}/src/kzgs.cpp"
+	"${KZGS_ROOT}/src/kzgs_upscaler.cpp"
 	"${KZGS_ROOT}/src/kz_smaa11.cpp"
 	"${KZGS_ROOT}/src/kz_smaa_vt.cpp"
 	"${KZGS_ROOT}/src/kz_present11.cpp"

@@ -9,7 +9,8 @@ The product self-test needs no retail content:
 ```
 
 It covers configuration migration and round-tripping, field-of-view math, renderer contracts, input, launcher
-behavior, and other pure product checks.
+behavior, and other pure product checks. Presentation-upscaler checks include defaults, strict INI/environment/CLI
+validation and precedence, canonical saves, and one-run override non-persistence.
 
 ## ISO-free regression suite
 
@@ -52,6 +53,9 @@ python .\tools\scripts\verify_capture_metadata.py .\work\run1 --compare .\work\r
 ```
 
 The summary contains only configuration, dimensions, event/frame counts, and hashes.
+The `effective_config.presentation_upscaler` object distinguishes the requested provider and sharpening from the
+effective provider, sharpening, and fallback reason. All providers currently remain inactive. The KzGS D3D11 golden
+test checks that an unavailable request preserves the existing presentation, including CAS.
 
 For deterministic scheduling, use `KZ_SHOT_GUEST_INTERVAL=<vblanks>` and optionally
 `KZ_SHOT_GUEST_FROM=<first-vblank>`. Prefix a start with `g`, such as `g60`, to count from the first gameplay frame.
