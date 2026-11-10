@@ -2279,7 +2279,7 @@ direction, vector units/sign/jitter, world-only jitter, and UI/reactive behavior
 
 ### Spatial presentation and validation follow-up
 
-Through superproject `ccd5adc1a46b7fb85bc6bc1079902d04cb54b75c` and the locked companion PCSX2
+Through superproject `ccd5adc1a46b7fb85bc6bc1079902d04cb54b75c` and the then-locked companion PCSX2
 `61570a47840d2f14e802456eb4524ae5b0a597c7`, Vulkan implements default-off FSR1 EASU and optional provider-owned
 RCAS before the existing CAS/final presentation. The pass is bypassed when either output axis is smaller than the
 cropped source or both axes are equal.
