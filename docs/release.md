@@ -19,6 +19,8 @@ AMD FidelityFX FSR 1's `ffx_a.h` and `ffx_fsr1.h` are vendored unmodified from
 [`ext/kzgs/third_party/fsr1/LICENSE.txt`](../ext/kzgs/third_party/fsr1/LICENSE.txt) and its provenance notice with
 source distributions; runtime packaging stages them in `resources/shaders/kzgs/fsr1`. Review the combined GPL
 distribution obligations separately. No proprietary upscaler SDK is bundled.
+Optional local vendor builds have separate [license and provenance records](vendor-upscalers.md); their
+redistribution, including any combined binary, is not approved by this work.
 
 ## Protected content
 

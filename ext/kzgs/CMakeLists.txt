@@ -34,6 +34,11 @@ set(P2 "${KZGS_PCSX2_DIR}")
 set(P2SRC "${P2}/pcsx2")
 set(P3 "${P2}/3rdparty")
 set(DEPS "${KZGS_DEPS_DIR}")
+set(KZGS_PROVIDER_SOURCE_DIR "${KZGS_ROOT}/providers")
+set(KZGS_PROVIDER_PUBLIC_INCLUDE "${KZGS_ROOT}/include")
+set(KZGS_PROVIDER_VULKAN_INCLUDE "${P3}/vulkan/include")
+include("${KZGS_PROVIDER_SOURCE_DIR}/KzgsVendorProviders.cmake")
+kzgs_add_vendor_providers()
 
 if(NOT EXISTS "${P2SRC}/GS/GS.cpp")
 	message(FATAL_ERROR "PCSX2 source not found at ${P2}")
@@ -438,6 +443,38 @@ endfunction()
 
 if(KZGS_BUILD_TEST)
 	target_compile_definitions(kzgs PRIVATE KZGS_FSR1_TESTING KZGS_PROVIDER_TESTING)
+	add_executable(kzgs_vendor_shim_test
+		"${KZGS_ROOT}/test/kzgs_vendor_shim_test.cpp"
+		"${KZGS_PROVIDER_SOURCE_DIR}/kzgs_vendor_provider.cpp")
+	target_include_directories(kzgs_vendor_shim_test PRIVATE "${KZGS_PROVIDER_PUBLIC_INCLUDE}"
+		"${KZGS_PROVIDER_SOURCE_DIR}" "${KZGS_PROVIDER_VULKAN_INCLUDE}")
+	target_compile_definitions(kzgs_vendor_shim_test PRIVATE KZGS_PROVIDER_BUILD VK_NO_PROTOTYPES)
+	target_compile_features(kzgs_vendor_shim_test PRIVATE cxx_std_20)
+
+	add_executable(kzgs_xess_requirements_test
+		"${KZGS_ROOT}/test/kzgs_xess_requirements_test.cpp"
+		"${KZGS_PROVIDER_SOURCE_DIR}/kzgs_vendor_provider.cpp"
+		"${KZGS_PROVIDER_SOURCE_DIR}/kzgs_vendor_xess.cpp")
+	target_include_directories(kzgs_xess_requirements_test PRIVATE "${KZGS_PROVIDER_PUBLIC_INCLUDE}"
+		"${KZGS_PROVIDER_SOURCE_DIR}" "${KZGS_PROVIDER_VULKAN_INCLUDE}" "${KZGS_ROOT}/test/vendor_doubles")
+	target_compile_definitions(kzgs_xess_requirements_test PRIVATE KZGS_PROVIDER_BUILD VK_NO_PROTOTYPES)
+	target_compile_features(kzgs_xess_requirements_test PRIVATE cxx_std_20)
+
+	add_executable(kzgs_dlss_adapter_test
+		"${KZGS_ROOT}/test/kzgs_dlss_adapter_test.cpp"
+		"${KZGS_PROVIDER_SOURCE_DIR}/kzgs_vendor_provider.cpp"
+		"${KZGS_PROVIDER_SOURCE_DIR}/kzgs_vendor_dlss.cpp")
+	target_include_directories(kzgs_dlss_adapter_test PRIVATE "${KZGS_PROVIDER_PUBLIC_INCLUDE}"
+		"${KZGS_PROVIDER_SOURCE_DIR}" "${KZGS_PROVIDER_VULKAN_INCLUDE}" "${KZGS_ROOT}/test/vendor_doubles")
+	target_compile_definitions(kzgs_dlss_adapter_test PRIVATE KZGS_PROVIDER_BUILD VK_NO_PROTOTYPES WIN32_LEAN_AND_MEAN NOMINMAX)
+	target_compile_features(kzgs_dlss_adapter_test PRIVATE cxx_std_20)
+
+	add_library(kzgs_vendor_config_stub STATIC "${KZGS_ROOT}/test/kzgs_vendor_config_stub.cpp")
+	target_compile_features(kzgs_vendor_config_stub PRIVATE cxx_std_20)
+	add_library(kzgs_vendor_config_partial_stub STATIC "${KZGS_ROOT}/test/kzgs_vendor_config_stub.cpp")
+	target_compile_definitions(kzgs_vendor_config_partial_stub PRIVATE KZGS_TEST_PARTIAL_LIBRARY)
+	target_compile_features(kzgs_vendor_config_partial_stub PRIVATE cxx_std_20)
+
 	add_library(kzgs_mock_provider MODULE "${KZGS_ROOT}/test/kzgs_mock_provider.c")
 	set_target_properties(kzgs_mock_provider PROPERTIES PREFIX "")
 	target_include_directories(kzgs_mock_provider PRIVATE

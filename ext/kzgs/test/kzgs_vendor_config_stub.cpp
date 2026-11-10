@@ -1,0 +1,23 @@
+// Link-probe fixture only: these functions are not vendor SDK implementations.
+// SPDX-License-Identifier: GPL-3.0+
+#define KZGS_FAKE_SYMBOL(name) extern "C" int name() { return 0; }
+KZGS_FAKE_SYMBOL(xessGetVersion)
+KZGS_FAKE_SYMBOL(NVSDK_NGX_VULKAN_GetFeatureInstanceExtensionRequirements)
+#ifndef KZGS_TEST_PARTIAL_LIBRARY
+KZGS_FAKE_SYMBOL(xessVKGetRequiredInstanceExtensions)
+KZGS_FAKE_SYMBOL(xessVKGetRequiredDeviceExtensions)
+KZGS_FAKE_SYMBOL(xessVKGetRequiredDeviceFeatures)
+KZGS_FAKE_SYMBOL(NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements)
+KZGS_FAKE_SYMBOL(NVSDK_NGX_VULKAN_GetFeatureRequirements)
+KZGS_FAKE_SYMBOL(NVSDK_NGX_VULKAN_Init_with_ProjectID)
+KZGS_FAKE_SYMBOL(NVSDK_NGX_VULKAN_GetCapabilityParameters)
+KZGS_FAKE_SYMBOL(NVSDK_NGX_Parameter_GetI)
+KZGS_FAKE_SYMBOL(NVSDK_NGX_VULKAN_ReleaseFeature)
+KZGS_FAKE_SYMBOL(NVSDK_NGX_VULKAN_DestroyParameters)
+KZGS_FAKE_SYMBOL(NVSDK_NGX_VULKAN_Shutdown1)
+KZGS_FAKE_SYMBOL(NGX_DLSS_GET_OPTIMAL_SETTINGS)
+KZGS_FAKE_SYMBOL(NVSDK_NGX_Create_ImageView_Resource_VK)
+KZGS_FAKE_SYMBOL(NGX_VULKAN_CREATE_DLSS_EXT1)
+KZGS_FAKE_SYMBOL(NGX_VULKAN_EVALUATE_DLSS_EXT)
+#endif
+#undef KZGS_FAKE_SYMBOL

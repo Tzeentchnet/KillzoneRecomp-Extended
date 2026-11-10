@@ -115,7 +115,7 @@ static KzgsProviderResult KZGS_PROVIDER_CALL device_requirements(const KzgsProvi
 		requirements.extensions = missing;
 	}
 	if (mode & (MOCK_BAD_FEATURE | MOCK_VALID_FEATURE | MOCK_MISALIGNED_FEATURE_POINTER |
-		MOCK_MISALIGNED_FEATURE_STRIDE | MOCK_MISALIGNED_FEATURE_BITS))
+		MOCK_MISALIGNED_FEATURE_STRIDE | MOCK_MISALIGNED_FEATURE_BITS | MOCK_MUTABLE_WITHOUT_EXTENSION))
 	{
 		features[0].feature.struct_size = sizeof(features[0]);
 		features[0].feature.s_type = (mode & MOCK_BAD_FEATURE) ? VK_STRUCTURE_TYPE_MAX_ENUM :
@@ -135,6 +135,12 @@ static KzgsProviderResult KZGS_PROVIDER_CALL device_requirements(const KzgsProvi
 			requirements.feature_block_stride--;
 		if (mode & MOCK_MISALIGNED_FEATURE_BITS)
 			features[0].feature.required = (const VkBool32*)((const unsigned char*)bits + 1);
+		if (mode & MOCK_MUTABLE_WITHOUT_EXTENSION)
+		{
+			features[0].feature.s_type = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MUTABLE_DESCRIPTOR_TYPE_FEATURES_EXT;
+			features[0].feature.feature_count = 1;
+			requirements.feature_block_count = 1;
+		}
 	}
 	if (mode & MOCK_VALID_FEATURE)
 	{

@@ -84,6 +84,19 @@ fallback, capture, resize, reset, and device recreation. A separate process test
 when device idle cannot prove completion. The DLL does not implement a vendor upscaler and is not staged with production
 binaries.
 
+SDK-free vendor-adapter checks use independently authored test doubles and do not load a vendor SDK or require a GPU:
+
+```powershell
+.\tools\scripts\vsenv.bat cmake --build .\build\win-msvc-rel --target kzgs_vendor_shim_test kzgs_dlss_adapter_test kzgs_xess_requirements_test kzgs_vendor_config_stub kzgs_vendor_config_partial_stub
+.\tools\scripts\vsenv.bat ctest --test-dir .\build\win-msvc-rel -R kzgs_vendor_configuration --output-on-failure
+ctest --test-dir .\build\win-msvc-rel -R 'kzgs_vendor_shim|kzgs_dlss_adapter|kzgs_xess_requirements' --output-on-failure
+```
+
+They cover sized buffers, missing/invalid temporal data, explicit conventions, reset/lifetime and failure handling,
+XeSS requirements, and configure tests for disabled/invalid/partial SDKs, unsupported targets, missing library symbols,
+exclusion from default builds, and explicit isolated DLL targets. The successful fake-SDK build does not constitute a real SDK build or
+runtime qualification. XeSS initialization remains blocked; see [vendor SDK adapters](vendor-upscalers.md).
+
 The CPU vectors check AMD constants and dispatch planning. The GPU-vector test enables synchronization validation,
 compares EASU with an independently compiled AMD native-gather reference and odd cropped rectangles with tightly
 packed inputs, checks edge/partial-tile writes and RCAS, and exercises failure cleanup and retry. The presentation

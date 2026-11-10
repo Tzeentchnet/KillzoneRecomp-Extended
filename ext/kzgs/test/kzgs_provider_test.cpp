@@ -264,6 +264,7 @@ int main(int argc, char** argv)
 		{MOCK_MISSING_INSTANCE_EXTENSION, KzgsUpscalerReason::InstanceExtensionUnavailable, "instance extension"},
 		{MOCK_MISSING_DEVICE_EXTENSION, KzgsUpscalerReason::DeviceExtensionUnavailable, "device extension"},
 		{MOCK_BAD_FEATURE, KzgsUpscalerReason::DeviceFeatureUnavailable, "feature negotiation"},
+		{MOCK_MUTABLE_WITHOUT_EXTENSION, KzgsUpscalerReason::DeviceFeatureUnavailable, "mutable descriptor without extension"},
 		{MOCK_MISALIGNED_FEATURE_POINTER, KzgsUpscalerReason::DeviceFeatureUnavailable, "misaligned feature pointer"},
 		{MOCK_MISALIGNED_FEATURE_STRIDE, KzgsUpscalerReason::DeviceFeatureUnavailable, "misaligned feature stride"},
 		{MOCK_MISALIGNED_FEATURE_BITS, KzgsUpscalerReason::DeviceFeatureUnavailable, "misaligned feature bits"},

@@ -67,6 +67,12 @@ namespace
 		FEATURE(VkPhysicalDeviceSynchronization2Features,
 			VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES,
 			synchronization2, synchronization2, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME),
+		FEATURE(VkPhysicalDeviceMutableDescriptorTypeFeaturesEXT,
+			VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MUTABLE_DESCRIPTOR_TYPE_FEATURES_EXT,
+			mutableDescriptorType, mutableDescriptorType, VK_EXT_MUTABLE_DESCRIPTOR_TYPE_EXTENSION_NAME),
+		FEATURE(VkPhysicalDeviceShaderIntegerDotProductFeatures,
+			VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_INTEGER_DOT_PRODUCT_FEATURES,
+			shaderIntegerDotProduct, shaderIntegerDotProduct, VK_KHR_SHADER_INTEGER_DOT_PRODUCT_EXTENSION_NAME),
 	};
 #undef FEATURE
 

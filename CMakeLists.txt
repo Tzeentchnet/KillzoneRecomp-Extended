@@ -377,6 +377,19 @@ if(BUILD_TESTING)
         --renderer d3d11 --warp --frames 2 --stress-uploads 64
         --out "${KZ_TEST_STATE_DIR}/kzgs/component")
     kz_add_iso_free_test(kzgs_fsr1_reference kzgs_fsr1_test)
+    kz_add_iso_free_test(kzgs_vendor_shim kzgs_vendor_shim_test)
+    kz_add_iso_free_test(kzgs_xess_requirements kzgs_xess_requirements_test)
+    kz_add_iso_free_test(kzgs_dlss_adapter kzgs_dlss_adapter_test)
+    set_tests_properties(kzgs_vendor_shim kzgs_xess_requirements kzgs_dlss_adapter PROPERTIES LABELS "iso-free;component")
+    add_test(NAME kzgs_vendor_configuration
+        COMMAND "${CMAKE_COMMAND}" "-DKZGS_SOURCE=${CMAKE_SOURCE_DIR}"
+            "-DKZGS_TEST_WORK=${CMAKE_BINARY_DIR}/kzgs-vendor-config-tests"
+            "-DKZGS_FAKE_LIBRARY=$<TARGET_FILE:kzgs_vendor_config_stub>"
+            "-DKZGS_PARTIAL_LIBRARY=$<TARGET_FILE:kzgs_vendor_config_partial_stub>"
+            "-DKZGS_GENERATOR=${CMAKE_GENERATOR}" "-DKZGS_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+            "-DKZGS_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+            -P "${CMAKE_SOURCE_DIR}/ext/kzgs/test/kzgs_vendor_config_test.cmake")
+    set_tests_properties(kzgs_vendor_configuration PROPERTIES LABELS "iso-free;component" TIMEOUT 120)
     kz_add_iso_free_test(kzgs_provider_vulkan_validation kzgs_provider_test "$<TARGET_FILE:kzgs_mock_provider>")
     set_tests_properties(kzgs_provider_vulkan_validation PROPERTIES
         LABELS "iso-free;renderer;vulkan-validation"

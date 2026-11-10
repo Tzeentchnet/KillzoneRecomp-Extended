@@ -15,6 +15,7 @@ The root [README](../README.md) is the project overview. Detailed guidance and t
 
 - [Vulkan upscaler provider ABI](upscaler-provider-abi.md) - versioning, negotiation, resource ownership, synchronization,
   optional inputs, and fallback rules.
+- [Local vendor SDK adapters](vendor-upscalers.md) - opt-in build, current blockers, and license/provenance fields.
 - [Findings](findings.md) - reverse-engineering evidence, runtime behavior, and measured experiments.
 - [Asset formats](assetforms.md) - DAT, Core/CoreStream, texture, model, and animation research.
 - [Runtime patches](../patches/README.md) - rationale and evidence for PS2Recomp changes.

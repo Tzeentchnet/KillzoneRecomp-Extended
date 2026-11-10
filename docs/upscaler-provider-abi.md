@@ -4,7 +4,8 @@
 values and Vulkan C types only; no STL, PCSX2 types, vendor SDK, or C++ runtime objects cross the boundary. The current
 host is Windows x64 and looks only for the selected provider in `<exe>/upscalers/kzgs_upscaler_dlss.dll` or
 `<exe>/upscalers/kzgs_upscaler_xess.dll`. A provider executes native code in the game process; install only trusted
-DLLs and their dependencies. No proprietary adapter or SDK discovery is included.
+DLLs and their dependencies. Optional in-tree adapter source requires explicit local SDK paths; no proprietary SDK
+or provider binary is bundled or automatically staged. See [local vendor adapters](vendor-upscalers.md).
 
 The host loads a selected DLL before Vulkan instance/device creation, obtains `kzgs_upscaler_get_api`, and negotiates
 ABI major 1, minor 0. The provider returns a version with the same major and a minor no greater than the requested
@@ -38,8 +39,9 @@ restart); switching off and back to the provider already negotiated for that dev
   feature struct's declaration order, excluding `sType` and `pNext`. Missing trailing members are false. The host
   checks every requested bit with `vkGetPhysicalDeviceFeatures2` before enabling it. V1 accepts 16-bit storage and
   variable pointers (Vulkan 1.1); and, with their named device extensions, 8-bit storage, shader float16/int8, descriptor indexing,
-  buffer device address, timeline semaphore, scalar block layout, shader atomic int64, Vulkan memory model, and
-  synchronization2. Unrecognized or duplicate blocks, malformed arrays, missing extension dependencies, and
+  buffer device address, timeline semaphore, scalar block layout, shader atomic int64, Vulkan memory model,
+  synchronization2, mutable descriptor type, and shader integer dot product. Unrecognized or duplicate blocks,
+  malformed arrays, missing extension dependencies, and
   structures overlapping PCSX2's own feature chain fail closed. The registry can grow without changing the ABI.
 - `create` receives the actual instance, physical device, logical device, graphics queue/family, Vulkan proc-address
   functions, image formats, extents, crop, encoding, and sharpening. It may allocate provider-owned resources but
@@ -111,3 +113,7 @@ Providers must still check image formats, extents, subresources, and conventions
 The in-tree `kzgs_mock_provider` is a test-only C DLL which uses a Vulkan blit; it is not an upscaler adapter and is
 not staged with the game. It exercises negotiation, sized buffers, real command recording and fences, failures,
 redraw/reset/resize/device-loss handling, safe fallback, and unload under Vulkan validation.
+
+The optional DLSS adapter has only been exercised with a fake SDK, not a real vendor runtime or GPU. The optional
+XeSS source negotiates requirements but deliberately rejects context creation because its SDK initialization may
+submit work forbidden by ABI 1.0. Neither is currently usable with the renderer's color-only inputs.

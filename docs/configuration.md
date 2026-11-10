@@ -74,7 +74,9 @@ requested/effective provider and reason. Off preserves the existing path. No pro
 The vendored AMD FSR 1 source is MIT licensed; see [`ext/kzgs/third_party/fsr1`](../ext/kzgs/third_party/fsr1).
 
 Optional Vulkan providers may be placed in `<exe>/upscalers/kzgs_upscaler_dlss.dll` or
-`<exe>/upscalers/kzgs_upscaler_xess.dll`. No DLSS or XeSS implementation is bundled. A provider must be selected
+`<exe>/upscalers/kzgs_upscaler_xess.dll`. No vendor binary is bundled; the optional local SDK adapters are
+unqualified and XeSS initialization is blocked as described in [local vendor adapters](vendor-upscalers.md).
+A provider must be selected
 before the Vulkan device is created so its required extensions and features can be negotiated; selecting a different
 provider on an already-open device reports `device_recreation_required` and falls back until KzGS is reopened
 (normally by restarting the game or replay).
