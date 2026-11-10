@@ -2,8 +2,8 @@
 
 This document records issues, pull requests, and design discussions that may be worth opening with
 [ran-j/PS2Recomp](https://github.com/ran-j/PS2Recomp) or
-[PCSX2/pcsx2](https://github.com/PCSX2/pcsx2). It is a filing plan, not a claim that the reports have already been
-submitted.
+[PCSX2/pcsx2](https://github.com/PCSX2/pcsx2). It tracks both filed submissions and candidates that still need
+evidence, design agreement, or independent human authorship.
 
 The duplicate check and source review were refreshed on 2026-11-10 against:
 
@@ -19,17 +19,25 @@ The duplicate check and source review were refreshed on 2026-11-10 against:
 Before filing, rebase or reproduce against the then-current upstream head. Avoid including retail data, generated
 game code, screenshots, traces containing protected content, or paths to local disc images.
 
+## Filed submissions
+
+| Date | Submission | Status | Validation |
+|---|---|---|---|
+| 2026-11-10 | [ran-j/PS2Recomp#436](https://github.com/ran-j/PS2Recomp/pull/436) - avoid broad fallback for unresolved JALR calls | Open | Windows Release, MSVC and ClangCL: 446/446 tests passed |
+| 2026-11-10 | [ran-j/PS2Recomp#437](https://github.com/ran-j/PS2Recomp/pull/437) - wrap VIF MPG uploads within VU micro memory | Open | Windows Release, MSVC and ClangCL: 448/448 tests passed |
+| 2026-11-10 | [ran-j/PS2Recomp#438](https://github.com/ran-j/PS2Recomp/issues/438) - RFC for multiple recompiled images in one executable | Open | Design discussion backed by a tested downstream prototype |
+
 ## Recommended filing order
 
-| Order | Repository | Form | Candidate | Readiness |
+| Order | Repository | Form | Candidate | Status |
 |---:|---|---|---|---|
-| 1 | PCSX2 | Small PR | Store compute specialization-constant values | Ready after adding a focused builder test |
-| 2 | PS2Recomp | Small PR | Wrap VIF1 MPG uploads within VU1 micro memory | Near-ready; rebase and cite hardware/reference behavior |
+| 1 | PCSX2 | Small PR | Store compute specialization-constant values | Blocked by PCSX2's LLM policy; requires independent human authorship |
+| 2 | PS2Recomp | Small PR | Wrap VIF MPG uploads within VU micro memory | Filed as [ran-j/PS2Recomp#437](https://github.com/ran-j/PS2Recomp/pull/437) |
 | 3 | PS2Recomp | PR for existing issue | Model all 32 VU integer/control-register slots | Existing issue has independent game evidence |
-| 4 | PS2Recomp | Small PR | Limit unresolved JALR resume points to the return PC | Near-ready; verify code-size and indirect-tail-call cases |
+| 4 | PS2Recomp | Small PR | Limit unresolved JALR resume points to the return PC | Filed as [ran-j/PS2Recomp#436](https://github.com/ran-j/PS2Recomp/pull/436) |
 | 5 | PCSX2 | Issue | Vulkan index-upload synchronization hazard | Reproduce on current PCSX2 `master` first |
 | 6 | PS2Recomp | Small PR | Interpret VIF STCYCL `CL=0` as 256 | Extract from the mixed local test-restoration commit |
-| 7 | PS2Recomp | RFC issue | Namespaced output for multiple recompiled images | Working implementation exists; API design needs agreement |
+| 7 | PS2Recomp | RFC issue | Namespaced output for multiple recompiled images | Filed as [ran-j/PS2Recomp#438](https://github.com/ran-j/PS2Recomp/issues/438) |
 | 8 | PCSX2 | RFC issue | Supported external presentation/integration hooks | Submit the design before splitting the companion branch |
 | 9 | PS2Recomp | Issue | Fixed IOP RPC instruction budgets can truncate valid handlers | Needs a minimal non-Killzone reproduction |
 
@@ -37,30 +45,28 @@ game code, screenshots, traces containing protected content, or paths to local d
 
 ### New pull-request candidates
 
-#### VIF1 MPG uploads should wrap within VU1 micro memory
+#### VIF MPG uploads should wrap within VU micro memory
 
-**Suggested title:** `VIF1: wrap MPG uploads within VU1 micro memory`
+**Filed:** [ran-j/PS2Recomp#437](https://github.com/ran-j/PS2Recomp/pull/437) on 2026-11-10.
 
-The current fork masks the MPG destination and splits a crossing upload between the end and beginning of the 16 KiB
-VU1 micro-memory region. The focused test uploads two instructions at immediate `0x7ff`, then verifies the second
-instruction wraps to address zero; immediate `0x800` is also verified to alias address zero.
+The canonical submission covers both 4 KiB VU0 and 16 KiB VU1 micro memory. It masks MPG destinations to the target
+region, splits crossing payloads between the end and address zero, and validates the complete payload before changing
+micro memory. This matches the address masking and split-write behavior in PCSX2's VIF implementation.
 
-- Implementation:
+- Submitted implementation:
+  [`9023b80`](https://github.com/Tzeentchnet/PS2Recomp/commit/9023b80d5cfb12881c76a1ef4277c8139dd7356d).
+- Earlier downstream implementation:
   [`4b3c2ab`](https://github.com/Tzeentchnet/PS2Recomp/commit/4b3c2abb7ecbe0de3a2c55c2ee853ae6257b2606).
 - Reconstructable patch:
   [`0031-vif1-mpg-address-wrap.patch`](../patches/ps2recomp/0031-vif1-mpg-address-wrap.patch).
 - Duplicate search: no matching open PS2Recomp issue or PR was found for MPG address wrapping.
-
-Before opening:
-
-1. Rebase the behavior and test onto current `main`.
-2. Cite the VIF/VU micro-memory address semantics or a matching PCSX2 implementation.
-3. Keep the identical-upload optimization separate unless it is required by the test.
-4. Verify `NUM=0` and a packet that ends before the complete MPG payload.
+- Tests cover VIF0 and VIF1 crossing uploads, masked immediates `0x0200` and `0x0800`, incomplete payloads, and the
+  pre-existing `NUM=0` behavior. The full Windows Release suite passed 448/448 tests under MSVC 19.44 and
+  ClangCL 19.1.5.
 
 #### Unresolved JALR should register only its return PC as resumable
 
-**Suggested title:** `Recompiler: unresolved JALR should add only its return PC as a resume entry`
+**Filed:** [ran-j/PS2Recomp#436](https://github.com/ran-j/PS2Recomp/pull/436) on 2026-11-10.
 
 An unresolved `JALR` is an indirect call. The caller needs a resume label at `pc + 8`, but treating it like an
 unresolved local jump promotes broad portions of the caller to indirect fallback entries. In the Killzone generated
@@ -69,6 +75,8 @@ ordinary instructions.
 
 - Local change:
   [`0014-jalr-resume-only-return.patch`](../patches/ps2recomp/0014-jalr-resume-only-return.patch).
+- Submitted implementation:
+  [`f07c61b`](https://github.com/Tzeentchnet/PS2Recomp/commit/f07c61be385400d7d8a40c0fa763bed34f9229c5).
 - Duplicate search: no matching open issue or PR was found.
 - Related but distinct:
   [ran-j/PS2Recomp#260](https://github.com/ran-j/PS2Recomp/issues/260) concerns resuming inside an
@@ -76,8 +84,9 @@ ordinary instructions.
   [ran-j/PS2Recomp#415](https://github.com/ran-j/PS2Recomp/pull/415) concerns a real delay slot located at the next
   function.
 
-Before opening, add output-size or entry-count evidence and tests for indirect calls, indirect tail jumps, jump-table
-fallback, and a scheduler resume at the JALR return address.
+The canonical test verifies that `pc + 8` remains a resume entry and emitted label, unrelated caller instructions are
+not promoted, and no jump-table target is fabricated. The existing unresolved-`JR` fallback test remains unchanged.
+The full Windows Release suite passed 446/446 tests under MSVC 19.44 and ClangCL 19.1.5.
 
 #### VIF STCYCL `CL=0` should mean 256
 
@@ -106,7 +115,7 @@ matches and exact suite/test selection.
 
 #### Namespaced output for more than one recompiled image
 
-**Suggested title:** `RFC: support multiple recompiled images in one executable`
+**Filed:** [ran-j/PS2Recomp#438](https://github.com/ran-j/PS2Recomp/issues/438) on 2026-11-10.
 
 Some games load a frontend, overlay, or secondary executable that must coexist with the main generated set. The fork
 implements configurable symbol prefixes, registration-function names, and table-end bounds, with generator and
@@ -117,8 +126,8 @@ recompiler tests:
 - Consolidated implementation:
   [`d042263`](https://github.com/Tzeentchnet/PS2Recomp/commit/d042263bad8f1c5a55feb368b078062aeb81eea7).
 
-Open an RFC before a PR because the public configuration names and registration contract affect every generated
-project. The discussion should cover:
+The RFC treats those commits as prototype evidence rather than an upstream-ready patch because the public
+configuration names and registration contract affect every generated project. It asks maintainers to decide:
 
 - Whether namespacing belongs in `.recomp.json` or a higher-level image manifest.
 - Collision-free generated symbols, function tables, and registration entry points.
@@ -183,11 +192,18 @@ surface before upstream discussion.
 
 ## PCSX2
 
-### New pull-request candidate
+### Blocked pull-request candidate
 
 #### Compute specialization constants record metadata but not values
 
 **Suggested title:** `Vulkan: store compute specialization constant values`
+
+**Submission status:** Not filed. PCSX2's
+[pull-request template](https://github.com/PCSX2/pcsx2/blob/master/.github/PULL_REQUEST_TEMPLATE.md) requires AI-use
+disclosure, and its
+[LLM usage policy](https://pcsx2.net/docs/contributing/#large-language-model-llm-usage-policy) prohibits new
+contributors from submitting AI-generated contribution content. `Tzeentchnet` has no prior PCSX2 pull requests, so
+this fix must be independently authored, tested, explained, and submitted by a human contributor under that policy.
 
 Current PCSX2 `master` still accepts `value` in
 [`ComputePipelineBuilder::SetSpecializationValue`](https://github.com/PCSX2/pcsx2/blob/c8081bf5d63b1b83b77112632e1113a25b81058c/pcsx2/GS/Renderers/Vulkan/VKBuilders.cpp)
@@ -195,8 +211,8 @@ but only appends the `VkSpecializationMapEntry` and increases `dataSize`; it doe
 `m_smap_constants`. A caller selecting two branches through a specialization constant can therefore receive the
 default/old data. Street Recomp found the same defect while selecting EASU versus RCAS.
 
-This is the best first PCSX2 submission because it is small and independent of KzGS. Add a builder-level test that
-sets at least two nonzero values and inspects `VkSpecializationInfo::pData`, then store the value at the map entry's
+The defect is small and independent of KzGS. An independently prepared fix should add a builder-level test that sets
+at least two nonzero values and inspects `VkSpecializationInfo::pData`, then stores each value at the map entry's
 declared offset. No matching open PCSX2 issue or PR was found in the 2026-11-10 duplicate search.
 
 ### New issue candidates
