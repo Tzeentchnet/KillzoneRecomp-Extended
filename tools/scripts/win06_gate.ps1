@@ -1,4 +1,4 @@
-# WIN-06 acceptance gate: repeated chapter 11 starts with the intro skipped (TODO.md, IMPLEMENTATION_PLAN.md WIN-06).
+# Historical WIN-06 diagnostic gate; see docs/archive/TODO.md and docs/archive/IMPLEMENTATION_PLAN.md.
 # Usage: win06_gate.ps1 -Runs 10 -Name win06_gate -Card work\win04_20261019_card [-ExeDir build\win-clang-rel]
 #        [-EnvSet "PS2X_DI_GATE=0"] [-Seconds 35] [-Iso <image>] [-Elf <SCUS_974.02>]
 # Each run boots headless with KZ_START_LEVEL=11 (which also skips the intro) on a fresh copy of -Card, so runs never

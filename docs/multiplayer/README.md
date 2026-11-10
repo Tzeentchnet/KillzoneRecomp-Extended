@@ -119,7 +119,7 @@ committed.
 
 ### SNR2 reconstruction
 
-[`tools/scripts/kz_snr2.py`](../../tools/scripts/kz_snr2.py):
+The archived prototype used `tools/scripts/kz_snr2.py` (removed during repository cleanup) to:
 
 - validates SNR2 headers, extents, alignments, symbol tables, and indexed exports;
 - decodes packed and named relocations;
@@ -130,12 +130,12 @@ committed.
 - appends relocated modules as executable ELF segments and sections;
 - restricts generated bundle output to ignored `work/`.
 
-[`tools/scripts/test_kz_snr2.py`](../../tools/scripts/test_kz_snr2.py) covers relocation behavior, malformed input,
-wide symbol indices, loader patching, image trimming, and indexed exports.
+Its `tools/scripts/test_kz_snr2.py` test covered relocation behavior, malformed input, wide symbol indices, loader
+patching, image trimming, and indexed exports.
 
 ### Runtime bridges
 
-[`src/kz_online_overrides.cpp`](../../src/kz_online_overrides.cpp) installs loader-specific host overrides for:
+The removed prototype file `src/kz_online_overrides.cpp` installed loader-specific host overrides for:
 
 - SIF module stop, unload, and lookup operations needed in the BIOS-less runtime;
 - verified ONLINE CDVD SDK entry points backed by the existing mounted-ISO handlers.
@@ -145,8 +145,8 @@ service succeeded.
 
 ### Incremental generated-code workflow
 
-[`tools/scripts/sync_recompiled_output.py`](../../tools/scripts/sync_recompiled_output.py) runs PS2Recomp into a
-staging tree, localizes direct-call declarations, and copies only content changes into the selected generated tree.
+The removed prototype script `tools/scripts/sync_recompiled_output.py` ran PS2Recomp into a staging tree, localized
+direct-call declarations, and copied only content changes into the selected generated tree.
 [`tools/scripts/regen.py`](../../tools/scripts/regen.py) uses the same synchronization path for the campaign.
 
 The online measurement after adding callback `0x007C18E8` was:

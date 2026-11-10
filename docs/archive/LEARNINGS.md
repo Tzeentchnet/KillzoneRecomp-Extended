@@ -1,9 +1,12 @@
 # LEARNINGS - lessons for the next session
 
+> Archived project-management snapshot. Current build and test guidance lives in the
+> [documentation index](../README.md).
+
 **Last updated:** 2026-10-21
 
 Short, reusable lessons about working on this repository: what tripped a session up, which checks catch it, and
-which tools answer a question fastest. Evidence and measurements live in [`docs/findings.md`](docs/findings.md); task
+which tools answer a question fastest. Evidence and measurements live in [findings](../findings.md); task
 status lives in [`TODO.md`](TODO.md). Add a lesson when it would have saved a later session time; keep each one to a
 few lines with a pointer to the evidence.
 

@@ -1526,6 +1526,7 @@ RTSS notes: `RTSS.exe` needs admin and its hooks only reach processes on the sam
 
 ## Field of view (FieldOfView, WeaponFieldOfView)
 - **Settings.** `[Graphics] FieldOfView` and `WeaponFieldOfView` in `killzone.ini`, horizontal degrees measured at 16:9, 0 = the game's own (world 87.08 = 56.25 vertical, weapon 72.73 = 45 vertical; see "Ultrawide" for where those come from). Launcher: Graphics tab, "Field of view" section. `KZ_FOV` / `KZ_WEAPON_FOV` override them for automation.
+- **Compatibility.** `Fov` and `WeaponFov` are accepted as migration aliases for settings files written by earlier Extended builds. The canonical long names take precedence when both forms are present, and saving rewrites the settings with only the canonical names.
 - **World.** In the `0x1C1960` wrapper (`src/kz_widescreen.cpp`), the vertical field of view at camera +0x70 is changed next to the ultrawide aspect and held and restored the same way (pending until the next flush, so the sky and skyline passes after the call and the culling planes see it; the game logic does not). Only the local player's camera (`player+0x3C`, player from the mouse-aim controller hook, `kzAimPlayer()`) is changed, so cutscene cameras keep their framing. The value is scaled in tangent space, tan(fov'/2) = tan(fov/2) x s with s = tan(H/2) / tan(87.08/2), so the zoom levels, which lower +0x70, keep their magnification relative to the new view and zoom in/out stays smooth. Ultrawide still widens the aspect on top (Hor+).
 - **Weapon.** f12 (fov) of the weapon's frustum call `0x16E2D8` inside `0x220018` is scaled the same way with s from 72.73. The first call logs `[kz] weapon field of view: before -> after` once (also shows the unit; values above pi are taken as degrees).
 - The hooks are installed when an ultrawide aspect or either field of view is set; at 16:9 with the original fields of view nothing is installed, as before. Not verified in game yet: LOD (`0x1C2168` reads the fov) and culling at 120+ degrees, the sniper scope overlay at wide settings.
@@ -2667,7 +2668,7 @@ measured. Add the WAV only for a targeted producer-side comparison.
 
 ## Direct-upstream hardening and input options (2026-10-24)
 
-The bounded upstream comparison in `docs/upstream_comparison.md` identified five changes that apply cleanly to this
+The bounded upstream comparison in `docs/archive/upstream_comparison.md` identified five changes that apply cleanly to this
 fork without importing upstream's overlapping runtime or graphics work.
 
 ### Yield-safe SIF module calls

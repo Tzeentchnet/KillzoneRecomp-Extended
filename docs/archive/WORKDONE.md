@@ -1,12 +1,15 @@
 # WORKDONE - verified completions
 
+> Archived project-management snapshot. This ledger records historical fork work and is no longer maintained. See
+> the [documentation index](../README.md).
+
 **Last updated:** 2026-10-24
 
 The ledger of finished work. An entry belongs here only after the acceptance commands in
 [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) pass on the machine the plan names. Open and partially evidenced
 work, including Windows-only evidence for macOS gates, stays in [`TODO.md`](TODO.md). The reasoning and measurements
-behind each item are in [`docs/findings.md`](docs/findings.md), [`docs/assetforms.md`](docs/assetforms.md) and
-[`patches/README.md`](patches/README.md), as applicable.
+behind each item are in [findings](../findings.md), [asset formats](../assetforms.md), and
+[runtime patches](../../patches/README.md), as applicable.
 
 Each entry records: commit, date, machine and toolchain, acceptance commands and results, decisions, and residual
 risk. Do not edit an entry's evidence after the fact. If a later run disagrees, add a new dated re-verification.
@@ -408,7 +411,7 @@ submodule, and the failed toml11 GCC-flag probes during the PS2Recomp configure.
 - **Commit:** `b4d01ee` (2026-10-19)
 - **Machine:** Windows 11 x64; supported NTSC-U `SCUS_974.02`; read-only executable, repository and previously
   validated archive evidence.
-- **Evidence:** [`docs/assetforms.md`](docs/assetforms.md) now separates shipped containment, runtime I/O and
+- **Evidence:** [Asset formats](../assetforms.md) now separates shipped containment, runtime I/O and
   authoring provenance. Executable code at VA `0x002C2EF8` proves byte `0x08` of the `FILES.DAT` header is the DAT
   volume count (5 in the validated build), while bytes `0x09..0x0B` remain unknown. Code at VA `0x001BCD20` proves
   the `appdir:`, `cache:`, `source:`, `binaries:` and `music:` mount relationships. Repository tracing proves the
@@ -438,7 +441,7 @@ submodule, and the failed toml11 GCC-flag probes during the PS2Recomp configure.
   the fourth translation slot. BoneMap names bind to the first case-insensitive Skeleton-name match.
 - **Safety corrections:** object-relative CoreStream formulas, zero-packet handling, nested-directory ownership,
   DMA/chunk bounds, packed-block read guards, target bounds and adaptive-codec window limits are now explicit in
-  [`docs/assetforms.md`](docs/assetforms.md).
+  [asset formats](../assetforms.md).
 - **Validation:** documentation-only; `git diff --check` PASS and Markdown code fences balanced (438). No runtime code
   or configuration changed, so game execution is not an acceptance requirement.
 - **Residual unknowns:** actual retail selector frequencies, the R8 encoder invariant, P5 encoder width limits, R9
@@ -464,7 +467,7 @@ submodule, and the failed toml11 GCC-flag probes during the PS2Recomp configure.
   bones. Hardware uploads `G_animated` because vertices are bone-local; software skinning proves
   `G_animated * InverseBindGlobal`. The serialized temporary transform is `InverseBindGlobal`, so
   `RestGlobal = inverse(InverseBindGlobal)`.
-- **Blender contract:** [`docs/assetforms.md`](docs/assetforms.md) now defines source identities, strict retail codec
+- **Blender contract:** [Asset formats](../assetforms.md) now defines source identities, strict retail codec
   rules, one explicit basis conversion, rest/bind reconstruction, armature-space target matrices, `matrix_basis`,
   Blender 5.2 slotted Actions, authoritative timing, native-evaluator versus baked playback, looping, root motion,
   event metadata and decomposition residual rejection.
@@ -615,4 +618,4 @@ Verified upstream by drakolordx7 at or before the audited baseline `5f0700079f9a
 | D3D11/D3D12/Vulkan, up to 8x internal resolution, 16:9, SMAA/FXAA, CAS sharpening | findings "Post-process passes", "Menu jitter and blur" |
 | Render-distance and root-LOD scaling (`src/kz_post.cpp`) | findings "Draw distance and LOD" |
 | Boot movie audio (patch 0027), speed parity with the original | findings "FMV audio", "Speed parity with the original" |
-| Archived design and performance notes | [`docs/archive/upstream/`](docs/archive/upstream/) |
+| Archived design and performance notes | [upstream archive](upstream/) |

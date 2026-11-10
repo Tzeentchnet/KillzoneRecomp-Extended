@@ -8,7 +8,7 @@
 - **Last updated:** 2026-10-23
 - **Status document:** [`README.md`](README.md)
 
-This queue is separate from the campaign enhancement queue in [`../../TODO.md`](../../TODO.md). A task is complete
+This queue was separate from the now-archived fork [campaign enhancement queue](../archive/TODO.md). A task is complete
 only when its acceptance evidence is reproducible from authorized private inputs and does not introduce campaign
 regressions.
 

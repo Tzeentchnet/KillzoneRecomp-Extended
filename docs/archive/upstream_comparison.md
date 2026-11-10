@@ -1,5 +1,8 @@
 # Upstream comparison and import plan
 
+> Archived import plan. The selected work was integrated before the November 2026 upstream-history rebuild. This
+> document preserves the original review and decision record; it is not a current branch plan.
+
 **Research date:** 2026-10-24
 
 **Local baseline:** `KillzoneRecomp-Extended` at `ef6339a`
@@ -78,16 +81,16 @@ exhausted. The upstream wrappers call the runtime handler and then set
 
 The local fork is still exposed:
 
-- [`src/kz_overrides.cpp`](../src/kz_overrides.cpp) binds both addresses through
+- [`src/kz_overrides.cpp`](../../src/kz_overrides.cpp) binds both addresses through
   `bindAddressHandler`.
 - The helper in
-  [`game_overrides.cpp`](../ext/PS2Recomp/ps2xRuntime/src/lib/game_overrides.cpp)
+  [`game_overrides.cpp`](../../ext/PS2Recomp/ps2xRuntime/src/lib/game_overrides.cpp)
   is only `replaceFunction(address, handler)`.
 - The SIF handlers in
-  [`RPC.cpp`](../ext/PS2Recomp/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp)
+  [`RPC.cpp`](../../ext/PS2Recomp/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp)
   set the return value but not the return PC.
 - The older intermittent `[IOP] module arena exhausted` signature is already
-  recorded in [`findings.md`](findings.md).
+  recorded in [`findings.md`](../findings.md).
 
 **Adaptation:**
 
@@ -115,8 +118,8 @@ Upstream fixed two concrete logging faults:
   pre-hang output could be lost.
 
 The local host boundary currently has the same two-handle pattern in
-[`core_win32.cpp`](../host/src/core_win32.cpp) and
-[`core_macos.mm`](../host/src/core_macos.mm). It improves on upstream by
+[`core_win32.cpp`](../../host/src/core_win32.cpp) and
+[`core_macos.mm`](../../host/src/core_macos.mm). It improves on upstream by
 centralizing rotation and errors, but it does not yet duplicate one stream
 descriptor or make both streams unbuffered.
 
@@ -146,17 +149,17 @@ restore at the next controller update.
 The small `29af12c` fix is independently important: local `updateHoldAim`
 currently applies hold-to-aim reconciliation even when the active device is a
 gamepad. That can pulse R3 off immediately after the player toggles zoom. The
-existing prose in [`findings.md`](findings.md) says gamepad R3 remains a
+existing prose in [`findings.md`](../findings.md) says gamepad R3 remains a
 toggle, but the current code does not enforce that condition.
 
 **Adaptation:**
 
 - Apply the keyboard/mouse device guard first.
 - Port the scope sequence manually into the locally modified
-  [`kz_aim.cpp`](../src/kz_aim.cpp).
+  [`kz_aim.cpp`](../../src/kz_aim.cpp).
 - Add the `0x00218710` restore hook through
-  [`kz_hook_addresses.h`](../src/kz_hook_addresses.h) and
-  [`generated-manifest.json`](../config/generated-manifest.json), not as a
+  [`kz_hook_addresses.h`](../../src/kz_hook_addresses.h) and
+  [`generated-manifest.json`](../../config/generated-manifest.json), not as a
   source literal.
 - Preserve the local time-fix wrapper ordering around `ApplyLook`.
 - Test mouse hold/release, gamepad toggle, forced yields, and a scope weapon.
@@ -172,7 +175,7 @@ cubic stick response otherwise makes diagonal movement and turning much too
 slow.
 
 This is a small, high-value manual port into
-[`kz_input.cpp`](../src/kz_input.cpp). Add pure input self-tests for center,
+[`kz_input.cpp`](../../src/kz_input.cpp). Add pure input self-tests for center,
 dead-zone boundary, cardinal full scale, diagonal full scale, and output
 clamping before changing the default.
 
@@ -224,7 +227,7 @@ This is useful evidence for the ergonomics lane, but it is not ready to merge:
   conflicts in `kz_gs.*` and semantic overlap in `kzgs`.
 - The upstream implementation contains several direct guest addresses. The
   local inventory gate rejects hook literals that bypass
-  [`kz_hook_addresses.h`](../src/kz_hook_addresses.h).
+  [`kz_hook_addresses.h`](../../src/kz_hook_addresses.h).
 - The local plan explicitly requires projection/HUD discovery and
   16:9/21:9/32:9 qualification before claiming M4.
 
@@ -242,7 +245,7 @@ upstream script itself must not be imported: it hard-codes
 `D:\KillzoneRecomp`, Visual Studio 18 Community, and 7-Zip paths and does not
 participate in the local dependency lock or release-compliance gates.
 
-Extend the existing relocatable [`package.ps1`](../tools/scripts/package.ps1)
+Extend the existing relocatable [`package.ps1`](../../tools/scripts/package.ps1)
 instead. Discover the selected toolchain's redistributable directory, fail
 explicitly when required DLLs are absent, lock provenance, produce notices and
 an SBOM, audit the staged tree for protected content, and test installation on
@@ -306,13 +309,13 @@ rendered game frame.
 
 ## Build-review correction
 
-The earlier [`compilation_review.md`](../../compilation_review.md) explicitly
+An earlier compilation review, removed during repository cleanup, explicitly
 states that it could not inspect the local build files. Its largest proposed
 wins are already implemented:
 
-- [`regen.py`](../tools/scripts/regen.py) generates into a temporary directory
+- [`regen.py`](../../tools/scripts/regen.py) generates into a temporary directory
   and copies only changed files.
-- [`CMakeLists.txt`](../CMakeLists.txt) separates frequently edited port code
+- [`CMakeLists.txt`](../../CMakeLists.txt) separates frequently edited port code
   into `kz_port`, enables generated-code unity batches, and configures a PCH.
 - The checked MSVC/clang-cl presets, ISO-free CTest layer, renderer goldens,
   hook inventory, and deterministic regeneration provide a stronger local

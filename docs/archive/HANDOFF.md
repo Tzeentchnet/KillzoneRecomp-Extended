@@ -1,10 +1,13 @@
 # KillzoneRecomp session handoff
 
-**Last updated:** 2026-10-20
-**Workspace:** `D:\Github` (also holds the superseded `plan.md` and `KillzoneRecomp_Master_PRD.md`, history only)
-**Implementation repository:** `D:\Github\KillzoneRecomp-Extended`
-**Branch / last substantive commit:** `master` / see `git log` (2026-10-20 session commits)
-**PS2Recomp revision:** `b44b2dcba0fe5a247b6f42176dd41f36168b6565` (`Tzeentchnet/PS2Recomp`, branch `killzone`)
+> Archived project-management snapshot. It is not current project status or procedure. See the
+> [documentation index](../README.md).
+
+**Last updated:** 2026-10-24
+**Workspace:** `E:\Git\Killzone`
+**Implementation repository:** `E:\Git\Killzone\KillzoneRecomp-Extended`
+**Branch / last substantive commit:** `master` / see `git log` (2026-10-24 upsync integration)
+**PS2Recomp revision:** `93d19aaa4f933787df05eed348a8283aa249a22b` (`Tzeentchnet/PS2Recomp`, branch `killzone`)
 **GitHub origin:** `Tzeentchnet/KillzoneRecomp-Extended`, private during cleanup
 
 This file is the session protocol for people and agents: how to start, which rules apply, how to check for
@@ -18,7 +21,7 @@ regressions, and how to hand off. It does not hold task status. That lives in [`
 2. [`TODO.md`](TODO.md) - what is open, on which machine, and the next command.
 3. [`WORKDONE.md`](WORKDONE.md) - what is proven, with evidence. Authoritative for completion.
 4. This file - session rules.
-5. [`README.md`](README.md) - build, test and BYOD workflows.
+5. [Current README](../../README.md) - project overview and current documentation.
 6. [`LEARNINGS.md`](LEARNINGS.md) - lessons from earlier sessions (lock updates, A/B tools, gates).
 
 Code and passing acceptance commands override prose. Fix any stale document in the same session.
@@ -66,8 +69,8 @@ tools\scripts\cmake_preset.ps1 -Preset win-clang-rel -Action test -Label iso-fre
 git diff --check
 ```
 
-Expected today: 31/0/0 dependency checks, both generated gates PASS (51 hook signatures and 101,715
-recompiler-resumable entries), 12/12 ISO-free under each compiler. WIN-06 has its own gate,
+Expected today: 31/0/0 dependency checks, both generated gates PASS (55 hook signatures and 101,715
+recompiler-resumable entries), 13/13 ISO-free under each compiler. WIN-06 has its own gate,
 `tools\scripts\win06_gate.ps1` (about 18 minutes for ten runs; see `LEARNINGS.md`). The focused PORT-01 gate is
 `tools\scripts\cmake_preset.ps1 -Preset win-clang-rel -Action build -Target kz_host_core`.
 
@@ -116,14 +119,15 @@ Safe parallel work:
 ## 7. Latest session record
 
 ```text
-Task: WIN-06 write watch (side session of the 2026-10-20 session: TODO review and src audit; dependency lock repair; WIN-06 investigation; LEGAL-01 disposition)
-Owner/session: Claude Code desktop sessions, 2026-10-20
-Machine: Windows 11 x64; MSVC and clang-cl presets; D3D12 on NVIDIA GeForce RTX 5070
-Status: lock repaired and regression set green; LEGAL-01 complete; WIN-06 in progress: the writer of the timer block is named (realloc of a garbage pointer wraps past 32 MB), the source of the garbage pointer is not
-Files changed: src/kz_win06_watch.cpp and .h (new, KZ_WIN06_WATCH diagnostic); src/kz_hook_addresses.h and config/generated-manifest.json (4 debug hooks: HeapFree, HeapRealloc, HeapReallocC, UploadRecords); src/kz_main.cpp; config/dependencies.lock.json; patches/ps2recomp/combined.lock.diff; patches/ps2recomp/0030-vif1-mpg-address-wrap.patch; patches/ps2recomp/experimental/ee-di-interrupt-gate.diff; patches/README.md; tools/scripts/win06_gate.ps1; docs/findings.md; IMPLEMENTATION_PLAN.md; TODO.md; WORKDONE.md; HANDOFF.md; README.md; LEARNINGS.md (new)
-Acceptance commands and exact results: verify_deps.py --strict PASS 31/0/0; verify_resume_table.py PASS; inventory_generated.py --check PASS (51 hook signatures, 101,715 resumable entries); MSVC ISO-free 12/12; clang-cl ISO-free 12/12; git diff --check PASS; WIN-06 gate 6/10, 5/10, 8/10, 6/10 with KZ_WIN06_WATCH=1 (win06_watch, _watch2, _watch3, _watch4); 4/10 with PS2X_IOP_THREAD=0 (win06_iopsync); earlier 8/10 with KZ_IPU=off and 8/10 with the experimental di/ei gate
-New facts or decisions: The game calls realloc (wrapper 0x173660, ra 0x173694) with garbage pointers (0x8, 0x0D3A0C15); realloc's copy (0x1731A0-0x1731C4) takes a multi-MB size from the fake header, runs past 32 MB, and ps2CgWr128Slow masks it onto low RAM (destination 0x02517740 -> 0x517740), wiping the kernel area, main stack and libkernel's timer block. Other failures are other consumers of corrupt heap data (vtable call 0x3B4978, DMA packet builder 0x159D30, host GS palette crash). No host DMA/SIF/VIF/IPU write touched the timer block. Threaded IOP, movies and di/ei delivery are ruled out. src audit against upstream 5f07000 found one regression (no-disc path; fixed). The repository owner supplied the written LEGAL-01 disposition; origin remains private.
-Blocker and minimal reproducer: tools\scripts\win06_gate.ps1 -Runs 10 -Name win06 -Card work\win04_20261019_card -Iso <image> -Elf game\SCUS_974.02 fails 2-5/10.
-Next command: tools\scripts\win06_gate.ps1 -Runs 10 -Name win06_watch5 -Card work\win04_20261019_card -Iso <image> -Elf game\SCUS_974.02 -EnvSet "KZ_WIN06_WATCH=1|KZ_CRASH_TRACE=1" until a "BAD realloc wrapper" line names the caller of 0x173660; then watch that container's pointer field
-Safe parallel work: GS palette-read bounds check (host crash in GSGetRGBA8AlphaMinMax); Apple Silicon VU-01/MAC-01/ARM-01; WIN-01; WIN-03; WIN-04 hands-on
+Task: AUDIO-01 localization and bounded host mitigation
+Owner/session: Copilot SDK in VS Code, 2026-10-21
+Machine: Windows 11 x64; MSVC and clang-cl presets; SDL/WASAPI default output device
+Status: in progress. Paired hands-on captures localize the cuts to SPU2 ring starvation/catch-up on the host path. The committed 120/320 ms reserve/high-water mitigation reduces severity with no noticeable action latency but does not eliminate large combat dropouts.
+Files changed for AUDIO-01: src/kz_audio.{h,cpp}; ext/kzspu2/{include/kzspu2.h,src/kzspu2.cpp,README.md}; tools/scripts/summarize_audio_diag.py; patches/ps2recomp/experimental/audio-iop-cycle-credit-priority.diff; README.md; TODO.md; docs/findings.md; LEARNINGS.md; patches/README.md; HANDOFF.md. Captures remain ignored under work/. The locked PS2Recomp submodule is clean.
+Evidence: Escape baseline 184.04 s: 317,863 underrun frames, 254,851 skipped frames, 1,104 loss rows, many audible cuts. Hope 220.45 s: 161,858 / 166,077, 466 rows, a few cuts. SDL callbacks stayed near 10 ms with zero producer overflow, submit failure or diagnostic loss. A focused audible enemy-wave cut aligned with IOP backlog reaching 954.27 ms.
+Mitigation / decisions: reserve 40 -> 120 ms and high water 150 -> 320 ms; firing/reload latency was not noticeable and cuts fell from many to a few. Synchronous IOP was worse. Highest worker priority locked gameplay. RPC cycle credit fixed 9.8-second IOP lead but not the dropout. The unaccepted above-normal-priority / cycle-credit candidate is preserved as an experimental patch only.
+Acceptance commands and exact results: final MSVC and clang-cl builds PASS; ISO-free suites PASS 13/13 each; strict dependencies PASS 31/0/0; resume table PASS (132,656 dispatch entries, 100,661 resume cases, 31,995 generated targets); generated inventory PASS (56 hooks, 101,715 recompiler-resumable entries); full diff check PASS. Clang-cl reports only the existing unused-flag and MSVC CRT deprecation warnings.
+Blocker and minimal reproducer: Escape enemy-wave combat still produces an audible large cut with the 120 ms mitigation. AUDIO-01 cannot move to WORKDONE without a stable zero-loss combat soak.
+Next command: if resumed, apply `patches/ps2recomp/experimental/audio-iop-cycle-credit-priority.diff` in an isolated branch, add repeated interactive stability coverage, and reject any priority change that locks once.
+Safe parallel work: WPN-01 remains read-only and requires BYOD authorization. AUDIO-01 is paused after this documented push.
 ```
