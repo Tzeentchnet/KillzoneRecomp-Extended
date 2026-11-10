@@ -13,6 +13,13 @@ build remain GPL-3.0; see [`LICENSE-GPL-3.0`](../LICENSE-GPL-3.0).
 Third-party MIT, zlib, LGPL, GPL, and other components retain their own notice and corresponding-source obligations.
 The dependency lock is an inventory and integrity gate, not a substitute for license review.
 
+AMD FidelityFX FSR 1's `ffx_a.h` and `ffx_fsr1.h` are vendored unmodified from
+[`GPUOpen-Effects/FidelityFX-FSR`](https://github.com/GPUOpen-Effects/FidelityFX-FSR) commit
+`a21ffb8f6c13233ba336352bdff293894c706575`, under the MIT license. Keep
+[`ext/kzgs/third_party/fsr1/LICENSE.txt`](../ext/kzgs/third_party/fsr1/LICENSE.txt) and its provenance notice with
+source distributions; runtime packaging stages them in `resources/shaders/kzgs/fsr1`. Review the combined GPL
+distribution obligations separately. No proprietary upscaler SDK is bundled.
+
 ## Protected content
 
 Only non-content provenance may be committed:

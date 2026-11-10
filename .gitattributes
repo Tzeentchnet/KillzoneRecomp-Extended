@@ -2,3 +2,6 @@
 patches/ps2recomp/*.diff -whitespace text eol=lf
 patches/ps2recomp/*.patch -whitespace text eol=lf
 patches/ps2recomp/experimental/*.diff -whitespace text eol=lf
+# Preserve upstream AMD files byte-for-byte, including their original whitespace.
+ext/kzgs/third_party/fsr1/ffx_*.h -whitespace -text
+ext/kzgs/third_party/fsr1/LICENSE.txt -text

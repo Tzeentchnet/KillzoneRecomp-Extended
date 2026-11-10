@@ -149,6 +149,8 @@ namespace
 
         std::mutex measurementMutex;
         FILE *measurementFile = nullptr;
+        KzgsUpscalerStatus reportedUpscaler;
+        bool hasReportedUpscaler = false;
         bool firePressed = false;
     };
 
@@ -343,6 +345,11 @@ namespace
         const KzConfig &c = kzConfig();
         KzgsUpscalerStatus upscaler;
         const bool upscalerReported = kzgsGetUpscalerStatus(upscaler);
+        s.reportedUpscaler = upscaler;
+        s.hasReportedUpscaler = upscalerReported;
+        const char *upscalerPipeline =
+            upscaler.effective != KzgsUpscaler::FSR1 ? "" :
+            upscaler.effectiveSharpening > 0 ? "\"fsr1_easu\",\"fsr1_rcas\"," : "\"fsr1_easu\",";
         const std::string adapter = jsonEscape(k.adapter);
         const auto envBool = [](const char *name, bool fallback)
         {
@@ -366,6 +373,7 @@ namespace
             s.measurementFile,
             "{\"schema_version\":1,\"record\":\"%s\",\"source_id\":\"SCUS-97402\","
             "\"clock\":\"guest_vsync\",\"timing_rate_hz\":%d,\"renderer\":\"%s\",\"adapter\":\"%s\","
+            "\"guest_vsync\":%llu,\"present_seq\":%llu,"
             "\"effective_config\":{\"upscale\":%d,"
             "\"render_scale\":{\"mode\":\"%s\",\"configured\":%d,\"effective\":%d,"
             "\"native_height\":%d,\"target_height\":%d},"
@@ -373,7 +381,7 @@ namespace
             "\"reason\":\"%s\",\"sharpening_requested\":%d,\"sharpening_effective\":%d},"
             "\"output_resolution\":{\"width\":%d,\"height\":%d},"
             "\"pipeline\":[\"gs_merge\",\"aa\",\"sharp_prescale_if_upscaling\","
-            "\"crop_aspect\",\"cas\",\"present_filter\"],"
+            "\"crop_aspect\",%s\"cas\",\"present_filter\"],"
             "\"aspect\":\"%s\",\"anisotropy\":%d,\"mipmap_mode\":\"%s\","
             "\"render_distance\":%.3f,\"lod_scale\":%.3f,"
             "\"aa\":\"%s\",\"fxaa\":%s,\"smaa_requested\":%s,\"smaa_available\":%s,"
@@ -383,13 +391,15 @@ namespace
             "\"max_queued_frames\":%d},"
             "\"testing\":{\"unlock_all_levels\":%s,\"skip_intro\":%s,\"start_level\":%d,"
             "\"start_difficulty\":%d,\"memory_card\":\"%s\"}}\n",
-            record, kzTimingRate(), rendererName(k.renderer), adapter.c_str(), k.upscale,
+            record, kzTimingRate(), rendererName(k.renderer), adapter.c_str(),
+            static_cast<unsigned long long>(s.currentGuestVsync.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(s.presentedSeq.load(std::memory_order_relaxed)), k.upscale,
             renderScaleModeName(s.activeScale.mode), s.activeScale.configuredScale, s.activeScale.effectiveScale,
             kReferenceRenderHeight, kReferenceRenderHeight * k.upscale,
             upscalerReported ? "true" : "false", kzgsUpscalerName(upscaler.requested),
             kzgsUpscalerName(upscaler.effective), kzgsUpscalerReasonName(upscaler.reason),
             upscaler.requestedSharpening, upscaler.effectiveSharpening,
-            s.windowWidth, s.windowHeight, aspectName(k.aspect),
+            s.windowWidth, s.windowHeight, upscalerPipeline, aspectName(k.aspect),
             k.anisotropy, k.mipmapMode == KzgsMipmapMode::BaseOnly ? "base_only" : "ps2",
             detail.renderDistance, detail.lodScale,
             effectiveAaName(k), effectiveFxaa(k) ? "true" : "false",
@@ -402,6 +412,26 @@ namespace
             unlockAll ? "true" : "false", skipIntro ? "true" : "false", startLevel,
             startDifficulty, cardMode);
         std::fflush(s.measurementFile);
+    }
+
+    void reportUpscaler(GsState &s)
+    {
+        KzgsUpscalerStatus current;
+        if (!kzgsGetUpscalerStatus(current))
+            return;
+        std::lock_guard<std::mutex> lock(s.measurementMutex);
+        const KzgsUpscalerStatus &previous = s.reportedUpscaler;
+        if (s.hasReportedUpscaler && current.requested == previous.requested &&
+            current.effective == previous.effective && current.requestedSharpening == previous.requestedSharpening &&
+            current.effectiveSharpening == previous.effectiveSharpening && current.reason == previous.reason)
+            return;
+        s.reportedUpscaler = current;
+        s.hasReportedUpscaler = true;
+        std::cout << "[kz] presentation upscaler: requested=" << kzgsUpscalerName(current.requested)
+                  << ", effective=" << kzgsUpscalerName(current.effective)
+                  << ", reason=" << kzgsUpscalerReasonName(current.reason)
+                  << ", sharpening=" << current.effectiveSharpening << std::endl;
+        writeConfigRecordLocked(s, "config");
     }
 
     void reportResolution(GsState &s)
@@ -937,6 +967,7 @@ namespace
             }
         }
         reportResolution(s);
+        reportUpscaler(s);
         if (didPresent)
         {
             s.presentedSeq.fetch_add(1, std::memory_order_relaxed);

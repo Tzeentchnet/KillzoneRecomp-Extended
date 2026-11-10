@@ -286,7 +286,7 @@ int main(int argc, char** argv)
 		else if (a == "--skip-idle") skip_idle = true;
 		else if (a == "--single-circuit") single_circuit = true;
 		else if (a == "--window") use_window = true;
-		else if (a == "--backbuffer") backbuffer = true; // with --window: bb_<frame>.png = the swap chain back buffer at Present (exact final pixels, CAS included)
+		else if (a == "--backbuffer") backbuffer = true; // active Vulkan FSR1 uses completed-output recomposition
 		else if (a == "--sharp" && i + 1 < argc) cfg.sharpPresent = std::atoi(argv[++i]) != 0;
 		else if (a == "--bilinear" && i + 1 < argc) cfg.bilinearPresent = std::atoi(argv[++i]) != 0;
 		else if (a == "--cas" && i + 1 < argc) cfg.casSharpness = std::atoi(argv[++i]);
@@ -595,6 +595,12 @@ int main(int argc, char** argv)
 			break;
 	}
 	std::fclose(f);
+	kzgsSync();
+	if (kzgsGetUpscalerStatus(upscaler))
+		std::printf("final presentation upscaler: requested=%s effective=%s reason=%s sharpening=%d/%d\n",
+			kzgsUpscalerName(upscaler.requested), kzgsUpscalerName(upscaler.effective),
+			kzgsUpscalerReasonName(upscaler.reason),
+			upscaler.requestedSharpening, upscaler.effectiveSharpening);
 	std::printf("replayed %llu frames\n", (unsigned long long)frame);
 	if (!save_vram.empty())
 		saveVram(save_vram);

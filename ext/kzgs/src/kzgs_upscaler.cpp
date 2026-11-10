@@ -57,6 +57,14 @@ const char* kzgsUpscalerReasonName(KzgsUpscalerReason reason)
 	{
 		case KzgsUpscalerReason::Disabled: return "disabled";
 		case KzgsUpscalerReason::NotImplemented: return "not_implemented";
+		case KzgsUpscalerReason::WaitingForFrame: return "waiting_for_frame";
+		case KzgsUpscalerReason::Active: return "active";
+		case KzgsUpscalerReason::NoSurface: return "no_surface";
+		case KzgsUpscalerReason::NoUpscaleNeeded: return "no_upscale_needed";
+		case KzgsUpscalerReason::InvalidDimensions: return "invalid_dimensions";
+		case KzgsUpscalerReason::InitializationFailed: return "initialization_failed";
+		case KzgsUpscalerReason::DispatchFailed: return "dispatch_failed";
+		case KzgsUpscalerReason::PresentFailed: return "present_failed";
 	}
 	return "unknown";
 }

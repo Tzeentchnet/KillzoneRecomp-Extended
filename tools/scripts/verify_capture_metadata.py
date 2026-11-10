@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import math
@@ -66,6 +67,36 @@ def image_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
+def validate_upscaler_pipeline(effective_config: dict[str, Any]) -> None:
+    upscaler = effective_config.get("presentation_upscaler")
+    expected_pipeline = PIPELINE_ORDER.copy()
+    if upscaler is not None:
+        if not isinstance(upscaler, dict) or not isinstance(upscaler.get("reported"), bool):
+            raise ValueError("presentation_upscaler must report whether its status is available")
+        for key in ("requested", "effective"):
+            if not isinstance(upscaler.get(key), str) or upscaler[key] not in {"off", "fsr1", "dlss", "xess"}:
+                raise ValueError(f"presentation_upscaler.{key} is invalid")
+        if not isinstance(upscaler.get("reason"), str) or not upscaler["reason"]:
+            raise ValueError("presentation_upscaler.reason must be a nonempty string")
+        for key in ("sharpening_requested", "sharpening_effective"):
+            value = upscaler.get(key)
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
+                raise ValueError(f"presentation_upscaler.{key} must be an integer from 0 to 100")
+        if upscaler["reported"] and upscaler["effective"] == "off" and upscaler["sharpening_effective"] != 0:
+            raise ValueError("a disabled presentation upscaler cannot apply provider sharpening")
+        if upscaler["effective"] == "fsr1":
+            passes = ["fsr1_easu"]
+            if upscaler["sharpening_effective"]:
+                passes.append("fsr1_rcas")
+            expected_pipeline[4:4] = passes
+    if (
+        "pipeline" in effective_config
+        or "render_scale" in effective_config
+        or "output_resolution" in effective_config
+    ) and effective_config.get("pipeline") != expected_pipeline:
+        raise ValueError("effective pipeline order is missing or invalid")
+
+
 def validate(directory: Path, require_fire: bool) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     records = load_records(directory)
     runs = [record for record in records if record.get("record") == "run"]
@@ -113,8 +144,6 @@ def validate(directory: Path, require_fire: bool) -> tuple[list[dict[str, Any]],
             or output_resolution["height"] <= 0
         ):
             raise ValueError("output_resolution dimensions must be positive integers")
-        if effective_config.get("pipeline") != PIPELINE_ORDER:
-            raise ValueError("effective pipeline order is missing or invalid")
     for key, minimum in (("render_distance", 1.0), ("lod_scale", 0.25)):
         value = effective_config.get(key)
         if value is not None and (
@@ -126,21 +155,12 @@ def validate(directory: Path, require_fire: bool) -> tuple[list[dict[str, Any]],
             raise ValueError(f"effective_config.{key} is outside its supported range")
     if effective_config.get("mipmap_mode") not in {None, "ps2", "base_only"}:
         raise ValueError("effective_config.mipmap_mode is invalid")
-    upscaler = effective_config.get("presentation_upscaler")
-    if upscaler is not None:
-        if not isinstance(upscaler, dict) or not isinstance(upscaler.get("reported"), bool):
-            raise ValueError("presentation_upscaler must report whether its status is available")
-        for key in ("requested", "effective"):
-            if not isinstance(upscaler.get(key), str) or upscaler[key] not in {"off", "fsr1", "dlss", "xess"}:
-                raise ValueError(f"presentation_upscaler.{key} is invalid")
-        if not isinstance(upscaler.get("reason"), str) or not upscaler["reason"]:
-            raise ValueError("presentation_upscaler.reason must be a nonempty string")
-        for key in ("sharpening_requested", "sharpening_effective"):
-            value = upscaler.get(key)
-            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
-                raise ValueError(f"presentation_upscaler.{key} must be an integer from 0 to 100")
-        if upscaler["reported"] and upscaler["effective"] == "off" and upscaler["sharpening_effective"] != 0:
-            raise ValueError("a disabled presentation upscaler cannot apply provider sharpening")
+    configs = [record for record in records if record.get("record") == "config"]
+    for record in [run, *configs]:
+        config = record.get("effective_config")
+        if not isinstance(config, dict):
+            raise ValueError("configuration record is missing effective_config")
+        validate_upscaler_pipeline(config)
 
     frames = [record for record in records if record.get("record") == "frame"]
     events = [record for record in records if record.get("record") == "event"]
@@ -270,7 +290,7 @@ def validate(directory: Path, require_fire: bool) -> tuple[list[dict[str, Any]],
         "timing_rate_hz": run["timing_rate_hz"],
         "renderer": run["renderer"],
         "adapter": run["adapter"],
-        "effective_config": run["effective_config"],
+        "effective_config": configs[-1]["effective_config"] if configs else run["effective_config"],
         "testing": run["testing"],
         "frame_count": len(frames),
         "event_count": len(events),
@@ -335,7 +355,31 @@ def compare_summaries(left: dict[str, Any], right: dict[str, Any]) -> dict[str, 
     }
 
 
+def test_upscaler_pipeline() -> None:
+    status = {
+        "reported": True,
+        "requested": "fsr1",
+        "effective": "fsr1",
+        "reason": "active",
+        "sharpening_requested": 0,
+        "sharpening_effective": 0,
+    }
+    config = {"presentation_upscaler": status, "pipeline": PIPELINE_ORDER[:4] + ["fsr1_easu"] + PIPELINE_ORDER[4:]}
+    validate_upscaler_pipeline(config)
+    status["sharpening_effective"] = 100
+    config["pipeline"] = PIPELINE_ORDER[:4] + ["fsr1_easu", "fsr1_rcas"] + PIPELINE_ORDER[4:]
+    validate_upscaler_pipeline(config)
+    config["pipeline"] = PIPELINE_ORDER
+    try:
+        validate_upscaler_pipeline(config)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("self-test accepted an active FSR1 status without its pipeline")
+
+
 def self_test() -> None:
+    test_upscaler_pipeline()
     with tempfile.TemporaryDirectory(prefix="kz-capture-metadata-") as temp:
         roots = [Path(temp) / "a", Path(temp) / "b"]
         for index, root in enumerate(roots):
@@ -414,12 +458,20 @@ def self_test() -> None:
                 },
                 {"schema_version": 1, "record": "run_end", "guest_vsync": 121 + index, "present_seq": 101 + index},
             ]
+            active_config = copy.deepcopy(records[0]["effective_config"])
+            active_config["presentation_upscaler"].update(
+                effective="fsr1", reason="active", sharpening_effective=50
+            )
+            active_config["pipeline"] = PIPELINE_ORDER[:4] + ["fsr1_easu", "fsr1_rcas"] + PIPELINE_ORDER[4:]
+            records.insert(1, {"schema_version": 1, "record": "config", "effective_config": active_config})
             (root / "capture.jsonl").write_text(
                 "".join(json.dumps(record, separators=(",", ":")) + "\n" for record in records),
                 encoding="utf-8",
             )
         _, left = validate(roots[0], True)
         _, right = validate(roots[1], True)
+        if left["effective_config"]["presentation_upscaler"]["effective"] != "fsr1":
+            raise ValueError("self-test did not report the latest effective upscaler")
         comparison = compare_summaries(left, right)
         if comparison["max_abs_event_delta"] != 1 or comparison["paired_frame_count"] != 1:
             raise ValueError("self-test comparison produced unexpected alignment")

@@ -102,21 +102,27 @@ namespace kzgs
 		if (!dev || !dev->m_swap_chain)
 			return false;
 		void*** obj = reinterpret_cast<void***>(dev->m_swap_chain.get());
-		if (sink)
+		if (!sink)
 		{
 			if (s_object == obj && *obj == s_vtableCopy)
-				return true;
-			if (s_object && *s_object == s_vtableCopy)
-				*s_object = s_origVtable;
+				*obj = s_origVtable;
 			delete[] s_vtableCopy;
-			s_object = obj;
-			s_origVtable = *obj;
-			s_vtableCopy = new void*[32];
-			std::memcpy(s_vtableCopy, s_origVtable, 32 * sizeof(void*));
-			s_origPresent = reinterpret_cast<PresentFn>(s_origVtable[8]);
-			s_vtableCopy[8] = reinterpret_cast<void*>(&HookPresent);
-			*obj = s_vtableCopy;
+			s_object = nullptr;
+			s_origVtable = nullptr;
+			s_vtableCopy = nullptr;
+			s_origPresent = nullptr;
+			return true;
 		}
+		if (s_object == obj && *obj == s_vtableCopy)
+			return true;
+		delete[] s_vtableCopy;
+		s_object = obj;
+		s_origVtable = *obj;
+		s_vtableCopy = new void*[32];
+		std::memcpy(s_vtableCopy, s_origVtable, 32 * sizeof(void*));
+		s_origPresent = reinterpret_cast<PresentFn>(s_origVtable[8]);
+		s_vtableCopy[8] = reinterpret_cast<void*>(&HookPresent);
+		*obj = s_vtableCopy;
 		return true;
 	}
 } // namespace kzgs

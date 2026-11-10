@@ -24,6 +24,14 @@ enum class KzgsUpscalerReason
 {
 	Disabled,
 	NotImplemented,
+	WaitingForFrame,
+	Active,
+	NoSurface,
+	NoUpscaleNeeded,
+	InvalidDimensions,
+	InitializationFailed,
+	DispatchFailed,
+	PresentFailed,
 };
 
 struct KzgsUpscalerStatus

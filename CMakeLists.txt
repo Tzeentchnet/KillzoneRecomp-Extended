@@ -332,6 +332,9 @@ add_custom_command(TARGET killzone POST_BUILD
 add_executable(kz_gs_replay tools/gs_replay/gs_replay.cpp)
 target_link_libraries(kz_gs_replay PRIVATE kz_gs_libs SDL3::SDL3)
 target_compile_features(kz_gs_replay PRIVATE cxx_std_20)
+kzgs_stage_resources(kz_gs_replay)
+add_custom_command(TARGET kz_gs_replay POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL3::SDL3> $<TARGET_FILE_DIR:kz_gs_replay>)
 add_executable(kz_gs_replay_cpu tools/gs_replay/gs_replay_cpu.cpp)
 target_link_libraries(kz_gs_replay_cpu PRIVATE ps2_runtime)
 target_compile_features(kz_gs_replay_cpu PRIVATE cxx_std_20)
@@ -373,12 +376,38 @@ if(BUILD_TESTING)
     kz_add_iso_free_test(kz_gs_component kzgs_test
         --renderer d3d11 --warp --frames 2 --stress-uploads 64
         --out "${KZ_TEST_STATE_DIR}/kzgs/component")
+    kz_add_iso_free_test(kzgs_fsr1_reference kzgs_fsr1_test)
+    kz_add_iso_free_test(kzgs_fsr1_vulkan_validation kzgs_fsr1_gpu_test)
+    set_tests_properties(kzgs_fsr1_vulkan_validation PROPERTIES
+        LABELS "iso-free;renderer;vulkan-validation"
+        RESOURCE_LOCK kzgs_gpu
+        FAIL_REGULAR_EXPRESSION "Validation Error;SYNC-HAZARD")
+    set_property(TEST kzgs_fsr1_vulkan_validation APPEND PROPERTY ENVIRONMENT
+        "VK_LAYER_VALIDATE_SYNC=1")
+    kz_add_iso_free_test(kzgs_vulkan_fsr1 kzgs_test --renderer vulkan --golden --fsr1-validation --frames 2
+        --out "${KZ_TEST_STATE_DIR}/kzgs/fsr1")
+    set_tests_properties(kzgs_vulkan_fsr1 PROPERTIES
+        LABELS "iso-free;renderer;vulkan-validation"
+        RESOURCE_LOCK kzgs_gpu
+        FAIL_REGULAR_EXPRESSION "Validation Error;SYNC-HAZARD")
+    set(_kz_fsr_replay_args
+        "-DTEST_EXE=$<TARGET_FILE:kzgs_test>" "-DREPLAY_EXE=$<TARGET_FILE:kz_gs_replay>")
+    if(TARGET kzgs_replay)
+        list(APPEND _kz_fsr_replay_args "-DDEBUG_REPLAY_EXE=$<TARGET_FILE:kzgs_replay>")
+    endif()
+    add_test(NAME kzgs_fsr1_replay COMMAND "${CMAKE_COMMAND}" ${_kz_fsr_replay_args}
+        -P "${CMAKE_SOURCE_DIR}/ext/kzgs/test/kzgs_fsr1_replay_test.cmake")
+    set_tests_properties(kzgs_fsr1_replay PROPERTIES
+        LABELS "iso-free;renderer"
+        ENVIRONMENT "${_kz_iso_free_environment}"
+        RESOURCE_LOCK kzgs_gpu TIMEOUT 180)
     kz_add_iso_free_test(kzgs_palette_guard kzgs_palette_test)
     set_tests_properties(
         kz_spu2_component
         kz_vu1_component
         kz_vu0_component
         kz_gs_component
+        kzgs_fsr1_reference
         kzgs_palette_guard
         PROPERTIES LABELS "iso-free;component")
     set_tests_properties(kz_gs_component PROPERTIES RESOURCE_LOCK kzgs_gpu)
@@ -386,6 +415,9 @@ if(BUILD_TESTING)
     kz_add_iso_free_test(kzgs_d3d11_golden kzgs_test
         --renderer d3d11 --warp --golden --frames 2
         --out "${KZ_TEST_STATE_DIR}/kzgs/d3d11")
+    kz_add_iso_free_test(kzgs_software_golden kzgs_test
+        --renderer software --warp --golden --frames 2
+        --out "${KZ_TEST_STATE_DIR}/kzgs/software")
     kz_add_iso_free_test(kzgs_d3d12_golden kzgs_test
         --renderer d3d12 --warp --golden --frames 2
         --out "${KZ_TEST_STATE_DIR}/kzgs/d3d12")
@@ -394,6 +426,7 @@ if(BUILD_TESTING)
         --out "${KZ_TEST_STATE_DIR}/kzgs/vulkan")
     set_tests_properties(
         kzgs_d3d11_golden
+        kzgs_software_golden
         kzgs_d3d12_golden
         kzgs_vulkan_golden
         PROPERTIES

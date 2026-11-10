@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "kzgs.h"
+#include "kzgs_fsr1_runtime.h"
 #include "kzgs_internal.h"
 
 #include "GS/GS.h"
@@ -171,8 +172,14 @@ namespace
 		KzgsUpscalerStatus status;
 		status.requested = cfg.upscaler;
 		status.requestedSharpening = cfg.upscalerSharpening;
-		status.reason = cfg.upscaler == KzgsUpscaler::Off
-			? KzgsUpscalerReason::Disabled : KzgsUpscalerReason::NotImplemented;
+		const bool requestedFsr1Vulkan = cfg.upscaler == KzgsUpscaler::FSR1 &&
+			cfg.renderer == KzgsRenderer::Vulkan;
+		const bool fsr1 = requestedFsr1Vulkan && g_gs_device &&
+			g_gs_device->GetRenderAPI() == RenderAPI::Vulkan && GSIsHardwareRenderer();
+		status.reason = cfg.upscaler == KzgsUpscaler::Off ? KzgsUpscalerReason::Disabled :
+			fsr1 ? (g_gs_device->HasSurface() ? KzgsUpscalerReason::WaitingForFrame :
+				KzgsUpscalerReason::NoSurface) : requestedFsr1Vulkan ? KzgsUpscalerReason::InitializationFailed :
+				KzgsUpscalerReason::NotImplemented;
 		bool changed;
 		{
 			std::lock_guard lock(s_upscaler_mutex);
@@ -180,13 +187,39 @@ namespace
 				status.requestedSharpening != s_upscaler_status.requestedSharpening;
 			s_upscaler_status = status;
 		}
-		if (changed && status.requested != KzgsUpscaler::Off)
+		kzgs::Fsr1Configure(fsr1, cfg.upscalerSharpening);
+		if (changed && status.reason == KzgsUpscalerReason::NotImplemented)
 		{
 			const std::string message = std::string("experimental presentation upscaler ") +
 				kzgsUpscalerName(status.requested) +
 				" is not implemented; using existing presentation (provider sharpening inactive)";
 			if (s_log_fn)
 				s_log_fn(1, message.c_str());
+			else
+				std::fprintf(stderr, "[kzgs] %s\n", message.c_str());
+		}
+	}
+
+	static void ReportFsr1(KzgsUpscalerReason reason, bool applied)
+	{
+		bool changed = false;
+		{
+			std::lock_guard lock(s_upscaler_mutex);
+			if (s_upscaler_status.requested != KzgsUpscaler::FSR1)
+				return;
+			const KzgsUpscaler effective = applied ? KzgsUpscaler::FSR1 : KzgsUpscaler::Off;
+			const int sharpening = applied ? s_upscaler_status.requestedSharpening : 0;
+			changed = s_upscaler_status.reason != reason || s_upscaler_status.effective != effective ||
+				s_upscaler_status.effectiveSharpening != sharpening;
+			s_upscaler_status.reason = reason;
+			s_upscaler_status.effective = effective;
+			s_upscaler_status.effectiveSharpening = sharpening;
+		}
+		if (changed)
+		{
+			const std::string message = std::string("Vulkan FSR1: ") + kzgsUpscalerReasonName(reason);
+			if (s_log_fn)
+				s_log_fn(applied ? 2 : 1, message.c_str());
 			else
 				std::fprintf(stderr, "[kzgs] %s\n", message.c_str());
 		}
@@ -523,7 +556,14 @@ namespace
 		u32 w = 0, h = 0;
 		std::vector<u32> pixels;
 		if (req->present_w > 0 && req->present_h > 0)
-			req->ok = GSSaveSnapshotToMemory(static_cast<u32>(req->present_w), static_cast<u32>(req->present_h), true, false, &w, &h, &pixels) && w > 0 && h > 0;
+		{
+			const auto result = kzgs::Fsr1ReadPresented(pixels, w, h,
+				static_cast<u32>(req->present_w), static_cast<u32>(req->present_h));
+			if (result == kzgs::Fsr1ReadbackResult::Unavailable)
+				req->ok = GSSaveSnapshotToMemory(static_cast<u32>(req->present_w), static_cast<u32>(req->present_h), true, false, &w, &h, &pixels) && w > 0 && h > 0;
+			else
+				req->ok = result == kzgs::Fsr1ReadbackResult::Success;
+		}
 		else
 			req->ok = ReadbackCurrent(pixels, w, h) && w > 0 && h > 0;
 		if (req->ok)
@@ -542,7 +582,8 @@ namespace
 
 	// kzgsBurstArm: frames captured on the GS thread right after each vsync merge.
 	static std::atomic<int> s_burst_left{0};
-	static int s_burst_pw = 0, s_burst_ph = 0;
+	static std::atomic<int> s_burst_pw{0}, s_burst_ph{0};
+	static std::atomic<bool> s_burst_vulkan{false};
 	static std::vector<KzgsBurstFrame> s_burst_frames;
 	static std::mutex s_burst_mutex;
 	static u64 s_vsync_seq = 0;
@@ -606,8 +647,10 @@ namespace
 		req.rgba = &f.rgba;
 		req.width = &f.width;
 		req.height = &f.height;
-		req.present_w = s_burst_pw;
-		req.present_h = s_burst_ph;
+		const int presentWidth = s_burst_pw.load(std::memory_order_relaxed);
+		const int presentHeight = s_burst_ph.load(std::memory_order_relaxed);
+		req.present_w = presentWidth < 0 && g_gs_device ? g_gs_device->GetWindowWidth() : presentWidth;
+		req.present_h = presentHeight < 0 && g_gs_device ? g_gs_device->GetWindowHeight() : presentHeight;
 		DoReadback(&req);
 		std::lock_guard<std::mutex> lock(s_burst_mutex);
 		if (req.ok)
@@ -721,6 +764,7 @@ namespace
 
 				case Cmd::Vsync:
 				{
+					kzgs::Fsr1InvalidateCapture();
 					ApplyVsyncRegs(*reinterpret_cast<const VsyncPayload*>(payload));
 					Trace(2, static_cast<u32>(s_trace_idle_ns / 1000)); // idle time (us) since the previous frame
 					s_trace_idle_ns = 0;
@@ -757,7 +801,9 @@ namespace
 						}
 					}
 					++s_vsync_seq;
-					if (s_burst_pw >= 0 && s_burst_left.load(std::memory_order_acquire) > 0)
+					if ((s_burst_pw.load(std::memory_order_relaxed) >= 0 ||
+						 s_burst_vulkan.load(std::memory_order_acquire)) &&
+						s_burst_left.load(std::memory_order_acquire) > 0)
 						BurstCaptureAfterVsync(static_cast<int>(hdr.a));
 					Trace(4);
 					s_queued_frames.fetch_sub(1, std::memory_order_acq_rel);
@@ -774,10 +820,12 @@ namespace
 					break;
 
 				case Cmd::Reset:
+					kzgs::Fsr1InvalidateCapture();
 					GSreset(true);
 					break;
 
 				case Cmd::Resize:
+					kzgs::Fsr1InvalidateCapture();
 					if (GSHasDisplayWindow())
 						GSResizeDisplayWindow(hdr.a, hdr.b, g_gs_device->GetWindowScale());
 					break;
@@ -787,8 +835,11 @@ namespace
 					u64 p;
 					std::memcpy(&p, payload, sizeof(p));
 					std::unique_ptr<KzgsConfig> cfg(reinterpret_cast<KzgsConfig*>(p));
+					kzgs::Fsr1Configure(false, 0);
 					const Pcsx2Config::GSOptions opts = MakeOptions(*cfg);
 					const bool vsync_changed = (opts.VsyncEnable != GSConfig.VsyncEnable);
+					if (!opts.RestartOptionsAreEqual(GSConfig))
+						kzgs::PresentCapture(nullptr);
 					ApplyGlobals(*cfg, opts);
 					GSUpdateConfig(opts);
 					kzgs::SmaaInstall();
@@ -865,9 +916,11 @@ namespace
 		}
 
 		kzgs::ClearLastError();
+		kzgs::Fsr1InstallDeviceHooks(&ReportFsr1);
 		const bool ok = GSopen(opts, opts.Renderer, s_gs_regs, opts.VsyncEnable ? GSVSyncMode::FIFO : GSVSyncMode::Disabled, false);
 		if (!ok)
 		{
+			kzgs::Fsr1RemoveDeviceHooks();
 			result->error = kzgs::GetLastError();
 			if (result->error.empty())
 				result->error = "GSopen failed";
@@ -883,7 +936,9 @@ namespace
 
 		GSThreadLoop();
 
+		kzgs::PresentCapture(nullptr);
 		GSclose();
+		kzgs::Fsr1RemoveDeviceHooks();
 	}
 } // namespace
 
@@ -1182,18 +1237,26 @@ void kzgsSetTraceHook(KzgsTraceFn fn)
 
 void kzgsBurstArm(int count, int presentWidth, int presentHeight)
 {
-	std::lock_guard<std::mutex> lock(s_burst_mutex);
-	s_burst_frames.clear();
-	s_burst_pw = presentWidth;
-	s_burst_ph = presentHeight;
-	s_burst_left.store(std::max(count, 0), std::memory_order_release);
+	{
+		std::lock_guard<std::mutex> lock(s_burst_mutex);
+		s_burst_frames.clear();
+		s_burst_pw.store(presentWidth, std::memory_order_relaxed);
+		s_burst_ph.store(presentHeight, std::memory_order_relaxed);
+		s_burst_vulkan.store(false, std::memory_order_release);
+		s_burst_left.store(std::max(count, 0), std::memory_order_release);
+	}
 	if (presentWidth < 0 && count > 0)
 		kzgs::RunOnGSThread([] {
 			if (!kzgs::PresentCapture(&BurstPresentSink) &&
 			    !kzgs::PresentCaptureD3D12(&BurstPresentSink))
 			{
-				Console.Error("kzgs: swap-chain capture is unavailable on the active renderer");
-				s_burst_left.store(0, std::memory_order_release);
+				if (kzgs::Fsr1CanCapture())
+					s_burst_vulkan.store(true, std::memory_order_release);
+				else
+				{
+					Console.Error("kzgs: swap-chain capture is unavailable on the active renderer");
+					s_burst_left.store(0, std::memory_order_release);
+				}
 			}
 		});
 }
@@ -1202,10 +1265,11 @@ bool kzgsBurstTake(std::vector<KzgsBurstFrame>& out)
 {
 	if (s_burst_left.load(std::memory_order_acquire) > 0)
 		return false;
-	if (s_burst_pw < 0)
+	if (s_burst_pw.load(std::memory_order_relaxed) < 0)
 		kzgs::RunOnGSThread([] {
 			kzgs::PresentCapture(nullptr);
 			kzgs::PresentCaptureD3D12(nullptr);
+			s_burst_vulkan.store(false, std::memory_order_release);
 		});
 	std::lock_guard<std::mutex> lock(s_burst_mutex);
 	out = std::move(s_burst_frames);

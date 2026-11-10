@@ -131,7 +131,8 @@ void kzgsClose();
 bool kzgsIsOpen();
 
 // Last GS-thread-applied request and actual provider. False while closed; after kzgsUpdateConfig, kzgsSync waits for
-// the new status. Providers are currently unavailable, so non-Off requests fall back to the existing presentation.
+// the new status. Vulkan FSR1 becomes effective only after a successful upscaled present; unavailable providers,
+// unsupported backends, and frames which do not need upscaling use the existing presentation path.
 bool kzgsGetUpscalerStatus(KzgsUpscalerStatus& out);
 
 // Queues a GIF packet (sequence of GIFtags + data) for PATH 1, 2 or 3. `qwords` is the size in 16-byte units.

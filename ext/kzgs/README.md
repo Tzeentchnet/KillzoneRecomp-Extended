@@ -4,8 +4,8 @@ kzgs compiles PCSX2's `pcsx2/GS` renderer into one static library, `kzgs.lib`. I
 game's CPU software rasterizer. It uses the D3D11, D3D12 and Vulkan hardware renderers. The rest of the emulator is
 replaced by small stubs in `shim/`, so the library needs no BIOS, EE/IOP, VIF, DMAC or MTGS.
 
-- PCSX2 source: `ext/pcsx2`, a depth-1 clone of PCSX2 master. This build was verified against commit `646df006a4`.
-  kzgs does not modify anything in `ext/pcsx2`.
+- PCSX2 source: `ext/pcsx2`, pinned to the companion revision in `config/dependencies.lock.json`, including the
+  generic presentation hook and its completed-frame callback.
 - Dependencies: the official `pcsx2-windows-dependencies.7z` from
   <https://github.com/PCSX2/pcsx2-windows-dependencies/releases/tag/latest-windows-dependencies>, extracted to
   `ext/kzgs/deps` (so the headers are in `ext/kzgs/deps/deps/include`). It is not committed.
@@ -50,7 +50,7 @@ CMake options:
 
 `--golden` runs the deterministic synthetic scene at 1x and 2x, compares every pixel outside a narrow
 rasterization-edge exclusion zone against the algorithmic reference, and exits before stress and renderer-switch
-coverage. Root CTest registers isolated D3D11, D3D12, and Vulkan golden runs.
+coverage. Root CTest registers isolated D3D11, D3D12, Vulkan, and software golden runs; the software run checks 1x.
 
 All of kzgs' compile flags are private: `/permissive-`, `/Zc:preprocessor`, `/arch:AVX2`, C++20, PCSX2's defines and
 the ImGui rename header. The only thing a consumer inherits is the include directory, plus these link libraries:
@@ -96,7 +96,7 @@ bool kzgsBurstTake(std::vector<KzgsBurstFrame>& out);
 - `renderer`: D3D11, D3D12, Vulkan, or Software (PCSX2's software rasterizer, useful as a reference when debugging)
 - `upscale`: 1 to 8
 - `upscaler` and `upscalerSharpening`: experimental presentation request, default Off/0; independent of integer
-  `upscale` and `casSharpness`. Providers currently report `not_implemented` and do not alter presentation.
+  `upscale` and `casSharpness`. FSR1 is implemented on Vulkan; DLSS/XeSS and non-Vulkan requests fall back.
 - `textureFiltering`: PCSX2 `BiFiltering`
 - `anisotropy`
 - `fxaa`
@@ -117,7 +117,17 @@ bool kzgsBurstTake(std::vector<KzgsBurstFrame>& out);
 Pass `hwnd = nullptr` to open without a window (a surfaceless device). This still renders and supports
 `kzgsReadback`, so it can be used for headless screenshot tests.
 `kzgsGetUpscalerStatus` returns false while closed. After `kzgsUpdateConfig`, call `kzgsSync` before querying the
-new status.
+new status. A Vulkan FSR1 request reports `waiting_for_frame` until a successful upscaled present. The provider
+preserves the cropped source and destination aspect; it reports `no_upscale_needed` if either destination axis is
+smaller than the source or both are equal. Initialization and dispatch failures fall back to normal presentation.
+FSR1 sharpening 0 skips RCAS; 1..100 maps linearly from 2 to 0 attenuation stops, independently of existing CAS.
+Presented-size readbacks and Vulkan negative-size bursts recomposite the completed post-FSR/post-CAS texture without
+redispatching the upscaler; they are not literal swapchain-image readbacks. Surfaceless Vulkan retains the existing
+readback behavior and reports `no_surface`.
+
+The EASU and RCAS pipelines use independently compiled entry points, not Vulkan specialization constants. AMD's
+unmodified MIT-licensed FSR 1 headers, source commit, hashes, and notice are in `third_party/fsr1`; resource staging
+includes the shaders and notice in `resources/shaders/kzgs/fsr1`.
 
 ### Privileged registers
 
@@ -245,8 +255,8 @@ ext/kzgs/build/kzgs_replay.exe work/trace_full2.bin work/kzdbg/out --every 100 [
   vblanks without new GIF packets like the game does, `--single-circuit` applies the game's display-register rewrite
   (read circuit 2 := read circuit 1, see docs/findings.md "Menu jitter and blur").
 - `--upscaler off|fsr1|dlss|xess` and `--upscaler-sharpening 0..100` request the experimental presentation contract;
-  all providers currently report `not_implemented` and use the unchanged presentation path. These do not change
-  `--upscale` or `--cas`. The game and both replay tools share the same strict CLI/environment parsing.
+  Vulkan FSR1 runs when upscaling is needed, while other providers/backends fall back. These do not change `--upscale`
+  or `--cas`. The game and both replay tools share the same strict CLI/environment parsing.
 - `--sleep MS [--sleep-from N]` waits between vsyncs, so the GS thread has idle time as in the game (a replay without
   pacing keeps the GS thread saturated and hides pacing-dependent renderer bugs).
 - `--dump-draws F:N` turns on PCSX2's own per-draw dumps (context registers, vertices, transfers) for N draws

@@ -53,7 +53,7 @@ preserved, and saves retain the disc path and all bindings. A build refuses to o
 
 ### Experimental presentation upscaler
 
-These settings are configuration/diagnostic plumbing only; there are no launcher controls or implemented providers yet:
+These experimental settings have no launcher controls:
 
 ```ini
 [Graphics]
@@ -62,10 +62,16 @@ UpscalerSharpening=0
 ```
 
 `Upscaler` accepts `off`, `fsr1`, `dlss`, or `xess` (case-insensitive); saves use these lowercase names.
-`UpscalerSharpening` is an integer from 0 to 100, owned by the selected provider. It is separate from the existing
-`Sharpen`/CAS setting. The existing integer `Upscale` remains the GS supersampling multiplier and is unchanged.
-All provider requests currently report `not_implemented` and fall back to the existing presentation path; provider
-sharpening is inactive. No vendor SDK is included or required.
+`fsr1` runs AMD FidelityFX FSR 1 EASU on the Vulkan hardware renderer, after crop/aspect selection and before the
+existing CAS/final presentation filters. `UpscalerSharpening` is provider-owned: 0 disables RCAS; 1 through 100 enable
+it, mapping linearly from 2 to 0 AMD attenuation stops. It is independent of the existing `Sharpen`/CAS setting.
+The existing integer `Upscale` remains the GS supersampling multiplier and is unchanged.
+
+FSR1 runs only when neither output axis is smaller than the cropped source and at least one axis is larger. Otherwise
+its status is `no_upscale_needed` and the existing presentation path is used. D3D11, D3D12, software, surfaceless
+Vulkan, unavailable DLSS/XeSS, and initialization/dispatch failures also fall back normally; the status reports the
+requested/effective provider and reason. Off preserves the existing path. No proprietary SDK is included or required.
+The vendored AMD FSR 1 source is MIT licensed; see [`ext/kzgs/third_party/fsr1`](../ext/kzgs/third_party/fsr1).
 
 For a single run, use `KZ_UPSCALER` and `KZ_UPSCALER_SHARPENING`, or pass e.g.
 `--upscaler fsr1 --upscaler-sharpening 35` (`--option=value` also works). Each CLI setting takes precedence over

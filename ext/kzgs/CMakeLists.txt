@@ -329,6 +329,8 @@ target_precompile_headers(kzgs_gs PRIVATE "${P2SRC}/PrecompiledHeader.h")
 add_library(kzgs STATIC
 	"${KZGS_ROOT}/src/kzgs.cpp"
 	"${KZGS_ROOT}/src/kzgs_upscaler.cpp"
+	"${KZGS_ROOT}/src/kzgs_fsr1_math.cpp"
+	"${KZGS_ROOT}/src/kzgs_fsr1_vulkan.cpp"
 	"${KZGS_ROOT}/src/kz_smaa11.cpp"
 	"${KZGS_ROOT}/src/kz_smaa_vt.cpp"
 	"${KZGS_ROOT}/src/kz_present11.cpp"
@@ -410,21 +412,44 @@ set(KZGS_RUNTIME_DLLS
 	CACHE INTERNAL "")
 set(KZGS_RESOURCES_DIR "${P2}/bin/resources" CACHE INTERNAL "")
 set(KZGS_SMAA_SHADERS_DIR "${KZGS_ROOT}/shaders" CACHE INTERNAL "")
+set(KZGS_FSR1_SOURCE_DIR "${KZGS_ROOT}/third_party/fsr1" CACHE INTERNAL "")
 
 # kzgs_stage_resources(<target>): after <target> links, copy the GS shaders to <exe dir>/resources/shaders and the
 # runtime DLLs next to the exe. kzgsOpen() looks in <exe dir>/resources unless KzgsConfig::resourcesDir is set.
 function(kzgs_stage_resources target)
+	set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS
+		"${KZGS_SMAA_SHADERS_DIR}/fsr1_easu.glsl"
+		"${KZGS_SMAA_SHADERS_DIR}/fsr1_rcas.glsl"
+		"${KZGS_FSR1_SOURCE_DIR}/ffx_a.h"
+		"${KZGS_FSR1_SOURCE_DIR}/ffx_fsr1.h"
+		"${KZGS_FSR1_SOURCE_DIR}/LICENSE.txt"
+		"${KZGS_FSR1_SOURCE_DIR}/README.md")
 	add_custom_command(TARGET ${target} POST_BUILD
 		COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:${target}>/resources"
 		COMMAND "${CMAKE_COMMAND}" -E copy_directory "${KZGS_RESOURCES_DIR}/shaders" "$<TARGET_FILE_DIR:${target}>/resources/shaders"
 		COMMAND "${CMAKE_COMMAND}" -E copy_directory "${KZGS_SMAA_SHADERS_DIR}" "$<TARGET_FILE_DIR:${target}>/resources/shaders/kzgs"
+		COMMAND "${CMAKE_COMMAND}" -E copy_directory "${KZGS_FSR1_SOURCE_DIR}" "$<TARGET_FILE_DIR:${target}>/resources/shaders/kzgs/fsr1"
 		COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${KZGS_RUNTIME_DLLS} "$<TARGET_FILE_DIR:${target}>"
 		COMMENT "kzgs: staging GS shaders and runtime DLLs for ${target}"
 		VERBATIM)
 endfunction()
 
 if(KZGS_BUILD_TEST)
+	target_compile_definitions(kzgs PRIVATE KZGS_FSR1_TESTING)
+	add_executable(kzgs_fsr1_test "${KZGS_ROOT}/test/kzgs_fsr1_test.cpp" "${KZGS_ROOT}/src/kzgs_fsr1_math.cpp")
+	target_include_directories(kzgs_fsr1_test PRIVATE "${KZGS_ROOT}/src")
+	target_link_libraries(kzgs_fsr1_test PRIVATE kzgs_flags)
+
+	add_executable(kzgs_fsr1_gpu_test "${KZGS_ROOT}/test/kzgs_fsr1_gpu_test.cpp")
+	target_include_directories(kzgs_fsr1_gpu_test PRIVATE "${KZGS_ROOT}/src")
+	target_compile_definitions(kzgs_fsr1_gpu_test PRIVATE KZGS_FSR1_TESTING)
+	target_link_libraries(kzgs_fsr1_gpu_test PRIVATE "${_kzgs_component_link}" kzgs_flags)
+	target_precompile_headers(kzgs_fsr1_gpu_test PRIVATE "${P2SRC}/PrecompiledHeader.h")
+	kzgs_stage_resources(kzgs_fsr1_gpu_test)
+
 	add_executable(kzgs_test "${KZGS_ROOT}/test/kzgs_test.cpp")
+	target_include_directories(kzgs_test PRIVATE "${KZGS_ROOT}/src")
+	target_compile_definitions(kzgs_test PRIVATE KZGS_FSR1_TESTING)
 	target_link_libraries(kzgs_test PRIVATE "${_kzgs_component_link}")
 	target_compile_features(kzgs_test PRIVATE cxx_std_20)
 	target_compile_definitions(kzgs_test PRIVATE KZGS_TEST_OUT_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-output")

@@ -399,6 +399,12 @@ int main(int argc, char **argv)
         }
     }
     std::fclose(f);
+    kzgsSync();
+    if (kzgsGetUpscalerStatus(upscaler))
+        std::printf("final presentation upscaler: requested=%s effective=%s reason=%s sharpening=%d/%d\n",
+                    kzgsUpscalerName(upscaler.requested), kzgsUpscalerName(upscaler.effective),
+                    kzgsUpscalerReasonName(upscaler.reason),
+                    upscaler.requestedSharpening, upscaler.effectiveSharpening);
     std::printf("frames %llu, packets p1=%llu p2=%llu p3=%llu\n", static_cast<unsigned long long>(frame),
                 static_cast<unsigned long long>(packets[1]), static_cast<unsigned long long>(packets[2]),
                 static_cast<unsigned long long>(packets[3]));

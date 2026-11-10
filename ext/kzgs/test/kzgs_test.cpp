@@ -3,19 +3,21 @@
 // Then switches to 2x upscaling and checks the readback doubles in size with the same picture, stresses the ring
 // buffer with >32 MB of chunked PATH2 IMAGE uploads, and switches renderer on the same window (scene over PATH1).
 //
-// Usage: kzgs_test [--renderer d3d11|d3d12|vulkan] [--warp] [--golden] [--out <dir>] [--show] [--vsync]
+// Usage: kzgs_test [--renderer d3d11|d3d12|vulkan|software] [--warp] [--golden] [--out <dir>] [--show] [--vsync]
 //                  [--raw-gif] [--frames N] [--stress-uploads N]
 // Exit code 0 = pass. Writes test/out.png (1x), out_2x.png, out_stress.png and out_switch.png.
 // If the hardware D3D device cannot be created (e.g. no GPU access), it retries on WARP and says so.
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "kzgs.h"
+#include "kzgs_fsr1_runtime.h"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -268,9 +270,20 @@ static void PumpMessages()
 	}
 }
 
+static std::atomic<int> g_vulkan_validation_errors{0};
+static std::atomic<bool> g_vulkan_validation_unavailable{false};
+static std::atomic<bool> g_vulkan_validation_seen{false};
+
 static void Log(int level, const char* msg)
 {
 	static const char* tags[] = {"E", "W", "I"};
+	if (std::strstr(msg, "SYNC-HAZARD") || std::strstr(msg, "Validation Error") ||
+		(std::strstr(msg, "VUID-") && !std::strstr(msg, "VUID-VkDeviceCreateInfo-enabledLayerCount-12384")))
+		g_vulkan_validation_errors.fetch_add(1, std::memory_order_relaxed);
+	if (std::strstr(msg, "validation/debug layers requested but are unavailable"))
+		g_vulkan_validation_unavailable.store(true, std::memory_order_relaxed);
+	if (std::strstr(msg, "Inserted device layer \"VK_LAYER_KHRONOS_validation\""))
+		g_vulkan_validation_seen.store(true, std::memory_order_relaxed);
 	std::printf("[gs %s] %s\n", tags[level < 0 || level > 2 ? 2 : level], msg);
 }
 
@@ -498,14 +511,17 @@ static void CheckResolutionInfo(int render_w, int render_h, int output_w, int ou
 	}
 }
 
-static void CheckUpscalerStatus(KzgsUpscaler requested, int sharpening, KzgsUpscalerReason reason)
+static void CheckUpscalerStatus(KzgsUpscaler requested, int sharpening, KzgsUpscalerReason reason,
+	KzgsUpscaler effective = KzgsUpscaler::Off)
 {
 	KzgsUpscalerStatus status;
 	if (!kzgsGetUpscalerStatus(status) || status.requested != requested ||
-		status.effective != KzgsUpscaler::Off || status.requestedSharpening != sharpening ||
-		status.effectiveSharpening != 0 || status.reason != reason)
+		status.effective != effective || status.requestedSharpening != sharpening ||
+		status.effectiveSharpening != (effective == KzgsUpscaler::Off ? 0 : sharpening) || status.reason != reason)
 	{
-		std::printf("  FAIL presentation upscaler status for %s\n", kzgsUpscalerName(requested));
+		std::printf("  FAIL presentation upscaler status: requested=%s effective=%s reason=%s (expected %s/%s)\n",
+			kzgsUpscalerName(requested), kzgsUpscalerName(status.effective), kzgsUpscalerReasonName(status.reason),
+			kzgsUpscalerName(effective), kzgsUpscalerReasonName(reason));
 		g_failures++;
 	}
 }
@@ -520,12 +536,235 @@ static void CheckUpscalerClosed()
 	}
 }
 
+static bool ReadPresented(std::vector<uint8_t>& pixels, int expectedWidth, int expectedHeight)
+{
+	int width = 0, height = 0;
+	if (!kzgsReadback(pixels, width, height, expectedWidth, expectedHeight) ||
+		width != expectedWidth || height != expectedHeight)
+	{
+		std::printf("  FAIL presented readback: got %dx%d, expected %dx%d\n",
+			width, height, expectedWidth, expectedHeight);
+		++g_failures;
+		return false;
+	}
+	return true;
+}
+
+static void CheckFsr1Vulkan(HWND hwnd, KzgsConfig& cfg, const std::vector<uint8_t>& scene, int frames)
+{
+	std::printf("== Vulkan FSR1 activation, capture, resize and recreation\n");
+	const kz::host::NativeWindow window = kz::host::NativeWindow::win32(hwnd);
+	ResizeTestWindowUnconstrained(hwnd, 1003, 757);
+	kzgsResize(1003, 757);
+	cfg.upscaler = KzgsUpscaler::Off;
+	cfg.upscalerSharpening = 0;
+	cfg.bilinearPresent = true;
+	kzgsUpdateConfig(cfg);
+	PresentFrames(scene, frames, 3);
+	kzgsSync();
+	std::vector<uint8_t> baseline;
+	ReadPresented(baseline, 1003, 757);
+
+	cfg.upscaler = KzgsUpscaler::FSR1;
+	kzgsUpdateConfig(cfg);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::FSR1, 0, KzgsUpscalerReason::WaitingForFrame);
+	const uint64_t beforeFailure = kzgs::Fsr1TestDispatchCount();
+	kzgs::Fsr1TestFailNextInitialization();
+	PresentFrames(scene, frames, 3);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::FSR1, 0, KzgsUpscalerReason::InitializationFailed);
+	std::vector<uint8_t> failureFallback;
+	if (ReadPresented(failureFallback, 1003, 757) &&
+		(failureFallback != baseline || kzgs::Fsr1TestDispatchCount() != beforeFailure))
+	{
+		std::printf("  FAIL initialization failure did not preserve the ordinary presentation\n");
+		++g_failures;
+	}
+	cfg.upscaler = KzgsUpscaler::Off;
+	kzgsUpdateConfig(cfg);
+	cfg.upscaler = KzgsUpscaler::FSR1;
+	kzgsUpdateConfig(cfg);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::FSR1, 0, KzgsUpscalerReason::WaitingForFrame);
+	PresentFrames(scene, frames, 3);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::FSR1, 0, KzgsUpscalerReason::Active, KzgsUpscaler::FSR1);
+	std::vector<uint8_t> easu, repeated;
+	const uint64_t beforeReadback = kzgs::Fsr1TestDispatchCount();
+	if (ReadPresented(easu, 1003, 757) && ReadPresented(repeated, 1003, 757))
+	{
+		if (easu == baseline)
+		{
+			std::printf("  FAIL EASU output is identical to ordinary presentation\n");
+			++g_failures;
+		}
+		if (easu != repeated)
+		{
+			std::printf("  FAIL repeated presented readback changed without another present\n");
+			++g_failures;
+		}
+	}
+	if (kzgs::Fsr1TestDispatchCount() != beforeReadback)
+	{
+		std::printf("  FAIL presented readback re-dispatched FSR1\n");
+		++g_failures;
+	}
+
+	cfg.upscalerSharpening = 100;
+	kzgsUpdateConfig(cfg);
+	PresentFrames(scene, frames, 3);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::FSR1, 100, KzgsUpscalerReason::Active, KzgsUpscaler::FSR1);
+	std::vector<uint8_t> rcas;
+	if (ReadPresented(rcas, 1003, 757) && !easu.empty() && rcas == easu)
+	{
+		std::printf("  FAIL RCAS did not affect the upscaled frame\n");
+		++g_failures;
+	}
+
+	cfg.casSharpness = 30;
+	kzgsUpdateConfig(cfg);
+	kzgsBurstArm(1, -1, -1);
+	PresentFrames(scene, 1, 3);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::FSR1, 100, KzgsUpscalerReason::Active, KzgsUpscaler::FSR1);
+	std::vector<KzgsBurstFrame> captured;
+	std::vector<uint8_t> withCas;
+	if (!kzgsBurstTake(captured) || captured.size() != 1 || captured[0].width != 1003 || captured[0].height != 757 ||
+		!ReadPresented(withCas, 1003, 757) || captured[0].rgba != withCas)
+	{
+		std::printf("  FAIL completed upscaled presented capture/replay\n");
+		++g_failures;
+	}
+	if (!rcas.empty() && withCas == rcas)
+	{
+		std::printf("  FAIL completed capture did not include CAS\n");
+		++g_failures;
+	}
+
+	const uint64_t beforeRetarget = kzgs::Fsr1TestDispatchCount();
+	std::vector<uint8_t> fixedAspect;
+	if (ReadPresented(fixedAspect, 701, 701))
+	{
+		const size_t sample = (35u * 701u + 350u) * 4u;
+		if (fixedAspect[sample] > 4 || fixedAspect[sample + 1] > 4 || fixedAspect[sample + 2] > 4 ||
+			kzgs::Fsr1TestDispatchCount() != beforeRetarget)
+		{
+			std::printf("  FAIL retargeted fixed-aspect capture did not retain letterboxing\n");
+			++g_failures;
+		}
+	}
+	cfg.casSharpness = 0;
+	cfg.aspect = KzgsAspect::Stretch;
+	kzgsUpdateConfig(cfg);
+	PresentFrames(scene, frames, 3);
+	kzgsSync();
+	std::vector<uint8_t> stretched;
+	if (ReadPresented(stretched, 701, 701))
+	{
+		const size_t sample = (35u * 701u + 350u) * 4u;
+		if (stretched[sample + 2] < 80)
+		{
+			std::printf("  FAIL retargeted stretch capture introduced letterboxing\n");
+			++g_failures;
+		}
+	}
+	cfg.aspect = KzgsAspect::Ratio4_3;
+	cfg.crop[0] = 7; cfg.crop[1] = 5; cfg.crop[2] = 11; cfg.crop[3] = 3;
+	ResizeTestWindowUnconstrained(hwnd, 1001, 751);
+	kzgsResize(1001, 751);
+	kzgsUpdateConfig(cfg);
+	PresentFrames(scene, frames, 3);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::FSR1, 100, KzgsUpscalerReason::Active, KzgsUpscaler::FSR1);
+	std::vector<uint8_t> cropped;
+	ReadPresented(cropped, 1001, 751);
+
+	ResizeTestWindowUnconstrained(hwnd, 320, 240);
+	kzgsResize(320, 240);
+	PresentFrames(scene, frames, 3);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::FSR1, 100, KzgsUpscalerReason::NoUpscaleNeeded);
+	std::vector<uint8_t> noUpscale, off;
+	ReadPresented(noUpscale, 320, 240);
+	cfg.upscaler = KzgsUpscaler::Off;
+	kzgsUpdateConfig(cfg);
+	PresentFrames(scene, frames, 3);
+	kzgsSync();
+	if (ReadPresented(off, 320, 240) && noUpscale != off)
+	{
+		std::printf("  FAIL no-upscale fallback changed presentation\n");
+		++g_failures;
+	}
+
+	ResizeTestWindowUnconstrained(hwnd, 1003, 757);
+	kzgsResize(1003, 757);
+	cfg.upscaler = KzgsUpscaler::FSR1;
+	cfg.renderer = KzgsRenderer::D3D11;
+	cfg.debugDevice = false;
+	kzgsUpdateConfig(cfg);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::FSR1, 100, KzgsUpscalerReason::NotImplemented);
+	cfg.renderer = KzgsRenderer::Vulkan;
+	cfg.debugDevice = true;
+	kzgsUpdateConfig(cfg);
+	PresentFrames(scene, frames, 3);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::FSR1, 100, KzgsUpscalerReason::Active, KzgsUpscaler::FSR1);
+
+	kzgsClose();
+	CheckUpscalerClosed();
+	std::string error;
+	cfg.debugDevice = false;
+	if (!kzgsOpen({}, cfg, g_regs, &error))
+	{
+		std::printf("  FAIL surfaceless Vulkan reopen: %s\n", error.c_str());
+		++g_failures;
+	}
+	else
+	{
+		CheckUpscalerStatus(KzgsUpscaler::FSR1, 100, KzgsUpscalerReason::NoSurface);
+		kzgsClose();
+	}
+	cfg.debugDevice = true;
+	if (!kzgsOpen(window, cfg, g_regs, &error))
+	{
+		std::printf("  FAIL Vulkan device recreation: %s\n", error.c_str());
+		++g_failures;
+		return;
+	}
+	PresentFrames(scene, frames, 3);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::FSR1, 100, KzgsUpscalerReason::Active, KzgsUpscaler::FSR1);
+
+	if (!g_vulkan_validation_seen.load(std::memory_order_relaxed) ||
+		g_vulkan_validation_unavailable.load(std::memory_order_relaxed) ||
+		g_vulkan_validation_errors.load(std::memory_order_relaxed) != 0)
+	{
+		std::printf("  FAIL Vulkan validation: seen=%d unavailable=%d errors=%d\n",
+			g_vulkan_validation_seen.load(), g_vulkan_validation_unavailable.load(), g_vulkan_validation_errors.load());
+		++g_failures;
+	}
+	cfg.upscaler = KzgsUpscaler::Off;
+	cfg.upscalerSharpening = 0;
+	cfg.bilinearPresent = false;
+	std::fill(std::begin(cfg.crop), std::end(cfg.crop), 0);
+	ResizeTestWindow(hwnd, 640, 448);
+	RestoreTestWindowStyle(hwnd);
+	kzgsResize(640, 448);
+	kzgsUpdateConfig(cfg);
+	kzgsSync();
+}
+
 int main(int argc, char** argv)
 {
 	KzgsConfig cfg;
 	bool show = false;
 	bool vsync = false;
 	bool golden_only = false;
+	bool fsr1_validation = false;
+	std::string synthetic_trace;
 	int frames = 4;
 	int stress_uploads = 2600; // x 16 KB = ~41 MB of GIF data, more than the 32 MB ring
 	for (int i = 1; i < argc; i++)
@@ -534,12 +773,17 @@ int main(int argc, char** argv)
 		if (a == "--renderer" && i + 1 < argc)
 		{
 			const std::string r = argv[++i];
-			cfg.renderer = (r == "d3d12") ? KzgsRenderer::D3D12 : (r == "vulkan") ? KzgsRenderer::Vulkan : KzgsRenderer::D3D11;
+			cfg.renderer = (r == "d3d12") ? KzgsRenderer::D3D12 : (r == "vulkan") ? KzgsRenderer::Vulkan :
+				(r == "software") ? KzgsRenderer::Software : KzgsRenderer::D3D11;
 		}
 		else if (a == "--warp")
 			cfg.useWarp = true;
 		else if (a == "--golden")
 			golden_only = g_check_golden = true;
+		else if (a == "--fsr1-validation")
+			fsr1_validation = true;
+		else if (a == "--write-synthetic-trace" && i + 1 < argc)
+			synthetic_trace = argv[++i];
 		else if (a == "--out" && i + 1 < argc)
 			g_output_dir = argv[++i];
 		else if (a == "--raw-gif") // negative check: self-contained packet phase must then fail
@@ -553,8 +797,30 @@ int main(int argc, char** argv)
 		else if (a == "--stress-uploads" && i + 1 < argc)
 			stress_uploads = std::max(0, std::atoi(argv[++i]));
 	}
-	static const char* names[] = {"D3D11", "D3D12", "Vulkan"};
+	static const char* names[] = {"D3D11", "D3D12", "Vulkan", "Software"};
 	std::setvbuf(stdout, nullptr, _IONBF, 0);
+	if (!synthetic_trace.empty())
+	{
+		SetupNTSC640x448();
+		const std::vector<uint8_t> scene = BuildScene();
+		FILE* file = std::fopen(synthetic_trace.c_str(), "wb");
+		if (!file)
+			return 2;
+		bool ok = true;
+		for (uint32_t frame = 0; frame < 3; ++frame)
+		{
+			const uint32_t gif[] = {1, 3, static_cast<uint32_t>(scene.size())};
+			const uint32_t vsyncRecord[] = {2, frame & 1, sizeof(g_regs)};
+			SetPriv(0x1000, (frame & 1) ? (1ull << 13) : 0);
+			ok = ok && std::fwrite(gif, sizeof(gif), 1, file) == 1 &&
+				std::fwrite(scene.data(), scene.size(), 1, file) == 1 &&
+				std::fwrite(vsyncRecord, sizeof(vsyncRecord), 1, file) == 1 &&
+				std::fwrite(g_regs, sizeof(g_regs), 1, file) == 1;
+		}
+		ok = (std::fclose(file) == 0) && ok;
+		std::printf("%s: synthetic replay trace\n", ok ? "PASS" : "FAIL");
+		return ok ? 0 : 1;
+	}
 	std::error_code output_error;
 	std::filesystem::create_directories(g_output_dir, output_error);
 	if (output_error)
@@ -575,6 +841,7 @@ int main(int argc, char** argv)
 	cfg.vsync = vsync;
 	cfg.upscale = 1;
 	cfg.bilinearPresent = false;
+	cfg.debugDevice = fsr1_validation;
 
 	std::string err;
 	std::printf("== open %s%s\n", names[int(cfg.renderer)], cfg.useWarp ? " (WARP)" : "");
@@ -633,7 +900,7 @@ int main(int argc, char** argv)
 		return true;
 	};
 	// Keep swap-chain capture separate from the full test's later renderer-switch stress.
-	if (golden_only && cfg.renderer == KzgsRenderer::D3D11)
+	if (golden_only && cfg.renderer != KzgsRenderer::Vulkan)
 	{
 		cfg.casSharpness = 30;
 		kzgsUpdateConfig(cfg);
@@ -646,8 +913,10 @@ int main(int argc, char** argv)
 		cfg.upscalerSharpening = 100;
 		kzgsUpdateConfig(cfg);
 		kzgsSync();
-		CheckUpscalerStatus(provider, 100, KzgsUpscalerReason::NotImplemented);
-		if (golden_only && provider == KzgsUpscaler::FSR1 && cfg.renderer == KzgsRenderer::D3D11)
+		CheckUpscalerStatus(provider, 100,
+			provider == KzgsUpscaler::FSR1 && cfg.renderer == KzgsRenderer::Vulkan ?
+				KzgsUpscalerReason::WaitingForFrame : KzgsUpscalerReason::NotImplemented);
+		if (golden_only && provider == KzgsUpscaler::FSR1 && cfg.renderer != KzgsRenderer::Vulkan)
 		{
 			std::vector<uint8_t> fallback_backbuffer;
 			if (capture_backbuffer(fallback_backbuffer) && fallback_backbuffer != baseline_backbuffer)
@@ -672,6 +941,17 @@ int main(int argc, char** argv)
 	kzgsUpdateConfig(cfg);
 	kzgsSync();
 	CheckUpscalerStatus(KzgsUpscaler::Off, 0, KzgsUpscalerReason::Disabled);
+	if (fsr1_validation && cfg.renderer == KzgsRenderer::Vulkan)
+		CheckFsr1Vulkan(hwnd, cfg, scene, frames);
+
+	if (golden_only && cfg.renderer == KzgsRenderer::Software)
+	{
+		kzgsClose();
+		CheckUpscalerClosed();
+		DestroyWindow(hwnd);
+		std::printf("%s (%d failure%s)\n", g_failures ? "FAIL" : "PASS", g_failures, g_failures == 1 ? "" : "s");
+		return g_failures ? 1 : 0;
+	}
 
 	std::printf("== 2x upscale\n");
 	cfg.upscale = 2;
@@ -682,6 +962,11 @@ int main(int argc, char** argv)
 		kzgsClose();
 		CheckUpscalerClosed();
 		DestroyWindow(hwnd);
+		if (fsr1_validation && g_vulkan_validation_errors.load(std::memory_order_relaxed) != 0)
+		{
+			std::printf("  FAIL Vulkan validation reported errors during final teardown\n");
+			++g_failures;
+		}
 		std::printf("%s (%d failure%s)\n", g_failures ? "FAIL" : "PASS", g_failures, g_failures == 1 ? "" : "s");
 		return g_failures ? 1 : 0;
 	}

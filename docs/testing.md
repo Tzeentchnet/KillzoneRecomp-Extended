@@ -53,9 +53,35 @@ python .\tools\scripts\verify_capture_metadata.py .\work\run1 --compare .\work\r
 ```
 
 The summary contains only configuration, dimensions, event/frame counts, and hashes.
-The `effective_config.presentation_upscaler` object distinguishes the requested provider and sharpening from the
-effective provider, sharpening, and fallback reason. All providers currently remain inactive. The KzGS D3D11 golden
-test checks that an unavailable request preserves the existing presentation, including CAS.
+The `effective_config.presentation_upscaler` object distinguishes requested/effective providers and sharpening and
+the fallback reason. A `config` record follows changes observed after presentation, and its pipeline names EASU and,
+when enabled, RCAS before the existing CAS pass. The summary uses the latest such configuration. D3D and software
+golden tests check that unavailable requests preserve the existing presentation, including CAS.
+
+Focused FSR1 checks (the Vulkan tests require a Vulkan GPU and `VK_LAYER_KHRONOS_validation`):
+
+```powershell
+.\tools\scripts\cmake_preset.ps1 -Preset win-msvc-tests -Action build -Target kzgs_fsr1_gpu_test
+.\tools\scripts\cmake_preset.ps1 -Preset win-msvc-tests -Action build -Target kzgs_test
+.\tools\scripts\cmake_preset.ps1 -Preset win-msvc-tests -Action build -Target kzgs_fsr1_test
+.\tools\scripts\cmake_preset.ps1 -Preset win-msvc-tests -Action build -Target kz_gs_replay
+ctest --test-dir .\build\win-msvc-rel -R 'kzgs_fsr1_reference|kzgs_fsr1_vulkan_validation|kzgs_vulkan_fsr1|kzgs_fsr1_replay' --output-on-failure
+```
+
+The CPU vectors check AMD constants and dispatch planning. The GPU-vector test enables synchronization validation,
+compares EASU with an independently compiled AMD native-gather reference and odd cropped rectangles with tightly
+packed inputs, checks edge/partial-tile writes and RCAS, and exercises failure cleanup and retry. The presentation
+test checks active/fallback status, initialization failure and retry, resize/recreation, separate RCAS and CAS
+effects, and repeated fixed-aspect/stretch capture without redispatch. The replay test generates a synthetic GS trace and compares
+presented readback with burst output; it also checks the optional debug replay tool when built. PCSX2's existing
+synthetic-scene index upload produces a
+`SYNC-HAZARD-READ-AFTER-WRITE` under synchronization validation even with FSR off; synchronization validation is
+therefore isolated to the direct FSR-vector test, while the full presentation test uses standard validation.
+PCSX2 also emits the informational deprecated-device-layer VUID on this validation-layer version.
+
+For active Vulkan FSR1, presented-size readback and negative-size bursts recomposite the completed post-FSR/post-CAS
+texture into the requested output rectangle; they do not rerun FSR1. This is not a literal swapchain-image readback.
+Internal-resolution captures and non-FSR presentation retain their existing behavior.
 
 For deterministic scheduling, use `KZ_SHOT_GUEST_INTERVAL=<vblanks>` and optionally
 `KZ_SHOT_GUEST_FROM=<first-vblank>`. Prefix a start with `g`, such as `g60`, to count from the first gameplay frame.
