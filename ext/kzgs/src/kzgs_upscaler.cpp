@@ -77,6 +77,7 @@ const char* kzgsUpscalerReasonName(KzgsUpscalerReason reason)
 		case KzgsUpscalerReason::DuplicatePresent: return "duplicate_present";
 		case KzgsUpscalerReason::ResetFailed: return "reset_failed";
 		case KzgsUpscalerReason::DeviceLost: return "device_lost";
+		case KzgsUpscalerReason::IdleWaitFailed: return "idle_wait_failed";
 	}
 	return "unknown";
 }

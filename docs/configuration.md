@@ -122,6 +122,7 @@ are still diagnostic, not permission to dispatch. See [testing](testing.md#headl
 | `required_input_unavailable`, `unsupported_color_encoding` | Required matched inputs or an accepted color encoding are unavailable; the current vendor gate rejects all DLSS/XeSS requests. |
 | `device_recreation_required` | A different provider was selected after device creation; restart/reopen KzGS to negotiate it. |
 | `initialization_failed`, `dispatch_failed`, `present_failed`, `reset_failed`, `duplicate_present`, `device_lost` | Initialization, evaluation, presentation, history/reset, duplicate-frame, or device failure; native presentation is used when possible. |
+| `idle_wait_failed` | A non-device-loss Vulkan idle wait failed; potentially in-flight FSR1 resources are abandoned instead of explicitly destroyed. |
 
 The launcher's **Validated enhancements** preset selects the measured stock-game setup: D3D12, VSync, automatic
 internal scale, 16x anisotropy, highest mip detail, clean PS2 effects, replacement textures off, 2x view distance,

@@ -193,8 +193,9 @@ int main()
 			"uncertain completion never explicitly destroys FSR1 children or reports device loss");
 		KzgsUpscalerStatus retirementStatus;
 		check(kzgsGetUpscalerStatus(retirementStatus) &&
-			retirementStatus.reason == KzgsUpscalerReason::InitializationFailed,
-			"non-device-loss retirement failure reports initialization failure");
+			retirementStatus.reason == KzgsUpscalerReason::IdleWaitFailed &&
+			std::strcmp(kzgsUpscalerReasonName(retirementStatus.reason), "idle_wait_failed") == 0,
+			"non-device-loss retirement reports an idle-wait failure");
 		const bool actuallyIdle = vkDeviceWaitIdle(device->GetDevice()) == VK_SUCCESS;
 		check(actuallyIdle, "test GPU becomes idle before releasing retained fixtures");
 		if (!actuallyIdle)

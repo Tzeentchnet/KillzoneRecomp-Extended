@@ -45,6 +45,7 @@ enum class KzgsUpscalerReason
 	DuplicatePresent,
 	ResetFailed,
 	DeviceLost,
+	IdleWaitFailed,
 };
 
 struct KzgsUpscalerStatus

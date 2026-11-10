@@ -138,8 +138,9 @@ new status. A Vulkan FSR1 request reports `waiting_for_frame` until a successful
 preserves the cropped source and destination aspect; it reports `no_upscale_needed` if either destination axis is
 smaller than the source or both are equal. Initialization and dispatch failures fall back to normal presentation.
 FSR1 sharpening 0 skips RCAS; 1..100 maps linearly from 2 to 0 attenuation stops, independently of existing CAS.
-If a Vulkan idle wait fails for a reason other than device loss, FSR1 abandons potentially in-flight child resources
-until device teardown rather than explicitly destroying them; repeated failures can accumulate allocations.
+If a Vulkan idle wait fails for a reason other than device loss, FSR1 reports `idle_wait_failed` and abandons
+potentially in-flight child resources to device teardown rather than explicitly destroying them. Their C++ texture
+wrappers are intentionally leaked for process lifetime, so repeated failures can accumulate host allocations.
 Presented-size readbacks and Vulkan negative-size bursts can recomposite a cached upscaler result without
 redispatching. They are diagnostic snapshots, not literal swapchain-image readbacks: a skipped or failed present may
 instead yield a pre-CAS or current-frame snapshot. For a negative-size Vulkan burst, `kzgsBurstTakeEx` reports
@@ -163,9 +164,6 @@ separate companion update and pin/revalidation.
 The presentation callback confirms success before the effective provider is reported; GPU completion
 fences govern resource retirement. The GS-thread temporal observer records bounded draw/display/present metadata and
 conservative resets, but does not promote candidate depth, motion, camera, or masks to qualified inputs.
-FSR1 teardown destroys its children after a successful idle wait, and treats confirmed device loss separately. A
-different idle-wait failure leaves its children and texture wrappers untouched until device teardown rather than
-destroying resources that could still be in flight.
 
 The EASU and RCAS pipelines use independently compiled entry points, not Vulkan specialization constants. AMD's
 unmodified MIT-licensed FSR 1 headers, source commit, hashes, and notice are in `third_party/fsr1`; resource staging

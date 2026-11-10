@@ -187,7 +187,7 @@ namespace
 			AbandonResources();
 			Console.Error("kzgs: Vulkan idle failed (%d); retaining FSR1 resources until device teardown",
 				static_cast<int>(idleResult));
-			Report(KzgsUpscalerReason::InitializationFailed);
+			Report(KzgsUpscalerReason::IdleWaitFailed);
 		}
 	}
 
