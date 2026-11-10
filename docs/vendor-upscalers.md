@@ -11,12 +11,21 @@ behavior have not been independently established. DLSS refuses initialization un
 exclusive device-idle initialization and explicitly attests to those SDK/runtime/device qualifications.
 The current host provides neither the initialization scope nor any qualification flags.
 
-The DLSS source implements NGX extension/capability negotiation and a deferred, command-buffer-recorded feature
-lifecycle. XeSS currently implements version, extension, and feature negotiation only. Its context creation
-**fails closed**: the XeSS Vulkan header says `xessVKInit` may create staging buffers and submit copy-queue work,
-whereas [provider ABI 1.0](upscaler-provider-abi.md) prohibits submissions during `create` and permits only the
-borrowed command buffer during `evaluate`. Full XeSS initialization/evaluation requires a separately designed
-synchronization contract and real-SDK validation; it is not implemented here.
+The conditional DLSS and XeSS sources implement SDK negotiation, initialization and command-buffer-recorded
+evaluation against their respective headers. The XeSS Vulkan header says `xessVKInit` may create staging buffers
+and submit copy-queue work. Both adapters therefore require the explicit, synchronous, exclusive-device-idle
+initialization scope in [provider ABI 1.1](upscaler-provider-abi.md); ABI 1.0 or a host lacking that scope fails
+closed before calling the SDK initializer. XeSS also requires an explicit SDK execution qualification;
+NGX requires that plus a separate `GENERAL`-layout qualification. On a failure after initialization starts,
+unproven completion is treated as terminal and potentially in-flight SDK objects are abandoned.
+Before invoking an initializer, each adapter pins its own module for the rest of the process; if pinning fails,
+initialization fails. This conservative lifetime also prevents unloading SDK code after device loss, wrong-thread
+destruction, or an SDK destruction failure.
+
+These are **unqualified conditional paths**: the real vendor headers, import libraries, runtime behavior, and GPUs
+were not available to compile or validate them here. The successful fake-SDK targets exercise only the independent
+test doubles, not the actual SDK binary interfaces. The current host supplies no scope or qualification flags, and
+the temporal no-go independently prevents either provider from being created.
 
 ## Local build
 
@@ -64,6 +73,16 @@ devices are rejected. The adapter records conservative global and per-image barr
 `VK_IMAGE_LAYOUT_GENERAL` for its inputs and output; the NGX-specific attestation is mandatory because those layout,
 access, cross-dispatch, and no-hidden-submission assumptions are **not established by the synthetic tests**.
 Actual SDK behavior remains unqualified.
+
+XeSS uses low-resolution, non-jittered current-to-previous motion and a context-stable forward or reversed depth
+mode. It maps ABI motion scales through `xessSetVelocityScale`, uses source-pixel projection jitter with unit jitter
+scale, and passes the same source crop for color, depth and motion. It selects a supported quality range reported by
+the SDK and rejects incompatible aspect ratios. Linear SDR uses the LDR flag and unit exposure; linear HDR uses
+auto-exposure. Sharpening must be zero. The candidate path transitions sampled inputs to
+`VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL`, leaves the storage output in `GENERAL`, records global memory
+dependencies, and restores supplied layouts on all return paths. XeSS SDK context operations are serialized on the
+initialization thread; wrong-thread evaluation fails before recording and unsafe destruction abandons the context.
+These mappings and synchronization assumptions still need real SDK, driver, GPU, and temporal-image qualification.
 
 ## Exact reference provenance and license fields
 

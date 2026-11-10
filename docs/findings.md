@@ -2262,9 +2262,11 @@ zero mean unknown/unavailable. Do not combine a protected-content run with separ
 such as `KZ_WIDE_LOG`, `KZ_MOVIE_LOG`, or `KZ_LOGO_LOG`. Do not commit any private capture, trace, game content, or unsanitized log.
 Hook installation is decided at startup, so restart after changing the diagnostic setting.
 
-The provider ABI remains 1.0. Any provider advertising `KZGS_PROVIDER_CAP_TEMPORAL` is rejected before context
-creation/evaluation, even if it advertises color-only requirements; spatial-only test doubles retain their existing
-path. DLSS and XeSS stay disabled, and XeSS also retains its independent queue-submission blocker. Reopen this gate
+At measurement, the provider ABI was 1.0 and XeSS initialization was blocked by its queue-submission rule. ABI 1.1
+subsequently defined an exclusive initialization scope, but the current host does not provide it and no vendor SDK
+or GPU was qualified. This engineering change **does not change the measured no-go**. Any provider advertising
+`KZGS_PROVIDER_CAP_TEMPORAL` is rejected before context creation/evaluation, even if it advertises color-only
+requirements; spatial-only test doubles retain their existing path. DLSS and XeSS stay disabled. Reopen this gate
 only with authorized, matched consecutive gameplay evidence covering moving objects, depth correspondence and
 direction, vector units/sign/jitter, world-only jitter, and UI/reactive behavior.
 

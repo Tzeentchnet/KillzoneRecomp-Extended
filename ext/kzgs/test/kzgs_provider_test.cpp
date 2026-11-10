@@ -156,7 +156,9 @@ int main(int argc, char** argv)
 {
 	std::setvbuf(stdout, nullptr, _IONBF, 0);
 	const bool uncertainIdle = argc == 3 && std::strcmp(argv[2], "--uncertain-idle") == 0;
-	if (argc != 2 && !uncertainIdle)
+	const bool uncertainInit = argc == 3 && std::strcmp(argv[2], "--uncertain-init") == 0;
+	const bool uncertainReset = argc == 3 && std::strcmp(argv[2], "--uncertain-reset") == 0;
+	if (argc != 2 && !uncertainIdle && !uncertainInit && !uncertainReset)
 		return 2;
 	const std::wstring path = std::filesystem::absolute(argv[1]).wstring();
 	Mock mock = LoadMock(path);
@@ -223,23 +225,54 @@ int main(int argc, char** argv)
 	if (!window)
 		return 2;
 	kzgsSetLogCallback(Log);
-	if (uncertainIdle)
+	if (uncertainIdle || uncertainInit || uncertainReset)
 	{
 		kzgs::ProviderTestSetPath(path.c_str());
-		mock.set(0);
+		mock.set(uncertainInit ? MOCK_CREATE_UNRESOLVED_SYNC :
+			uncertainReset ? MOCK_RESET_UNRESOLVED_SYNC : 0);
+		const KzgsMockStats beforeFailure = mock.Stats();
 		if (Open(window, KzgsUpscalerReason::WaitingForFrame))
 		{
 			kzgs::RunOnGSThread([&]() {
 				auto* device = static_cast<GSDeviceVK*>(g_gs_device.get());
 				Check(vkDeviceWaitIdle(device->GetDevice()) == VK_SUCCESS,
-					"simulated idle error starts with an actually idle GPU");
-				kzgs::ProviderDeviceDestroying(*device, VK_ERROR_UNKNOWN);
-				CheckStatus(KzgsUpscalerReason::InitializationFailed, KZGS_PROVIDER_ERROR_INTERNAL,
-					static_cast<int32_t>(VK_ERROR_UNKNOWN));
+					"simulated synchronization error starts with an actually idle GPU");
+				if (uncertainInit || uncertainReset)
+				{
+					auto source = Upload();
+					GSTexture* output = nullptr;
+					Check(source && !kzgs::ProviderTestUpscale(source.get(), 0, 0, 4, 4, 8, 8, 1, false, output),
+						"unresolved provider operation fails closed");
+					CheckStatus(uncertainInit ? KzgsUpscalerReason::InitializationFailed : KzgsUpscalerReason::ResetFailed,
+						KZGS_PROVIDER_ERROR_SYNCHRONIZATION_UNRESOLVED, uncertainInit ? -72 : -73,
+						KZGS_PROVIDER_REASON_SYNCHRONIZATION,
+						uncertainInit ? "mock unresolved initialization" : "mock unresolved reset");
+					Check(mock.Stats().destroys == beforeFailure.destroys,
+						"unresolved partial context is abandoned without invoking destroy");
+					const KzgsMockStats afterFailure = mock.Stats();
+					Check(!kzgs::ProviderTestUpscale(source.get(), 0, 0, 4, 4, 8, 8, 2, false, output) &&
+						mock.Stats().creates == afterFailure.creates && mock.Stats().evaluates == afterFailure.evaluates,
+						"unresolved completion is not retried on the same device");
+					CheckStatus(uncertainInit ? KzgsUpscalerReason::InitializationFailed : KzgsUpscalerReason::ResetFailed,
+						KZGS_PROVIDER_ERROR_SYNCHRONIZATION_UNRESOLVED, uncertainInit ? -72 : -73,
+						KZGS_PROVIDER_REASON_SYNCHRONIZATION,
+						uncertainInit ? "mock unresolved initialization" : "mock unresolved reset");
+					device->ExecuteCommandBuffer(true);
+					source.reset();
+				}
+				else
+				{
+					kzgs::ProviderDeviceDestroying(*device, VK_ERROR_UNKNOWN);
+					CheckStatus(KzgsUpscalerReason::InitializationFailed, KZGS_PROVIDER_ERROR_INTERNAL,
+						static_cast<int32_t>(VK_ERROR_UNKNOWN));
+				}
 			});
 			kzgsClose();
 		}
 		const KzgsMockStats before = mock.Stats();
+		Check(before.destroys == beforeFailure.destroys,
+			"uncertain completion never destroys abandoned contexts during teardown");
+		mock.set(0);
 		if (Open(window, KzgsUpscalerReason::InitializationFailed))
 		{
 			kzgsClose();
@@ -251,9 +284,10 @@ int main(int argc, char** argv)
 		Check(GetModuleHandleW(path.c_str()) != nullptr,
 			"uncertain GPU completion retains the provider module");
 		Check(validationSeen.load() && !validationUnavailable.load() && validationErrors.load() == 0,
-			"uncertain-idle fallback passes Vulkan validation");
+			"uncertain-completion fallback passes Vulkan validation");
 		DestroyWindow(window);
-		std::printf("%s: uncertain-idle provider fallback\n", failures ? "FAIL" : "PASS");
+		std::printf("%s: uncertain-%s provider fallback\n", failures ? "FAIL" : "PASS",
+			uncertainInit ? "initialization" : uncertainReset ? "reset" : "idle");
 		return failures ? 1 : 0;
 	}
 	kzgs::ProviderTestSetPath((path + L".missing").c_str());
@@ -534,6 +568,20 @@ int main(int argc, char** argv)
 			mock.set(0);
 			Check(!kzgs::ProviderTestUpscale(source.get(), 0, 0, 4, 4, 8, 8, 29, false, output) &&
 				mock.Stats().creates == creates, "create/reset loss remains latched");
+			static_cast<GSDeviceVK*>(g_gs_device.get())->ExecuteCommandBuffer(true);
+			source.reset();
+		});
+		kzgsClose();
+	}
+	mock.set(MOCK_ABI_1_0);
+	if (Open(window, KzgsUpscalerReason::WaitingForFrame))
+	{
+		kzgs::RunOnGSThread([&]() {
+			auto source = Upload();
+			GSTexture* output = nullptr;
+			Check(source && kzgs::ProviderTestUpscale(source.get(), 0, 0, 4, 4, 8, 8, 29, false, output),
+				"1.0 provider works with a 1.1 host");
+			kzgs::ProviderTestPresented(29, true, true);
 			static_cast<GSDeviceVK*>(g_gs_device.get())->ExecuteCommandBuffer(true);
 			source.reset();
 		});

@@ -9,7 +9,19 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <thread>
 #include <utility>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+extern "C" IMAGE_DOS_HEADER __ImageBase;
+#endif
 
 namespace
 {
@@ -22,6 +34,7 @@ namespace
 		KzgsProviderCreateInfo info{};
 		PFN_vkCmdPipelineBarrier barrier = nullptr;
 		void* vendor = nullptr;
+		std::thread::id creationThread;
 		uint64_t lastToken = 0;
 		uint64_t lastFrame = 0;
 		uint64_t lastPresentation = 0;
@@ -36,9 +49,12 @@ namespace
 	{
 		InitializationWork work;
 		void* data;
+		std::thread::id callingThread;
 		Result result{};
 		bool called = false;
+		bool started = false;
 		bool repeated = false;
+		bool wrongThread = false;
 	};
 
 	void KZGS_PROVIDER_CALL initializationWork(void* opaque)
@@ -50,6 +66,12 @@ namespace
 			return;
 		}
 		invocation.called = true;
+		if (invocation.callingThread != std::this_thread::get_id())
+		{
+			invocation.wrongThread = true;
+			return;
+		}
+		invocation.started = true;
 		try { invocation.result = invocation.work(invocation.data); }
 		catch (...)
 		{
@@ -324,6 +346,7 @@ namespace
 		try
 		{
 			context = std::make_unique<Context>();
+			context->creationThread = std::this_thread::get_id();
 			std::memcpy(&context->info, info, std::min<size_t>(info->struct_size, sizeof(context->info)));
 			context->info.struct_size = static_cast<uint32_t>(std::min<size_t>(info->struct_size, sizeof(context->info)));
 			context->barrier = reinterpret_cast<PFN_vkCmdPipelineBarrier>(
@@ -337,7 +360,8 @@ namespace
 			{
 				if (context->vendor)
 					backend().destroy(std::exchange(context->vendor, nullptr),
-						result.code == KZGS_PROVIDER_ERROR_DEVICE_LOST);
+						result.code == KZGS_PROVIDER_ERROR_DEVICE_LOST ||
+							result.code == KZGS_PROVIDER_ERROR_SYNCHRONIZATION_UNRESOLVED);
 				return report(status, result.code != KZGS_PROVIDER_OK ? result :
 					failure(KZGS_PROVIDER_ERROR_CREATE, KZGS_PROVIDER_REASON_PROVIDER_FAILURE, "SDK context is null."));
 			}
@@ -360,6 +384,12 @@ namespace
 		auto* context = static_cast<Context*>(opaque);
 		if (!context)
 			return report(status, invalid("Context is null."));
+		if (backend().requireCreationThread && context->creationThread != std::this_thread::get_id())
+		{
+			context->reset = true;
+			return report(status, failure(KZGS_PROVIDER_ERROR_EVALUATE, KZGS_PROVIDER_REASON_PROVIDER_FAILURE,
+				"SDK evaluation must run on its initialization thread."));
+		}
 		const Result checked = validateFrame(*context, frame);
 		if (checked.code != KZGS_PROVIDER_OK)
 		{
@@ -405,6 +435,17 @@ namespace
 
 namespace kzgs::vendor
 {
+	bool pinProviderModule()
+	{
+#ifdef _WIN32
+		HMODULE module = nullptr;
+		return GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN | GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+			reinterpret_cast<LPCWSTR>(&__ImageBase), &module) != FALSE;
+#else
+		return false;
+#endif
+	}
+
 	Result runInitialization(const KzgsProviderCreateInfo& info, uint32_t requiredGuarantees,
 		InitializationWork work, void* workData)
 	{
@@ -421,7 +462,7 @@ namespace kzgs::vendor
 			return failure(KZGS_PROVIDER_ERROR_CREATE, KZGS_PROVIDER_REASON_PROVIDER_FAILURE,
 				"SDK initialization callback is missing.");
 
-		InitializationInvocation invocation{work, workData};
+		InitializationInvocation invocation{work, workData, std::this_thread::get_id()};
 		KzgsProviderStatus status{sizeof(status)};
 		KzgsProviderResult hostResult = KZGS_PROVIDER_ERROR_CREATE;
 		try
@@ -430,13 +471,14 @@ namespace kzgs::vendor
 				initializationWork, &invocation, &status);
 		}
 		catch (...) {}
-		if (hostResult != KZGS_PROVIDER_OK || invocation.repeated)
+		if (hostResult != KZGS_PROVIDER_OK || invocation.repeated || invocation.wrongThread)
 		{
-			if (invocation.called)
-				return failure(KZGS_PROVIDER_ERROR_DEVICE_LOST, KZGS_PROVIDER_REASON_DEVICE_LOST,
+			if (invocation.started)
+				return failure(KZGS_PROVIDER_ERROR_SYNCHRONIZATION_UNRESOLVED, KZGS_PROVIDER_REASON_SYNCHRONIZATION,
 					"Host could not prove completion after SDK initialization; abandon device work.", status.native_code);
 			return failure(KZGS_PROVIDER_ERROR_CREATE, KZGS_PROVIDER_REASON_SYNCHRONIZATION,
-				"Host could not enter exclusive SDK initialization.", status.native_code);
+				invocation.wrongThread ? "Host invoked SDK initialization on the wrong thread." :
+					"Host could not enter exclusive SDK initialization.", status.native_code);
 		}
 		if (!invocation.called)
 			return failure(KZGS_PROVIDER_ERROR_CREATE, KZGS_PROVIDER_REASON_SYNCHRONIZATION,

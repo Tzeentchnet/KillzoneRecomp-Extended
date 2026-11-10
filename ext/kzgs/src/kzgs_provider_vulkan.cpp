@@ -144,6 +144,20 @@ namespace
 		return status;
 	}
 
+	void LatchTerminalFailure(KzgsProviderResult result)
+	{
+		if (result != KZGS_PROVIDER_ERROR_DEVICE_LOST &&
+			result != KZGS_PROVIDER_ERROR_SYNCHRONIZATION_UNRESOLVED)
+			return;
+		s.deviceLost = true;
+		s.ready = false;
+		if (result == KZGS_PROVIDER_ERROR_SYNCHRONIZATION_UNRESOLVED)
+		{
+			s.retainModule = true;
+			s_unresolvedDeviceWork = true;
+		}
+	}
+
 	void Failure(KzgsUpscalerReason reason, KzgsProviderResult result,
 		const KzgsProviderStatus* provider = nullptr, const char* message = nullptr, int32_t native = 0)
 	{
@@ -293,7 +307,7 @@ namespace
 
 	void Collect()
 	{
-		if (!s.device)
+		if (!s.device || s_unresolvedDeviceWork)
 			return;
 		const uint64_t completed = s.device->GetCompletedFenceCounter();
 		for (auto it = s.retired.begin(); it != s.retired.end();)
@@ -364,15 +378,15 @@ namespace
 		const KzgsProviderResult result = s.api.create(&info, &context->handle, &status);
 		if (result != KZGS_PROVIDER_OK || !context->handle)
 		{
-			if (result == KZGS_PROVIDER_ERROR_DEVICE_LOST)
-			{
-				s.deviceLost = true;
-				s.ready = false;
-			}
-			Failure(s.deviceLost ? KzgsUpscalerReason::DeviceLost : KzgsUpscalerReason::InitializationFailed,
+			LatchTerminalFailure(result);
+			Failure(result == KZGS_PROVIDER_ERROR_DEVICE_LOST ? KzgsUpscalerReason::DeviceLost :
+				KzgsUpscalerReason::InitializationFailed,
 				result == KZGS_PROVIDER_OK ? KZGS_PROVIDER_ERROR_CREATE : result, &status);
-			DestroyContext(context, s.deviceLost ? KZGS_PROVIDER_DESTROY_DEVICE_LOST :
-				KZGS_PROVIDER_DESTROY_COMPLETED, s.device->GetCompletedFenceCounter());
+			if (result == KZGS_PROVIDER_ERROR_SYNCHRONIZATION_UNRESOLVED)
+				context.reset(); // The host output has not been exposed to the provider.
+			else
+				DestroyContext(context, s.deviceLost ? KZGS_PROVIDER_DESTROY_DEVICE_LOST :
+					KZGS_PROVIDER_DESTROY_COMPLETED, s.device->GetCompletedFenceCounter());
 			return false;
 		}
 
@@ -381,15 +395,15 @@ namespace
 		const KzgsProviderResult resetResult = s.api.reset(context->handle, &reset, &status);
 		if (resetResult != KZGS_PROVIDER_OK)
 		{
-			if (resetResult == KZGS_PROVIDER_ERROR_DEVICE_LOST)
-			{
-				s.deviceLost = true;
-				s.ready = false;
-			}
-			Failure(s.deviceLost ? KzgsUpscalerReason::DeviceLost : KzgsUpscalerReason::ResetFailed,
+			LatchTerminalFailure(resetResult);
+			Failure(resetResult == KZGS_PROVIDER_ERROR_DEVICE_LOST ? KzgsUpscalerReason::DeviceLost :
+				KzgsUpscalerReason::ResetFailed,
 				resetResult, &status);
-			DestroyContext(context, s.deviceLost ? KZGS_PROVIDER_DESTROY_DEVICE_LOST :
-				KZGS_PROVIDER_DESTROY_COMPLETED, s.device->GetCompletedFenceCounter());
+			if (resetResult == KZGS_PROVIDER_ERROR_SYNCHRONIZATION_UNRESOLVED)
+				context.reset(); // The host output has not been exposed to the provider.
+			else
+				DestroyContext(context, s.deviceLost ? KZGS_PROVIDER_DESTROY_DEVICE_LOST :
+					KZGS_PROVIDER_DESTROY_COMPLETED, s.device->GetCompletedFenceCounter());
 			return false;
 		}
 		s.active = std::move(context);
@@ -453,11 +467,7 @@ namespace
 		if (result != KZGS_PROVIDER_OK)
 		{
 			kzgs::TemporalReset(KZGS_TEMPORAL_RESET_DISPATCH_FAILED);
-			if (result == KZGS_PROVIDER_ERROR_DEVICE_LOST)
-			{
-				s.deviceLost = true;
-				s.ready = false;
-			}
+			LatchTerminalFailure(result);
 			Failure(result == KZGS_PROVIDER_ERROR_DEVICE_LOST ? KzgsUpscalerReason::DeviceLost :
 				KzgsUpscalerReason::DispatchFailed, result, &status);
 			return false;
@@ -470,7 +480,7 @@ namespace
 		s.vsyncAttempted = true;
 		if (s.deviceLost)
 		{
-			Report(KzgsUpscalerReason::DeviceLost);
+			Report(s_unresolvedDeviceWork ? s.failure.reason : KzgsUpscalerReason::DeviceLost);
 			return false;
 		}
 		if (!s.enabled || !s.device || frame.device != s.device || !frame.texture ||
@@ -799,7 +809,15 @@ namespace kzgs
 		const bool resume = s.wantsProvider;
 		ProviderStop();
 		s.resumeAfterDevice = resume;
-		if (idleResult == VK_SUCCESS || idleResult == VK_ERROR_DEVICE_LOST)
+		if (s_unresolvedDeviceWork)
+		{
+			for (auto& context : s.retired)
+				context->output.release();
+			s.retired.clear();
+			s.retainModule = true;
+			s.resumeAfterDevice = false;
+		}
+		else if (idleResult == VK_SUCCESS || idleResult == VK_ERROR_DEVICE_LOST)
 		{
 			const auto reason = idleResult == VK_SUCCESS ? KZGS_PROVIDER_DESTROY_COMPLETED :
 				KZGS_PROVIDER_DESTROY_DEVICE_LOST;

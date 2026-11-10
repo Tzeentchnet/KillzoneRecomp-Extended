@@ -209,6 +209,9 @@ static KzgsProviderResult KZGS_PROVIDER_CALL create_context(
 	context->queue = info->queue;
 	context->queue_family = info->queue_family;
 	*out = context;
+	if (mode & MOCK_CREATE_UNRESOLVED_SYNC)
+		return result(status, KZGS_PROVIDER_ERROR_SYNCHRONIZATION_UNRESOLVED,
+			KZGS_PROVIDER_REASON_SYNCHRONIZATION, -72, "mock unresolved initialization");
 	if (mode & MOCK_CREATE_DEVICE_LOST)
 		return result(status, KZGS_PROVIDER_ERROR_DEVICE_LOST, KZGS_PROVIDER_REASON_DEVICE_LOST, -4, "mock create device loss");
 	if (!context->blit || (mode & MOCK_CREATE_FAILURE))
@@ -299,6 +302,9 @@ static KzgsProviderResult KZGS_PROVIDER_CALL reset(
 	if (context->last_token > info->completed_token)
 		stats.unsafe_destroys++;
 	stats.last_reset_reason = info->reason;
+	if (mode & MOCK_RESET_UNRESOLVED_SYNC)
+		return result(status, KZGS_PROVIDER_ERROR_SYNCHRONIZATION_UNRESOLVED,
+			KZGS_PROVIDER_REASON_SYNCHRONIZATION, -73, "mock unresolved reset");
 	if (mode & MOCK_RESET_DEVICE_LOST)
 		return result(status, KZGS_PROVIDER_ERROR_DEVICE_LOST, KZGS_PROVIDER_REASON_DEVICE_LOST, -4, "mock reset device loss");
 	if (mode & MOCK_RESET_FAILURE)
@@ -334,6 +340,8 @@ KZGS_PROVIDER_EXPORT KzgsProviderResult KZGS_PROVIDER_CALL kzgs_upscaler_get_api
 	api.abi_version = KZGS_PROVIDER_VERSION(1,
 		KZGS_PROVIDER_VERSION_MINOR(requested_version) < KZGS_PROVIDER_VERSION_MINOR(KZGS_PROVIDER_ABI_VERSION) ?
 			KZGS_PROVIDER_VERSION_MINOR(requested_version) : KZGS_PROVIDER_VERSION_MINOR(KZGS_PROVIDER_ABI_VERSION));
+	if (mode & MOCK_ABI_1_0)
+		api.abi_version = KZGS_PROVIDER_VERSION(1, 0);
 	api.query_info = query_info;
 	api.instance_requirements = instance_requirements;
 	api.device_requirements = device_requirements;

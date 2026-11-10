@@ -136,7 +136,19 @@ function(kzgs_add_vendor_providers)
 					auto volatile b = &xessVKGetRequiredInstanceExtensions;
 					auto volatile c = &xessVKGetRequiredDeviceExtensions;
 					auto volatile d = &xessVKGetRequiredDeviceFeatures;
-					return !(a && b && c && d);
+					auto volatile e = &xessVKCreateContext;
+					auto volatile f = &xessGetOptimalInputResolution;
+					auto volatile g = &xessVKInit;
+					auto volatile h = &xessSetJitterScale;
+					auto volatile i = &xessSetVelocityScale;
+					auto volatile j = &xessVKExecute;
+					auto volatile k = &xessDestroyContext;
+					xess_vk_init_params_t init{};
+					xess_vk_execute_params_t execute{};
+					init.initFlags = XESS_INIT_FLAG_INVERTED_DEPTH;
+					execute.inputDepthBase.x = execute.inputMotionVectorBase.y = 0;
+					execute.exposureScale = 1.0f;
+					return !(a && b && c && d && e && f && g && h && i && j && k);
 				}
 			]=])
 			set(source "${KZGS_PROVIDER_SOURCE_DIR}/kzgs_vendor_xess.cpp")
@@ -150,12 +162,7 @@ function(kzgs_add_vendor_providers)
 		endif()
 		_kzgs_vendor_link_probe("${vendor}" "${include_dir}" "${library}" "${probe}")
 		_kzgs_vendor_provenance("${vendor}" "${root}" "${KZGS_${vendor}_SDK_VERSION}" "${library}" ${headers})
-		if(vendor STREQUAL "XESS")
-			message(WARNING "XeSS is negotiation-only: context initialization is blocked by provider ABI 1.0; "
-				"see docs/vendor-upscalers.md.")
-		else()
-			message(STATUS "DLSS is experimental; SDK, GPU, and ABI synchronization are not yet qualified.")
-		endif()
+		message(STATUS "${vendor} is experimental; real SDK, GPU, and synchronization are not yet qualified.")
 
 		# Deliberately absent from ALL, kzgs, install rules, and ordinary release staging.
 		add_library(${target} MODULE EXCLUDE_FROM_ALL

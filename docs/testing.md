@@ -73,15 +73,15 @@ The SDK-free provider ABI and Vulkan lifecycle test is built and run with:
 ```powershell
 .\tools\scripts\cmake_preset.ps1 -Preset win-msvc-tests -Action build -Target kzgs_provider_test
 .\tools\scripts\cmake_preset.ps1 -Preset win-msvc-tests -Action build -Target kzgs_test
-ctest --test-dir .\build\win-msvc-rel -R '^kzgs_provider_(vulkan|present|idle_error)_validation$' --output-on-failure
+ctest --test-dir .\build\win-msvc-rel -R '^kzgs_provider_(vulkan|present|idle_error|init_error)_validation$' --output-on-failure
 ```
 
 Its test-only C DLL checks sized API buffers, version and extension/feature negotiation, absent providers, missing
 temporal inputs, create/reset/dispatch failures, real Vulkan blits, redraws, resize, failed presents, device loss,
 actual fence retirement, and DLL unloading. The direct Vulkan-vector test enables synchronization validation; the
 synthetic GS presentation test uses standard validation, and checks real renderer dispatch, idle VSync/redraw,
-fallback, capture, resize, reset, and device recreation. A separate process tests retention and fail-closed behavior
-when device idle cannot prove completion. The DLL does not implement a vendor upscaler and is not staged with production
+fallback, capture, resize, reset, and device recreation. Separate processes test retention and fail-closed behavior
+when device idle, SDK initialization, or reset cannot prove completion. The DLL does not implement a vendor upscaler and is not staged with production
 binaries.
 
 Temporal qualification and metadata-only GS observation are covered by:
@@ -110,16 +110,17 @@ the restrictions on private gameplay captures are recorded in [the qualification
 SDK-free vendor-adapter checks use independently authored test doubles and do not load a vendor SDK or require a GPU:
 
 ```powershell
-.\tools\scripts\vsenv.bat cmake --build .\build\win-msvc-rel --target kzgs_vendor_conventions_test kzgs_vendor_shim_test kzgs_dlss_adapter_test kzgs_xess_requirements_test kzgs_vendor_config_stub kzgs_vendor_config_partial_stub
+.\tools\scripts\vsenv.bat cmake --build .\build\win-msvc-rel --target kzgs_vendor_conventions_test kzgs_vendor_shim_test kzgs_dlss_adapter_test kzgs_xess_requirements_test kzgs_vendor_config_stub kzgs_vendor_config_partial_stub kzgs_vendor_config_negotiation_stub
 .\tools\scripts\vsenv.bat ctest --test-dir .\build\win-msvc-rel -R kzgs_vendor_configuration --output-on-failure
 ctest --test-dir .\build\win-msvc-rel -R 'kzgs_vendor_conventions|kzgs_vendor_shim|kzgs_dlss_adapter|kzgs_xess_requirements' --output-on-failure
 ```
 
 They cover 1.0/1.1 sized buffers and initialization failures, SDK-free motion/jitter/depth conversion vectors,
 missing/invalid temporal data, explicit conventions, reset/lifetime and failure handling,
-XeSS requirements, and configure tests for disabled/invalid/partial SDKs, unsupported targets, missing library symbols,
-exclusion from default builds, and explicit isolated DLL targets. The successful fake-SDK build does not constitute a real SDK build or
-runtime qualification. XeSS initialization remains blocked; see [vendor SDK adapters](vendor-upscalers.md).
+XeSS requirements, initialization and evaluation, and configure tests for disabled/invalid/partial SDKs, unsupported
+targets, missing lifecycle symbols, independent vendor targets, exclusion from default builds, and explicit isolated
+DLL targets. The successful fake-SDK build does not constitute a real SDK build or runtime qualification.
+The current host does not provide the initialization scope; see [vendor SDK adapters](vendor-upscalers.md).
 
 The CPU vectors check AMD constants and dispatch planning. The GPU-vector test enables synchronization validation,
 compares EASU with an independently compiled AMD native-gather reference and odd cropped rectangles with tightly

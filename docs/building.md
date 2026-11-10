@@ -104,7 +104,7 @@ cmake --preset win-clang-rel
 cmake --build --preset win-clang-rel
 ```
 
-Experimental default-OFF local DLSS/XeSS SDK targets, their current blockers, and license/provenance requirements
+Experimental default-OFF local DLSS/XeSS SDK targets, their qualification limits, and license/provenance requirements
 are described in [Local Vulkan vendor SDK adapters](vendor-upscalers.md). They are not part of ordinary builds.
 
 Configuration verifies locked dependencies, the compiler, Ninja, and the private generated source tree before

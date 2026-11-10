@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <thread>
 #include <type_traits>
 
 namespace
@@ -102,6 +103,12 @@ namespace
 			status->native_code = -12;
 			return KZGS_PROVIDER_ERROR_CREATE;
 		}
+		if (hostMode == 5)
+		{
+			std::thread wrongThread([&] { work(workData); });
+			wrongThread.join();
+			return KZGS_PROVIDER_OK;
+		}
 		if (hostMode != 2)
 			work(workData);
 		if (hostMode == 3)
@@ -139,7 +146,7 @@ namespace
 
 	const kzgs::vendor::Backend fakeBackend{
 		KZGS_PROVIDER_KIND_DLSS, "test double (not an SDK)", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-		instanceRequirements, deviceRequirements, create, evaluate, destroy};
+		instanceRequirements, deviceRequirements, create, evaluate, destroy, false};
 
 	KzgsProviderImage image(uintptr_t number, VkFormat format, VkExtent2D extent,
 		VkImageAspectFlags aspect, VkImageUsageFlags usage)
@@ -259,10 +266,15 @@ int main()
 	CHECK(initResult.code == KZGS_PROVIDER_OK && initializationCalls == 2);
 	hostMode = 3;
 	initResult = kzgs::vendor::runInitialization(createInfo, qualification, initialize, nullptr);
-	CHECK(initResult.code == KZGS_PROVIDER_ERROR_DEVICE_LOST && initResult.native == -13 && initializationCalls == 3);
+	CHECK(initResult.code == KZGS_PROVIDER_ERROR_SYNCHRONIZATION_UNRESOLVED &&
+		initResult.reason == KZGS_PROVIDER_REASON_SYNCHRONIZATION && initResult.native == -13 && initializationCalls == 3);
 	hostMode = 4;
 	initResult = kzgs::vendor::runInitialization(createInfo, qualification, initialize, nullptr);
-	CHECK(initResult.code == KZGS_PROVIDER_ERROR_DEVICE_LOST && initializationCalls == 4);
+	CHECK(initResult.code == KZGS_PROVIDER_ERROR_SYNCHRONIZATION_UNRESOLVED && initializationCalls == 4);
+	hostMode = 5;
+	initResult = kzgs::vendor::runInitialization(createInfo, qualification, initialize, nullptr);
+	CHECK(initResult.code == KZGS_PROVIDER_ERROR_CREATE &&
+		initResult.reason == KZGS_PROVIDER_REASON_SYNCHRONIZATION && initializationCalls == 4);
 	hostMode = 0;
 	createInfo.initialization = nullptr;
 	CHECK(api.create(&createInfo, &context, &status) == KZGS_PROVIDER_OK && context);

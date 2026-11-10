@@ -222,6 +222,9 @@ namespace
 	Result initialize(void* opaque)
 	{
 		auto& value = *static_cast<DlssContext*>(opaque);
+		if (!pinProviderModule())
+			return failure(KZGS_PROVIDER_ERROR_CREATE, KZGS_PROVIDER_REASON_PROVIDER_FAILURE,
+				"Could not retain the DLSS provider module for safe SDK abandonment.");
 		Result result = acquire(value);
 		if (result.code != KZGS_PROVIDER_OK)
 			return result;
@@ -360,7 +363,7 @@ namespace
 	}
 
 	const Backend DlssBackend{KZGS_PROVIDER_KIND_DLSS, "NVIDIA DLSS (local SDK)", VK_IMAGE_LAYOUT_GENERAL,
-		instanceRequirements, deviceRequirements, create, evaluate, destroy};
+		instanceRequirements, deviceRequirements, create, evaluate, destroy, false};
 }
 
 namespace kzgs::vendor { const Backend& backend() { return DlssBackend; } }

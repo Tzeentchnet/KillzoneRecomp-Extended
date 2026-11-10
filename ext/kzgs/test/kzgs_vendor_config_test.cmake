@@ -1,6 +1,7 @@
 # Build-configuration tests: all SDK contents created here are disposable test doubles.
 # SPDX-License-Identifier: GPL-3.0+
-if(NOT KZGS_SOURCE OR NOT KZGS_TEST_WORK OR NOT KZGS_FAKE_LIBRARY OR NOT KZGS_PARTIAL_LIBRARY OR NOT KZGS_GENERATOR)
+if(NOT KZGS_SOURCE OR NOT KZGS_TEST_WORK OR NOT KZGS_FAKE_LIBRARY OR NOT KZGS_PARTIAL_LIBRARY OR
+	NOT KZGS_NEGOTIATION_LIBRARY OR NOT KZGS_GENERATOR)
 	message(FATAL_ERROR "Vendor configuration test paths are missing.")
 endif()
 if(EXISTS "${KZGS_TEST_WORK}")
@@ -74,6 +75,7 @@ file(WRITE "${dlss}/include/nvsdk_ngx_defs.h" "#define NVSDK_NGX_VERSION_API_MAC
 file(WRITE "${dlss}/include/nvsdk_ngx_vk.h" "#include <nvsdk_ngx_helpers.h>\n")
 file(COPY_FILE "${KZGS_SOURCE}/ext/kzgs/test/vendor_doubles/nvsdk_ngx_helpers.h" "${dlss}/include/nvsdk_ngx_helpers.h")
 file(COPY_FILE "${KZGS_SOURCE}/ext/kzgs/test/vendor_doubles/nvsdk_ngx_helpers_vk.h" "${dlss}/include/nvsdk_ngx_helpers_vk.h")
+file(COPY_FILE "${KZGS_SOURCE}/ext/kzgs/test/vendor_doubles/xess/xess.h" "${xess}/inc/xess/xess.h")
 file(COPY_FILE "${KZGS_SOURCE}/ext/kzgs/test/vendor_doubles/xess/xess_vk.h" "${xess}/inc/xess/xess_vk.h")
 file(COPY_FILE "${KZGS_PARTIAL_LIBRARY}" "${dlss}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib")
 run_case(DLSS_missing_symbols FALSE "compile/link probe"
@@ -81,6 +83,10 @@ run_case(DLSS_missing_symbols FALSE "compile/link probe"
 	"-DKZGS_DLSS_SDK_VERSION=test-double")
 file(COPY_FILE "${KZGS_PARTIAL_LIBRARY}" "${xess}/lib/libxess.lib")
 run_case(XESS_missing_symbols FALSE "compile/link probe"
+	"-DKZGS_LINK_PROBE_CASE=ON" "-DKZGS_BUILD_XESS_PROVIDER=ON" "-DKZGS_XESS_SDK_DIR=${xess}"
+	"-DKZGS_XESS_SDK_VERSION=test-double")
+file(COPY_FILE "${KZGS_NEGOTIATION_LIBRARY}" "${xess}/lib/libxess.lib")
+run_case(XESS_missing_lifecycle_symbols FALSE "compile/link probe"
 	"-DKZGS_LINK_PROBE_CASE=ON" "-DKZGS_BUILD_XESS_PROVIDER=ON" "-DKZGS_XESS_SDK_DIR=${xess}"
 	"-DKZGS_XESS_SDK_VERSION=test-double")
 file(WRITE "${dlss}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib" "This is intentionally not an x64 library.\n")
@@ -93,6 +99,19 @@ run_case(XESS_invalid_library FALSE "compile/link probe"
 	"-DKZGS_LINK_PROBE_CASE=ON" "-DKZGS_BUILD_XESS_PROVIDER=ON" "-DKZGS_XESS_SDK_DIR=${xess}"
 	"-DKZGS_XESS_SDK_VERSION=test-double")
 file(COPY_FILE "${KZGS_FAKE_LIBRARY}" "${xess}/lib/libxess.lib")
+foreach(vendor IN ITEMS DLSS XESS)
+	string(TOLOWER "${vendor}" vendor_lower)
+	run_case("fake_${vendor_lower}_only" TRUE "declared release='test-double'"
+		"-DKZGS_FAKE_COMPLETE_CASE=ON" "-DKZGS_BUILD_${vendor}_PROVIDER=ON"
+		"-DKZGS_${vendor}_SDK_DIR=${${vendor_lower}}" "-DKZGS_${vendor}_SDK_VERSION=test-double")
+	execute_process(COMMAND "${CMAKE_COMMAND}" --build "${KZGS_TEST_WORK}/fake_${vendor_lower}_only"
+		--target "kzgs_upscaler_${vendor_lower}"
+		RESULT_VARIABLE build_result OUTPUT_VARIABLE build_output ERROR_VARIABLE build_error)
+	if(NOT build_result EQUAL 0)
+		message(FATAL_ERROR "Independent ${vendor} test-double target failed:\n${build_output}\n${build_error}")
+	endif()
+	message(STATUS "fake_${vendor_lower}_independent_target: PASS (test double only)")
+endforeach()
 run_case(fake_complete TRUE "declared release='test-double'"
 	"-DKZGS_FAKE_COMPLETE_CASE=ON" "-DKZGS_BUILD_DLSS_PROVIDER=ON" "-DKZGS_BUILD_XESS_PROVIDER=ON"
 	"-DKZGS_DLSS_SDK_DIR=${dlss}" "-DKZGS_XESS_SDK_DIR=${xess}"

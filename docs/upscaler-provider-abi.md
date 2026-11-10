@@ -47,11 +47,15 @@ restart); switching off and back to the provider already negotiated for that dev
   functions, image formats, extents, crop, encoding, and sharpening. ABI 1.0 permits allocation but forbids GPU
   submission and recording in `create`. ABI 1.1 optionally provides the strictly scoped initialization contract
   below; without it the 1.0 prohibition still applies. If `create` returns an error with a non-null context, the host
-  destroys that context. `reset` is called on a fresh context before its first evaluation with the reason for the discontinuity.
+  destroys that context except when completion is unresolved, in which case it abandons the context.
+  `reset` is called on a fresh context before its first evaluation with the reason for the discontinuity.
   `evaluate` records commands; `destroy` releases provider-owned resources.
 - The result code is authoritative. `KzgsProviderStatus` supplies a structured reason, native error code, and
   optional message; the host also reports a stable fallback reason through `kzgsGetUpscalerStatus`. Never throw C++
   exceptions across this boundary.
+- The host serializes callbacks for a provider. The optional XeSS adapter additionally requires SDK calls on its
+  initialization thread; it rejects wrong-thread evaluation before recording and abandons a context rather than
+  calling SDK destruction on an unsafe thread.
 
 ### ABI 1.1 initialization scope
 
@@ -73,11 +77,14 @@ The optional `run_exclusive` host callback is used **only synchronously during c
    releasing the exclusive scope. Return `KZGS_PROVIDER_OK` only when these host guarantees hold and the work
    function ran once; the provider reports the work's separate result. Report failures with structured status.
 
+The local SDK shim rejects a work callback on another thread before invoking any vendor code.
+
 If the host fails after invoking work, the provider treats completion as unproven and returns
-`KZGS_PROVIDER_ERROR_DEVICE_LOST` so the host abandons, rather than destroys or reuses, potentially in-flight SDK
-resources. This result can mean *unverifiable completion*, not necessarily a diagnosed hardware loss. A host must
-not advertise the scope merely because it has called an unchecked idle-wait function. Any missing, undersized, or
-failed scope fails closed; 1.0 hosts cannot initiate queue-submitting SDK initialization.
+`KZGS_PROVIDER_ERROR_SYNCHRONIZATION_UNRESOLVED`. The host disables providers for the process, abandons rather than
+reuses or destroys potentially in-flight SDK resources, and retains the provider module even if a later device-idle
+wait succeeds. This result is distinct from diagnosed device loss. A host must not advertise the scope merely
+because it has called an unchecked idle-wait function. Any missing, undersized, or failed scope fails closed; 1.0
+hosts cannot initiate queue-submitting SDK initialization.
 
 The flags also require explicit qualification of the exact SDK/runtime, device and driver for its execution and
 synchronization behavior. NGX additionally requires qualification of the adapter's `GENERAL` input/output layout,
@@ -143,8 +150,9 @@ Providers must own/copy any history; retaining a source image for a later frame 
 `VkFence` and not necessarily submitted yet. `completed_token` is the highest counter known complete. A provider
 must keep its own per-dispatch resources until their tokens complete. The host retains retired contexts and output
 images until `GetCompletedFenceCounter() >= last use`; it never uses a fixed frame delay. On normal teardown it
-submits outstanding work and requires a successful `vkDeviceWaitIdle` before destroying contexts, then unloads the
-DLL only after device teardown. `VK_ERROR_DEVICE_LOST` is reported separately as terminal loss, not as successful
+submits outstanding work and requires a successful `vkDeviceWaitIdle` before destroying contexts, then releases its
+DLL reference only after device teardown. The local SDK adapters pin their modules for process lifetime before SDK
+initialization to make later abandonment safe. `VK_ERROR_DEVICE_LOST` is reported separately as terminal loss, not as successful
 completion; providers must abandon lost-device work without waiting or submitting. For another idle-wait error the
 host retains the DLL, abandons affected objects, and disables providers for the rest of the process instead of
 pretending the GPU completed. A provider-reported device loss latches fallback until a new Vulkan device has been
@@ -171,6 +179,6 @@ The in-tree `kzgs_mock_provider` is a test-only C DLL which uses a Vulkan blit; 
 not staged with the game. It exercises negotiation, sized buffers, real command recording and fences, failures,
 redraw/reset/resize/device-loss handling, safe fallback, and unload under Vulkan validation.
 
-The optional DLSS adapter has only been exercised with a fake SDK, not a real vendor runtime or GPU. The optional
-XeSS source negotiates requirements but deliberately rejects context creation because its SDK initialization may
-submit work forbidden by ABI 1.0. Neither is currently usable with the renderer's color-only inputs.
+Both optional adapters have only been exercised with fake SDKs, not real vendor headers, runtimes or GPUs. Their
+conditional initialization paths require the ABI 1.1 exclusive scope and explicit qualification; 1.0 hosts and the
+current host do not provide it. Neither is currently usable with the renderer's color-only inputs.

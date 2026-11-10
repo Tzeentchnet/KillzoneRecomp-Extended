@@ -23,6 +23,7 @@ namespace kzgs::vendor
 
 	using InitializationWork = Result (*)(void*);
 
+	bool pinProviderModule();
 	Result runInitialization(const KzgsProviderCreateInfo& info, uint32_t requiredGuarantees,
 		InitializationWork work, void* workData);
 
@@ -69,6 +70,7 @@ namespace kzgs::vendor
 		Result (*create)(const KzgsProviderCreateInfo&, void**);
 		Result (*evaluate)(void*, const KzgsProviderFrame&, bool reset);
 		void (*destroy)(void*, bool deviceLost);
+		bool requireCreationThread;
 	};
 
 	// Each independent provider DLL defines exactly one backend.

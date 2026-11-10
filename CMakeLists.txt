@@ -402,6 +402,7 @@ if(BUILD_TESTING)
             "-DKZGS_TEST_WORK=${CMAKE_BINARY_DIR}/kzgs-vendor-config-tests"
             "-DKZGS_FAKE_LIBRARY=$<TARGET_FILE:kzgs_vendor_config_stub>"
             "-DKZGS_PARTIAL_LIBRARY=$<TARGET_FILE:kzgs_vendor_config_partial_stub>"
+            "-DKZGS_NEGOTIATION_LIBRARY=$<TARGET_FILE:kzgs_vendor_config_negotiation_stub>"
             "-DKZGS_GENERATOR=${CMAKE_GENERATOR}" "-DKZGS_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
             "-DKZGS_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
             -P "${CMAKE_SOURCE_DIR}/ext/kzgs/test/kzgs_vendor_config_test.cmake")
@@ -416,6 +417,18 @@ if(BUILD_TESTING)
     kz_add_iso_free_test(kzgs_provider_idle_error_validation kzgs_provider_test
         "$<TARGET_FILE:kzgs_mock_provider>" --uncertain-idle)
     set_tests_properties(kzgs_provider_idle_error_validation PROPERTIES
+        LABELS "iso-free;renderer;vulkan-validation"
+        RESOURCE_LOCK kzgs_gpu
+        FAIL_REGULAR_EXPRESSION "Validation Error;SYNC-HAZARD")
+    kz_add_iso_free_test(kzgs_provider_init_error_validation kzgs_provider_test
+        "$<TARGET_FILE:kzgs_mock_provider>" --uncertain-init)
+    set_tests_properties(kzgs_provider_init_error_validation PROPERTIES
+        LABELS "iso-free;renderer;vulkan-validation"
+        RESOURCE_LOCK kzgs_gpu
+        FAIL_REGULAR_EXPRESSION "Validation Error;SYNC-HAZARD")
+    kz_add_iso_free_test(kzgs_provider_reset_error_validation kzgs_provider_test
+        "$<TARGET_FILE:kzgs_mock_provider>" --uncertain-reset)
+    set_tests_properties(kzgs_provider_reset_error_validation PROPERTIES
         LABELS "iso-free;renderer;vulkan-validation"
         RESOURCE_LOCK kzgs_gpu
         FAIL_REGULAR_EXPRESSION "Validation Error;SYNC-HAZARD")
