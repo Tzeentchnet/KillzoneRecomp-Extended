@@ -53,7 +53,12 @@ preserved, and saves retain the disc path and all bindings. A build refuses to o
 
 ### Experimental presentation upscaler
 
-These experimental settings have no launcher controls:
+The launcher's **Graphics** tab exposes Off/FSR 1 selection and FSR 1 sharpening. Its **FSR 1 quality** preset selects
+Vulkan, 3x internal rendering, FSR 1 with 15% RCAS, PS2 mip transitions, 16x anisotropy, and disables the separate
+CAS and AA passes. This is the recommended starting point for 1440p output. DLSS and XeSS remain visible as
+unavailable when loaded from an existing config and cannot be selected in the launcher.
+
+The same settings can be edited directly:
 
 ```ini
 [Graphics]

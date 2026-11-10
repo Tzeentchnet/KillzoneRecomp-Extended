@@ -111,6 +111,8 @@ namespace
         cfg.renderer = KzRenderer::D3D12;
         cfg.vsync = true;
         cfg.upscale = 0;
+        cfg.upscaler = KzgsUpscaler::Off;
+        cfg.upscalerSharpening = 0;
         cfg.aspect = KzAspect::Widescreen16x9;
         cfg.anisotropy = 16;
         cfg.mipmapMode = KzMipmapMode::HighestDetail;
@@ -126,6 +128,21 @@ namespace
         cfg.lensBlur = false;
         cfg.renderDistance = 2.0f;
         cfg.lodScale = 1.0f;
+    }
+
+    void applyFsr1QualityGraphicsPreset(KzConfig &cfg)
+    {
+        cfg.renderer = KzRenderer::Vulkan;
+        cfg.upscale = 3;
+        cfg.upscaler = KzgsUpscaler::FSR1;
+        cfg.upscalerSharpening = 15;
+        cfg.anisotropy = 16;
+        cfg.mipmapMode = KzMipmapMode::PS2;
+        cfg.fxaa = false;
+        cfg.smaa = false;
+        cfg.bilinear = true;
+        cfg.sharpScaling = true;
+        cfg.sharpen = 0;
     }
 
     void onFileChosen(void *userdata, const char *const *files, int)
@@ -154,6 +171,40 @@ namespace
                     value = v;
                     changed = true;
                 }
+            ImGui::EndCombo();
+        }
+        return changed;
+    }
+
+    bool upscalerCombo(KzgsUpscaler &value)
+    {
+        const char *current = "Off";
+        switch (value)
+        {
+        case KzgsUpscaler::Off: current = "Off"; break;
+        case KzgsUpscaler::FSR1: current = "AMD FSR 1"; break;
+        case KzgsUpscaler::DLSS: current = "NVIDIA DLSS (unavailable)"; break;
+        case KzgsUpscaler::XeSS: current = "Intel XeSS (unavailable)"; break;
+        }
+
+        bool changed = false;
+        if (ImGui::BeginCombo("##presentation-upscaler", current))
+        {
+            if (ImGui::Selectable("Off", value == KzgsUpscaler::Off))
+            {
+                value = KzgsUpscaler::Off;
+                changed = true;
+            }
+            if (ImGui::Selectable("AMD FSR 1 (Vulkan)", value == KzgsUpscaler::FSR1))
+            {
+                value = KzgsUpscaler::FSR1;
+                changed = true;
+            }
+            ImGui::Separator();
+            ImGui::BeginDisabled();
+            ImGui::Selectable("NVIDIA DLSS (unavailable)", value == KzgsUpscaler::DLSS);
+            ImGui::Selectable("Intel XeSS (unavailable)", value == KzgsUpscaler::XeSS);
+            ImGui::EndDisabled();
             ImGui::EndCombo();
         }
         return changed;
@@ -354,10 +405,18 @@ namespace
                                           "base-mip detail, replacement textures off, clean PS2 effects,\n"
                                           "2x view distance and 30%% sharpening.");
                     ImGui::SameLine();
+                    if (ImGui::Button("FSR 1 quality"))
+                        applyFsr1QualityGraphicsPreset(cfg);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Vulkan, 3x internal rendering, FSR 1 with 15%% RCAS,\n"
+                                          "PS2 mip transitions, 16x anisotropy and no additional CAS or AA.\n"
+                                          "Designed for 1440p output.");
+                    ImGui::SameLine();
                     if (ImGui::Button("Sharp and clean"))
                     {
                         cfg.fxaa = false; cfg.smaa = true; cfg.sharpScaling = true; cfg.bilinear = true; cfg.anisotropy = 16;
                         cfg.noiseFilter = false; cfg.motionBlur = false; cfg.glow = false; cfg.lensBlur = false; cfg.sharpen = 30;
+                        cfg.upscaler = KzgsUpscaler::Off; cfg.upscalerSharpening = 0;
                     }
                     ImGui::SameLine();
                     if (ImGui::Button("Original PS2 look"))
@@ -366,6 +425,7 @@ namespace
                         cfg.mipmapMode = KzMipmapMode::PS2;
                         cfg.noiseFilter = true; cfg.motionBlur = true; cfg.glow = true; cfg.lensBlur = true;
                         cfg.renderDistance = 1.0f; cfg.lodScale = 1.0f; cfg.sharpen = 0; cfg.fov = 0.0f; cfg.weaponFov = 0.0f;
+                        cfg.upscaler = KzgsUpscaler::Off; cfg.upscalerSharpening = 0;
                     }
 
                     section("Output");
@@ -375,8 +435,9 @@ namespace
                         enumCombo<KzRenderer>("##renderer", cfg.renderer,
                                               {{KzRenderer::D3D11, "Direct3D 11"}, {KzRenderer::D3D12, "Direct3D 12"}, {KzRenderer::Vulkan, "Vulkan"}});
                         row("Internal render scale", "Integer GS render scale. Auto chooses the smallest whole scale that covers the output height.");
-                        const char *scales[] = {"Auto (from output height)", "1x (native GS)", "2x", "3x (about 1080p)", "4x (about 1440p)",
-                                                "5x", "6x (about 4K)", "7x", "8x"};
+                        const char *scales[] = {"Auto (from output height)", "1x (448p target)", "2x (896p target)",
+                                                "3x (1344p target)", "4x (1792p target)", "5x (2240p target)",
+                                                "6x (2688p target)", "7x (3136p target)", "8x (3584p target)"};
                         ImGui::Combo("##upscale", &cfg.upscale, scales, IM_ARRAYSIZE(scales));
                         row("Aspect ratio",
                             "16:9 uses the game's native widescreen FOV and HUD. Ultrawide shows more at the sides while "
@@ -393,6 +454,36 @@ namespace
                         const char *scalings[] = {"Sharp (crisp pixels)", "Smooth (softer)"};
                         if (ImGui::Combo("##scaling", &scaling, scalings, 2))
                             cfg.sharpScaling = scaling == 0;
+                        ImGui::EndTable();
+                    }
+
+                    section("Presentation upscaling");
+                    if (beginRows("presentation-upscaling"))
+                    {
+                        row("Presentation upscaler",
+                            "FSR 1 is available only on Vulkan. At 1440p, 3x internal rendering keeps FSR active "
+                            "while reducing aliasing. DLSS and XeSS remain unavailable.");
+                        upscalerCombo(cfg.upscaler);
+
+                        row("Availability",
+                            "The runtime confirms the effective provider after the first presented frame and falls "
+                            "back safely if its requirements are not met.");
+                        if (cfg.upscaler == KzgsUpscaler::FSR1 && cfg.renderer == KzRenderer::Vulkan)
+                            ImGui::TextColored(ImVec4(0.45f, 0.80f, 0.45f, 1.0f), "Ready (verified at game start)");
+                        else if (cfg.upscaler == KzgsUpscaler::FSR1)
+                            ImGui::TextColored(ImVec4(0.90f, 0.45f, 0.35f, 1.0f), "Select Vulkan to enable FSR 1");
+                        else if (cfg.upscaler == KzgsUpscaler::DLSS || cfg.upscaler == KzgsUpscaler::XeSS)
+                            ImGui::TextColored(ImVec4(0.90f, 0.45f, 0.35f, 1.0f), "Selected provider is unavailable");
+                        else
+                            ImGui::TextDisabled("Off");
+
+                        row("FSR 1 sharpening",
+                            "RCAS sharpening applied by FSR 1. Start around 15%%. The separate Sharpening control "
+                            "below applies another CAS pass, so leave it off unless intentionally stacking both.");
+                        ImGui::BeginDisabled(cfg.upscaler != KzgsUpscaler::FSR1);
+                        ImGui::SliderInt("##fsr-sharpening", &cfg.upscalerSharpening, 0, 100,
+                                         cfg.upscalerSharpening == 0 ? "Off" : "%d%%");
+                        ImGui::EndDisabled();
                         ImGui::EndTable();
                     }
 
@@ -772,6 +863,8 @@ int kzLauncherSelfTest()
     cfg.renderer = KzRenderer::Vulkan;
     cfg.vsync = false;
     cfg.upscale = 8;
+    cfg.upscaler = KzgsUpscaler::FSR1;
+    cfg.upscalerSharpening = 77;
     cfg.aspect = KzAspect::Classic4x3;
     cfg.anisotropy = 0;
     cfg.mipmapMode = KzMipmapMode::PS2;
@@ -792,6 +885,7 @@ int kzLauncherSelfTest()
 
     applyValidatedGraphicsPreset(cfg);
     check(cfg.renderer == KzRenderer::D3D12 && cfg.vsync && cfg.upscale == 0 &&
+              cfg.upscaler == KzgsUpscaler::Off && cfg.upscalerSharpening == 0 &&
               cfg.aspect == KzAspect::Widescreen16x9,
           "validated preset output contract");
     check(cfg.anisotropy == 16 && cfg.mipmapMode == KzMipmapMode::HighestDetail &&
@@ -805,5 +899,19 @@ int kzLauncherSelfTest()
           "validated preset detail bounds");
     check(cfg.masterVolume == 37 && cfg.startLevel == 7,
           "validated preset preserves unrelated settings");
+
+    cfg.aspect = KzAspect::Classic4x3;
+    cfg.renderDistance = 1.5f;
+    applyFsr1QualityGraphicsPreset(cfg);
+    check(cfg.renderer == KzRenderer::Vulkan && cfg.upscale == 3 &&
+              cfg.upscaler == KzgsUpscaler::FSR1 && cfg.upscalerSharpening == 15,
+          "FSR 1 quality preset output contract");
+    check(cfg.anisotropy == 16 && cfg.mipmapMode == KzMipmapMode::PS2 && cfg.bilinear,
+          "FSR 1 quality preset texture controls");
+    check(!cfg.fxaa && !cfg.smaa && cfg.sharpScaling && cfg.sharpen == 0,
+          "FSR 1 quality preset presentation controls");
+    check(cfg.aspect == KzAspect::Classic4x3 && cfg.renderDistance == 1.5f &&
+              cfg.masterVolume == 37 && cfg.startLevel == 7,
+          "FSR 1 quality preset preserves unrelated settings");
     return failures;
 }
