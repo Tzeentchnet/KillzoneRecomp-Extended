@@ -25,8 +25,19 @@ namespace kzgs
 		uint32_t requestedWidth, uint32_t requestedHeight);
 
 #ifdef KZGS_FSR1_TESTING
+	struct Fsr1TestLifetimeCounts
+	{
+		uint64_t destroyed = 0;
+		uint64_t abandoned = 0;
+		uint64_t deviceLost = 0;
+	};
 	void Fsr1TestFailNextInitialization();
 	uint64_t Fsr1TestDispatchCount();
+	bool Fsr1TestLastSourceViewport(int& width, int& height);
+	Fsr1TestLifetimeCounts Fsr1TestLifetime();
+	bool Fsr1TestRetireResources(int32_t idleResult);
+	bool Fsr1TestReleaseRetainedAfterIdle();
+	void Fsr1TestAbandonRetained();
 	bool Fsr1TestUseNativeGather(bool enabled);
 	bool Fsr1TestUpscale(GSTexture* source, int left, int top, int right, int bottom,
 		int outputWidth, int outputHeight, int sharpening, GSTexture*& output);

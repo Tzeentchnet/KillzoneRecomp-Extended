@@ -4,6 +4,7 @@
 #include "kzgs_internal.h"
 
 #include "GS/Renderers/Common/GSDevice.h"
+#include "GS/Renderers/Vulkan/GSDeviceVK.h"
 #include "common/StringUtil.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -179,6 +180,49 @@ int main()
 		check(queued && Read(output, 19, 13, queuedOutput), "queued resize and sharpening transitions");
 		check(!kzgs::Fsr1TestUpscale(tightTexture.get(), 0, 0, cropWidth, cropHeight,
 			cropWidth, cropHeight, 100, output) && output == nullptr, "identity does not dispatch");
+
+		auto* device = static_cast<GSDeviceVK*>(g_gs_device.get());
+		check(kzgs::Fsr1TestUpscale(tightTexture.get(), 0, 0, cropWidth, cropHeight,
+			outputWidth, outputHeight, 100, output), "record FSR1 work before uncertain retirement");
+		device->ExecuteCommandBuffer(false);
+		auto beforeRetire = kzgs::Fsr1TestLifetime();
+		check(kzgs::Fsr1TestRetireResources(VK_ERROR_UNKNOWN), "retain live resources on non-device-loss idle failure");
+		auto afterRetire = kzgs::Fsr1TestLifetime();
+		check(afterRetire.abandoned == beforeRetire.abandoned + 1 &&
+			afterRetire.destroyed == beforeRetire.destroyed && afterRetire.deviceLost == beforeRetire.deviceLost,
+			"uncertain completion never explicitly destroys FSR1 children or reports device loss");
+		const bool actuallyIdle = vkDeviceWaitIdle(device->GetDevice()) == VK_SUCCESS;
+		check(actuallyIdle, "test GPU becomes idle before releasing retained fixtures");
+		if (!actuallyIdle)
+		{
+			kzgs::Fsr1TestAbandonRetained();
+			return;
+		}
+		check(kzgs::Fsr1TestReleaseRetainedAfterIdle(),
+			"test-only retained fixtures are released only after proven completion");
+
+		check(kzgs::Fsr1TestUpscale(tightTexture.get(), 0, 0, cropWidth, cropHeight,
+			outputWidth, outputHeight, 0, output), "FSR1 can initialize after completed retirement");
+		device->ExecuteCommandBuffer(false);
+		check(vkDeviceWaitIdle(device->GetDevice()) == VK_SUCCESS, "completed-retirement GPU idle");
+		beforeRetire = kzgs::Fsr1TestLifetime();
+		check(kzgs::Fsr1TestRetireResources(VK_SUCCESS), "retire FSR1 resources after successful idle");
+		afterRetire = kzgs::Fsr1TestLifetime();
+		check(afterRetire.destroyed == beforeRetire.destroyed + 1 &&
+			afterRetire.abandoned == beforeRetire.abandoned && afterRetire.deviceLost == beforeRetire.deviceLost,
+			"successful idle destroys completed resources without a loss report");
+
+		check(kzgs::Fsr1TestUpscale(tightTexture.get(), 0, 0, cropWidth, cropHeight,
+			outputWidth, outputHeight, 0, output), "FSR1 can reinitialize before device-loss simulation");
+		device->ExecuteCommandBuffer(false);
+		check(vkDeviceWaitIdle(device->GetDevice()) == VK_SUCCESS, "device-loss simulation starts idle");
+		beforeRetire = kzgs::Fsr1TestLifetime();
+		check(kzgs::Fsr1TestRetireResources(VK_ERROR_DEVICE_LOST), "retire on terminal device loss");
+		afterRetire = kzgs::Fsr1TestLifetime();
+		check(afterRetire.destroyed == beforeRetire.destroyed + 1 &&
+			afterRetire.deviceLost == beforeRetire.deviceLost + 1 &&
+			afterRetire.abandoned == beforeRetire.abandoned,
+			"terminal device loss is distinguished from uncertain completion");
 	});
 
 	kzgsClose();

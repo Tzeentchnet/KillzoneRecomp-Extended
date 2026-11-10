@@ -73,8 +73,13 @@ namespace
 #ifdef KZGS_FSR1_TESTING
 	std::atomic<bool> s_failNextInitialization{false};
 	std::atomic<uint64_t> s_dispatchCount{0};
+	Plan s_lastDispatchedPlan{};
 	VkPipeline s_referenceEasu = VK_NULL_HANDLE;
 	bool s_useNativeGather = false;
+	kzgs::Fsr1TestLifetimeCounts s_lifetime{};
+	bool s_captureRetainedForTest = false;
+	std::unique_ptr<State> s_retainedForTest;
+	VkPipeline s_retainedReference = VK_NULL_HANDLE;
 #endif
 
 	void Report(KzgsUpscalerReason reason, bool applied = false)
@@ -96,6 +101,9 @@ namespace
 
 	void DestroyResources()
 	{
+#ifdef KZGS_FSR1_TESTING
+		++s_lifetime.destroyed;
+#endif
 		s.captureValid = false;
 		s.output.reset();
 		s.intermediate.reset();
@@ -129,6 +137,59 @@ namespace
 		s.descriptors.clear();
 		s.initialized = false;
 		s.initializationAttempted = false;
+	}
+
+	void AbandonResources()
+	{
+		GSDeviceVK* const device = s.device;
+		const kzgs::Fsr1Report report = s.report;
+		const bool enabled = s.enabled;
+		const int sharpening = s.sharpening;
+#ifdef KZGS_FSR1_TESTING
+		++s_lifetime.abandoned;
+		if (s_captureRetainedForTest)
+		{
+			s_retainedForTest = std::make_unique<State>(std::move(s));
+			s_retainedReference = s_referenceEasu;
+		}
+		else
+#endif
+		{
+			// A non-loss idle failure does not prove that any referenced child is safe to destroy.
+			// Leave GPU children and their texture wrappers for device teardown rather than freeing in-flight work.
+			s.output.release();
+			s.intermediate.release();
+		}
+		s = {};
+		s.device = device;
+		s.report = report;
+		s.enabled = enabled;
+		s.sharpening = sharpening;
+#ifdef KZGS_FSR1_TESTING
+		s_referenceEasu = VK_NULL_HANDLE;
+		s_useNativeGather = false;
+#endif
+	}
+
+	void RetireResources(VkResult idleResult)
+	{
+		if (idleResult == VK_SUCCESS)
+			DestroyResources();
+		else if (idleResult == VK_ERROR_DEVICE_LOST)
+		{
+#ifdef KZGS_FSR1_TESTING
+			++s_lifetime.deviceLost;
+#endif
+			DestroyResources();
+			Report(KzgsUpscalerReason::DeviceLost);
+		}
+		else
+		{
+			AbandonResources();
+			Console.Error("kzgs: Vulkan idle failed (%d); retaining FSR1 resources until device teardown",
+				static_cast<int>(idleResult));
+			Report(KzgsUpscalerReason::InitializationFailed);
+		}
 	}
 
 	bool LoadShader(const char* path, std::string& shader)
@@ -387,6 +448,7 @@ namespace
 			return false;
 		}
 #ifdef KZGS_FSR1_TESTING
+		s_lastDispatchedPlan = s.plan;
 		s_dispatchCount.fetch_add(1, std::memory_order_relaxed);
 #endif
 		output.texture = s.output.get();
@@ -425,7 +487,7 @@ namespace
 		kzgs::ProviderDeviceDestroying(device, idleResult);
 		if (s.device != &device)
 			return;
-		DestroyResources();
+		RetireResources(idleResult);
 		s.device = nullptr;
 	}
 }
@@ -551,6 +613,53 @@ namespace kzgs
 	uint64_t Fsr1TestDispatchCount()
 	{
 		return s_dispatchCount.load(std::memory_order_relaxed);
+	}
+
+	bool Fsr1TestLastSourceViewport(int& width, int& height)
+	{
+		width = s_lastDispatchedPlan.source.right - s_lastDispatchedPlan.source.left;
+		height = s_lastDispatchedPlan.source.bottom - s_lastDispatchedPlan.source.top;
+		return width > 0 && height > 0;
+	}
+
+	Fsr1TestLifetimeCounts Fsr1TestLifetime()
+	{
+		return s_lifetime;
+	}
+
+	bool Fsr1TestRetireResources(int32_t idleResult)
+	{
+		if (!s.device || s_retainedForTest)
+			return false;
+		const VkResult result = static_cast<VkResult>(idleResult);
+		s_captureRetainedForTest = result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST;
+		RetireResources(result);
+		s_captureRetainedForTest = false;
+		return result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST ||
+			(s_retainedForTest && s_retainedForTest->output && s_retainedForTest->easu &&
+				s_retainedForTest->descriptorPool);
+	}
+
+	bool Fsr1TestReleaseRetainedAfterIdle()
+	{
+		if (!s_retainedForTest || !s.device || s.output || s.intermediate || s.easu || s.descriptorPool)
+			return false;
+		s = std::move(*s_retainedForTest);
+		s_retainedForTest.reset();
+		s_referenceEasu = s_retainedReference;
+		s_retainedReference = VK_NULL_HANDLE;
+		DestroyResources();
+		return true;
+	}
+
+	void Fsr1TestAbandonRetained()
+	{
+		if (!s_retainedForTest)
+			return;
+		s_retainedForTest->output.release();
+		s_retainedForTest->intermediate.release();
+		s_retainedForTest.reset();
+		s_retainedReference = VK_NULL_HANDLE;
 	}
 
 	bool Fsr1TestUseNativeGather(bool enabled)
