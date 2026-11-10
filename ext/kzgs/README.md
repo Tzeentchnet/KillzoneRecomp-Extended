@@ -25,6 +25,7 @@ cmd //c "tools\scripts\vsenv.bat cmake -S ext\kzgs -B ext\kzgs\build -G Ninja -D
 cmd //c "tools\scripts\vsenv.bat cmake --build ext\kzgs\build -j 4"
 ext/kzgs/build/kzgs_test.exe            # exit code 0 = pass; add --renderer d3d12|vulkan, --warp, --vsync, --show
 ext/kzgs/build/kzgs_test.exe --renderer d3d11 --warp --golden --out ext/kzgs/build/test-output/d3d11
+ext/kzgs/build/kzgs_xbrz_probe.exe --self-test ext/kzgs/build/test-output/xbrz-probe
 ```
 
 A clean build is 165 Ninja steps (about 160 translation units). The result is `kzgs.lib` (about 87 MB with debug info).
@@ -44,8 +45,9 @@ CMake options:
 | `KZGS_PCSX2_DIR` | `ext/pcsx2` | Location of the PCSX2 source tree |
 | `KZGS_DEPS_DIR` | `ext/kzgs/deps/deps` | Location of the extracted dependency bundle |
 | `KZGS_ISA` | `AVX2` | Instruction set the GS code is compiled for: `SSE4`, `AVX` or `AVX2` (see Known gaps) |
-| `KZGS_BUILD_TEST` | on when top-level | Builds `kzgs_test` |
+| `KZGS_BUILD_TEST` | on when top-level | Builds the GS, palette, and xBRZ scaler tests |
 | `KZGS_BUILD_TOOLS` | on when top-level | Builds `kzgs_replay`, the trace debugger (see Debugging) |
+| `KZGS_BUILD_XBRZ_PROBE` | same as `KZGS_BUILD_TEST` | Builds the private PNG-to-xBRZ replacement probe |
 | `KZGS_ADDRESS_SANITIZER` | off | Instruments kzgs with clang-cl AddressSanitizer; the top-level executable links the runtime |
 
 `--golden` runs the deterministic synthetic scene at 1x and 2x, compares every pixel outside a narrow
@@ -66,6 +68,24 @@ five of those are `/DELAYLOAD`ed.
 - `shaderc_shared.dll` (Vulkan loads it at runtime)
 
 A D3D11-only run touches none of them, except when screenshots, dumps or texture replacements are used.
+
+## xBRZ visual-probe tool
+
+`kzgs_xbrz_probe` is an offline Windows tool for private visual evaluation. It
+loads one PNG or a directory of PNGs, applies the checked 2x xBRZ wrapper, and
+writes PCSX2-compatible PNGs with the same relative filenames. It uses Windows
+Imaging Component and has no game-data or third-party runtime dependency.
+
+```sh
+kzgs_xbrz_probe --input <png-or-directory> --output <directory> --dry-run
+kzgs_xbrz_probe --input <png-or-directory> --output <directory>
+```
+
+Inputs larger than 1024 pixels in either dimension are reported and skipped.
+Existing outputs are preserved unless `--overwrite` is explicit, and the
+output directory cannot be inside the input directory. See
+[`docs/xbrz_texture_upscaling.md`](../../docs/xbrz_texture_upscaling.md) for
+the private dump/replacement workflow and content-handling rules.
 
 ## API (`include/kzgs.h`)
 
