@@ -70,29 +70,45 @@ namespace
 		return true;
 	}
 
-	uint64_t Validate(const KzgsTemporalFrame& frame)
+	struct Validation
 	{
-		uint64_t invalid = 0;
+		uint64_t inputs = 0;
+		uint64_t reasons = 0;
+
+		void Add(uint64_t input, uint64_t invalid)
+		{
+			if (invalid)
+			{
+				inputs |= input;
+				reasons |= invalid;
+			}
+		}
+	};
+
+	Validation Validate(const KzgsTemporalFrame& frame)
+	{
+		Validation result;
 		if (!frame.frameId || !frame.presentationId || !frame.sceneId || !frame.deviceId || !frame.providerId)
-			invalid |= KZGS_TEMPORAL_INVALID_IDENTITY;
+			result.reasons |= KZGS_TEMPORAL_INVALID_IDENTITY;
 		if (!frame.outputWidth || !frame.outputHeight || !frame.aspectId)
-			invalid |= KZGS_TEMPORAL_INVALID_GEOMETRY;
+			result.reasons |= KZGS_TEMPORAL_INVALID_GEOMETRY;
 		if (frame.validInputs & KZGS_TEMPORAL_COLOR)
-			invalid |= ValidateImage(frame.mergedColor, frame, nullptr);
+			result.Add(KZGS_TEMPORAL_COLOR, ValidateImage(frame.mergedColor, frame, nullptr));
 		if (frame.validInputs & KZGS_TEMPORAL_WORLD_COLOR)
-			invalid |= ValidateImage(frame.worldColor, frame, &frame.mergedColor);
+			result.Add(KZGS_TEMPORAL_WORLD_COLOR, ValidateImage(frame.worldColor, frame, &frame.mergedColor));
 		if (frame.validInputs & KZGS_TEMPORAL_DEPTH)
 		{
-			invalid |= ValidateImage(frame.depth, frame, &frame.worldColor);
+			uint64_t invalid = ValidateImage(frame.depth, frame, &frame.worldColor);
 			if ((frame.depthDirection != KzgsTemporalDepthDirection::Forward &&
 					frame.depthDirection != KzgsTemporalDepthDirection::Reversed) ||
 				frame.depth.backend != KzgsTemporalBackend::Vulkan ||
 				(frame.depth.nativeFormat != VK_FORMAT_D16_UNORM && frame.depth.nativeFormat != VK_FORMAT_D32_SFLOAT))
 				invalid |= KZGS_TEMPORAL_INVALID_DEPTH;
+			result.Add(KZGS_TEMPORAL_DEPTH, invalid);
 		}
 		if (frame.validInputs & KZGS_TEMPORAL_MOTION)
 		{
-			invalid |= ValidateImage(frame.motion, frame, &frame.worldColor);
+			uint64_t invalid = ValidateImage(frame.motion, frame, &frame.worldColor);
 			if (frame.motionUnits != KzgsTemporalMotionUnits::Pixels ||
 				frame.motionDirection != KzgsTemporalMotionDirection::PreviousMinusCurrent ||
 				frame.motionIncludesJitter || !frame.motionPreviousFrameId ||
@@ -100,12 +116,13 @@ namespace
 				frame.motion.backend != KzgsTemporalBackend::Vulkan ||
 				frame.motion.nativeFormat != VK_FORMAT_R16G16_SFLOAT)
 				invalid |= KZGS_TEMPORAL_INVALID_MOTION;
+			result.Add(KZGS_TEMPORAL_MOTION, invalid);
 		}
 		if (frame.validInputs & KZGS_TEMPORAL_JITTER)
 		{
 			if (frame.jitterFrameId != frame.frameId || frame.jitterSceneId != frame.sceneId ||
 				!frame.jitterWorldOnly || !std::isfinite(frame.jitterX) || !std::isfinite(frame.jitterY))
-				invalid |= KZGS_TEMPORAL_INVALID_JITTER;
+				result.Add(KZGS_TEMPORAL_JITTER, KZGS_TEMPORAL_INVALID_JITTER);
 		}
 		for (const auto& pair : {std::pair{KZGS_TEMPORAL_REACTIVE, &frame.reactive},
 				std::pair{KZGS_TEMPORAL_COMPOSITION, &frame.composition}, std::pair{KZGS_TEMPORAL_UI, &frame.ui}})
@@ -115,7 +132,7 @@ namespace
 				const uint64_t imageInvalid = ValidateImage(*pair.second, frame, &frame.worldColor);
 				if (imageInvalid || pair.second->backend != KzgsTemporalBackend::Vulkan ||
 					pair.second->nativeFormat != VK_FORMAT_R8_UNORM)
-					invalid |= imageInvalid | KZGS_TEMPORAL_INVALID_MASK;
+					result.Add(pair.first, imageInvalid | KZGS_TEMPORAL_INVALID_MASK);
 			}
 		}
 		if (frame.validInputs & KZGS_TEMPORAL_CAMERA)
@@ -132,29 +149,30 @@ namespace
 				camera.verticalFovRadians >= 3.141592654f || !ValidMatrix(camera.worldToView) ||
 				!ValidMatrix(camera.previousWorldToView) || !ValidMatrix(camera.viewToClip) ||
 				!ValidMatrix(camera.previousViewToClip))
-				invalid |= KZGS_TEMPORAL_INVALID_CAMERA;
+				result.Add(KZGS_TEMPORAL_CAMERA, KZGS_TEMPORAL_INVALID_CAMERA);
 		}
 		if (frame.validInputs & KZGS_TEMPORAL_FRAME_TIME)
 		{
 			if (frame.timeFrameId != frame.frameId || frame.timeSceneId != frame.sceneId ||
 				frame.timePreviousFrameId != frame.motionPreviousFrameId ||
 				!std::isfinite(frame.frameTimeMs) || frame.frameTimeMs <= 0.0f)
-				invalid |= KZGS_TEMPORAL_INVALID_FRAME_TIME;
+				result.Add(KZGS_TEMPORAL_FRAME_TIME, KZGS_TEMPORAL_INVALID_FRAME_TIME);
 		}
 		if (frame.validInputs & KZGS_TEMPORAL_COLOR)
 		{
 			if (frame.mergedColor.backend != KzgsTemporalBackend::Vulkan ||
 				(frame.mergedColor.nativeFormat != VK_FORMAT_R8G8B8A8_UNORM &&
 					frame.mergedColor.nativeFormat != VK_FORMAT_R16G16B16A16_SFLOAT))
-				invalid |= KZGS_TEMPORAL_INVALID_FORMAT;
+				result.Add(KZGS_TEMPORAL_COLOR, KZGS_TEMPORAL_INVALID_FORMAT);
 			const bool linearSdr = frame.colorEncoding == KzgsTemporalColorEncoding::LinearSDR &&
 				frame.worldColor.nativeFormat == VK_FORMAT_R8G8B8A8_UNORM;
 			const bool linearHdr = frame.colorEncoding == KzgsTemporalColorEncoding::LinearHDR &&
 				frame.worldColor.nativeFormat == VK_FORMAT_R16G16B16A16_SFLOAT;
 			if (frame.worldColor.backend != KzgsTemporalBackend::Vulkan || (!linearSdr && !linearHdr))
-				invalid |= KZGS_TEMPORAL_INVALID_COLOR_ENCODING;
+				result.Add(frame.validInputs & (KZGS_TEMPORAL_COLOR | KZGS_TEMPORAL_WORLD_COLOR),
+					KZGS_TEMPORAL_INVALID_COLOR_ENCODING);
 		}
-		return invalid;
+		return result;
 	}
 }
 
@@ -211,10 +229,15 @@ namespace kzgs::temporal
 
 		Decision result;
 		result.missingInputs = KZGS_TEMPORAL_REQUIRED & ~frame.validInputs;
-		result.invalidReasons = Validate(frame);
+		const Validation validation = Validate(frame);
+		result.invalidInputs = validation.inputs;
+		result.invalidReasons = validation.reasons;
 		if (m_historyFrame && (frame.motionPreviousFrameId != m_historyFrame ||
 			frame.sceneId != m_historyScene || frame.presentationId != m_historyPresentation + 1))
+		{
 			result.invalidReasons |= KZGS_TEMPORAL_INVALID_PREVIOUS_FRAME;
+			result.invalidInputs |= frame.validInputs & KZGS_TEMPORAL_MOTION;
+		}
 		if (duplicate || outOfOrder)
 			result.invalidReasons |= KZGS_TEMPORAL_INVALID_IDENTITY;
 		if (result.missingInputs || result.invalidReasons)

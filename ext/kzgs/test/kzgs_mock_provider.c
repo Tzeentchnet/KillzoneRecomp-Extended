@@ -51,6 +51,9 @@ static KzgsProviderResult KZGS_PROVIDER_CALL query_info(KzgsProviderInfo* out, K
 {
 	KzgsProviderInfo info = {0};
 	stats.query_info++;
+	if (mode & MOCK_QUERY_FAILURE)
+		return result(status, KZGS_PROVIDER_ERROR_INTERNAL, KZGS_PROVIDER_REASON_PROVIDER_FAILURE,
+			-404, "mock capability query failure");
 	if (!out || out->struct_size < sizeof(uint32_t))
 		return result(status, KZGS_PROVIDER_ERROR_ARGUMENT, KZGS_PROVIDER_REASON_PROVIDER_FAILURE, 0, "info size");
 	info.struct_size = (mode & MOCK_SHORT_INFO) ?
@@ -106,6 +109,9 @@ static KzgsProviderResult KZGS_PROVIDER_CALL device_requirements(const KzgsProvi
 	} features[2];
 	KzgsProviderRequirements requirements = {0};
 	stats.device_requirements++;
+	if (mode & MOCK_UNSUPPORTED_DEVICE)
+		return result(status, KZGS_PROVIDER_ERROR_UNSUPPORTED, KZGS_PROVIDER_REASON_UNSUPPORTED_DEVICE,
+			-405, "mock unsupported device");
 	if (!KZGS_PROVIDER_HAS_FIELD(query, KzgsProviderDeviceQuery, get_instance_proc_addr) ||
 		!query->instance || !query->physical_device || !query->get_instance_proc_addr ||
 		!out || out->struct_size < sizeof(uint32_t))

@@ -778,6 +778,114 @@ static void CheckFsr1Vulkan(HWND hwnd, KzgsConfig& cfg, const std::vector<uint8_
 	kzgsSync();
 }
 
+static void CheckProviderGateVulkan(HWND hwnd, const std::string& path, const std::vector<uint8_t>& scene)
+{
+	std::printf("== Vulkan temporal provider no-go\n");
+	const std::wstring dllPath = std::filesystem::absolute(path).wstring();
+	HMODULE module = LoadLibraryExW(dllPath.c_str(), nullptr,
+		LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+	const auto setMode = module ? reinterpret_cast<KzgsMockSetMode>(GetProcAddress(module, "kzgs_mock_set_mode")) : nullptr;
+	const auto getStats = module ? reinterpret_cast<KzgsMockGetStats>(GetProcAddress(module, "kzgs_mock_get_stats")) : nullptr;
+	if (!module || !setMode || !getStats)
+	{
+		std::printf("  FAIL mock provider could not be loaded\n");
+		++g_failures;
+		if (module)
+			FreeLibrary(module);
+		return;
+	}
+	const auto stats = [&]() {
+		KzgsMockStats value{};
+		getStats(&value);
+		return value;
+	};
+	const auto check = [](bool condition, const char* message) {
+		std::printf("  %s %s\n", condition ? "ok  " : "FAIL", message);
+		if (!condition)
+			++g_failures;
+	};
+
+	kzgs::ProviderTestAllowSpatialMock(false);
+	kzgs::ProviderTestSetPath(dllPath.c_str());
+	ResizeTestWindowUnconstrained(hwnd, 1003, 757);
+	for (const KzgsUpscaler provider : {KzgsUpscaler::DLSS, KzgsUpscaler::XeSS})
+	{
+		setMode(provider == KzgsUpscaler::XeSS ? MOCK_KIND_XESS : 0);
+		const KzgsMockStats before = stats();
+		KzgsConfig cfg;
+		cfg.renderer = KzgsRenderer::Vulkan;
+		cfg.upscaler = provider;
+		cfg.upscalerSharpening = 37;
+		cfg.debugDevice = true;
+		cfg.vsync = false;
+		cfg.bilinearPresent = true;
+		std::string error;
+		if (!kzgsOpen(kz::host::NativeWindow::win32(hwnd), cfg, g_regs, &error))
+		{
+			std::printf("  FAIL gate Vulkan open: %s\n", error.c_str());
+			++g_failures;
+			continue;
+		}
+		PresentFrames(scene, 2, 3);
+		kzgsSync();
+		CheckUpscalerStatus(provider, 37, KzgsUpscalerReason::RequiredInputUnavailable);
+		KzgsTemporalDiagnostics diagnostics;
+		KzgsUpscalerStatus status;
+		check(kzgsGetTemporalDiagnostics(diagnostics) && kzgsGetUpscalerStatus(status) &&
+			status.temporalObserved && !status.temporalValid &&
+			status.temporalFrameId == diagnostics.frameId &&
+			status.temporalValidInputs == diagnostics.validInputs &&
+			status.temporalMissingInputs == diagnostics.missingInputs &&
+			status.temporalInvalidInputs == diagnostics.invalidInputs &&
+			status.temporalInvalidReasons == diagnostics.invalidReasons &&
+			(status.temporalMissingInputs & (KZGS_TEMPORAL_MOTION | KZGS_TEMPORAL_DEPTH |
+				KZGS_TEMPORAL_WORLD_COLOR | KZGS_TEMPORAL_UI)) ==
+				(KZGS_TEMPORAL_MOTION | KZGS_TEMPORAL_DEPTH | KZGS_TEMPORAL_WORLD_COLOR | KZGS_TEMPORAL_UI),
+			"status records the exact invalid and missing matched inputs");
+		std::vector<uint8_t> fallback, native;
+		ReadPresented(fallback, 1003, 757);
+
+		kzgsVsync(0, false);
+		kzgsReset();
+		kzgs::RunOnGSThread([] { kzgs::ProviderTestRedraw(); });
+		PresentFrames(scene, 1, 3);
+		kzgsSync();
+		check(kzgsGetTemporalDiagnostics(diagnostics) && !diagnostics.temporalValid &&
+			!diagnostics.historyFrameId && !diagnostics.committedHistoryFrames,
+			"duplicate, redraw and reset never commit temporal history");
+
+		cfg.upscaler = KzgsUpscaler::Off;
+		kzgsUpdateConfig(cfg);
+		PresentFrames(scene, 2, 3);
+		kzgsSync();
+		if (ReadPresented(native, 1003, 757))
+			check(!fallback.empty() && fallback == native,
+				"vendor request produces the same pixels as native presentation");
+
+		cfg.upscaler = KzgsUpscaler::FSR1;
+		cfg.upscalerSharpening = 0;
+		kzgsUpdateConfig(cfg);
+		PresentFrames(scene, 2, 3);
+		kzgsSync();
+		CheckUpscalerStatus(KzgsUpscaler::FSR1, 0, KzgsUpscalerReason::Active, KzgsUpscaler::FSR1);
+		cfg.upscaler = provider;
+		cfg.upscalerSharpening = 37;
+		kzgsUpdateConfig(cfg);
+		PresentFrames(scene, 2, 3);
+		kzgsSync();
+		CheckUpscalerStatus(provider, 37, KzgsUpscalerReason::RequiredInputUnavailable);
+		const KzgsMockStats after = stats();
+		check(after.creates == before.creates && after.evaluates == before.evaluates &&
+			after.resets == before.resets,
+			"fallback, FSR1 selection and re-request never touch vendor history");
+		kzgsClose();
+	}
+	kzgs::ProviderTestSetPath(nullptr);
+	FreeLibrary(module);
+	check(g_vulkan_validation_seen.load() && !g_vulkan_validation_unavailable.load() &&
+		g_vulkan_validation_errors.load() == 0, "temporal gate passes standard Vulkan validation");
+}
+
 static void CheckProviderVulkan(HWND hwnd, const std::string& path, const std::vector<uint8_t>& scene)
 {
 	std::printf("== Vulkan provider renderer integration\n");
@@ -807,6 +915,7 @@ static void CheckProviderVulkan(HWND hwnd, const std::string& path, const std::v
 
 	setMode(0);
 	kzgs::ProviderTestSetPath(dllPath.c_str());
+	kzgs::ProviderTestAllowSpatialMock(true);
 	ResizeTestWindowUnconstrained(hwnd, 1003, 757);
 	KzgsConfig cfg;
 	cfg.renderer = KzgsRenderer::Vulkan;
@@ -820,6 +929,7 @@ static void CheckProviderVulkan(HWND hwnd, const std::string& path, const std::v
 		std::printf("  FAIL Vulkan provider open: %s\n", error.c_str());
 		++g_failures;
 		kzgs::ProviderTestSetPath(nullptr);
+		kzgs::ProviderTestAllowSpatialMock(false);
 		FreeLibrary(module);
 		return;
 	}
@@ -943,6 +1053,7 @@ static void CheckProviderVulkan(HWND hwnd, const std::string& path, const std::v
 	check(g_vulkan_validation_seen.load() && !g_vulkan_validation_unavailable.load() &&
 		g_vulkan_validation_errors.load() == 0, "standard Vulkan validation is clean");
 	kzgs::ProviderTestSetPath(nullptr);
+	kzgs::ProviderTestAllowSpatialMock(false);
 	FreeLibrary(module);
 	check(GetModuleHandleW(dllPath.c_str()) == nullptr, "provider DLL unloaded after close");
 }
@@ -1087,6 +1198,7 @@ int main(int argc, char** argv)
 	bool temporal_validation = false;
 	std::string synthetic_trace;
 	std::string provider_validation;
+	std::string provider_gate_validation;
 	int frames = 4;
 	int stress_uploads = 2600; // x 16 KB = ~41 MB of GIF data, more than the 32 MB ring
 	for (int i = 1; i < argc; i++)
@@ -1108,6 +1220,8 @@ int main(int argc, char** argv)
 			temporal_validation = true;
 		else if (a == "--provider-validation" && i + 1 < argc)
 			provider_validation = argv[++i];
+		else if (a == "--provider-gate-validation" && i + 1 < argc)
+			provider_gate_validation = argv[++i];
 		else if (a == "--write-synthetic-trace" && i + 1 < argc)
 			synthetic_trace = argv[++i];
 		else if (a == "--out" && i + 1 < argc)
@@ -1176,6 +1290,13 @@ int main(int argc, char** argv)
 		CheckProviderVulkan(hwnd, provider_validation, BuildScene());
 		DestroyWindow(hwnd);
 		std::printf("%s: provider renderer integration\n", g_failures ? "FAIL" : "PASS");
+		return g_failures ? 1 : 0;
+	}
+	if (!provider_gate_validation.empty())
+	{
+		CheckProviderGateVulkan(hwnd, provider_gate_validation, BuildScene());
+		DestroyWindow(hwnd);
+		std::printf("%s: provider temporal no-go integration\n", g_failures ? "FAIL" : "PASS");
 		return g_failures ? 1 : 0;
 	}
 	cfg.vsync = vsync;

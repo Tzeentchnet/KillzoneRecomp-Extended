@@ -133,9 +133,20 @@ host-internal and are not ABI input bits.
 History is speculative until both dispatch and the matching presentation succeed. Missing or unmatched resources,
 unqualified formats, duplicate/out-of-order presentations, discontinuities, and failed dispatch/presentation reset
 history; a duplicate successful presentation ID cannot be reused after a reset. Production currently marks only
-observed composed color, never promotes guest/GS candidates, and reports temporal validity false. All providers
-advertising `KZGS_PROVIDER_CAP_TEMPORAL` are rejected before `create`/`evaluate`, independently of their stated
-required inputs. See [the measured no-go and instrumentation limits](findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10).
+observed composed color, never promotes guest/GS candidates, and reports temporal validity false. **Every DLSS or
+XeSS request is rejected before `create`/`evaluate`**, independently of the DLL's claimed capabilities or required
+inputs. A missing DLL, unsupported device, or failed negotiation can be the primary fallback reason instead; the
+temporal diagnostic fields remain available. No estimated or zero motion is substituted. See
+[the measured no-go and instrumentation limits](findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10).
+
+`kzgsGetUpscalerStatus` and capture metadata report whether a frame was observed, its ID, temporal validity,
+`valid_inputs`, `missing_inputs`, `invalid_inputs`, and `invalid_reasons`. Before the first observation, a vendor
+request reports all required inputs missing rather than treating defaults as evidence. These fields describe the
+last observed frame, not permission to dispatch a later frame. Input masks use bits 0..9 in this order: composed
+color, depth, motion, jitter, reactive mask, composition mask, camera, matched frame time, world color, UI mask.
+`invalid_inputs` identifies each declared input that failed validation; `invalid_reasons` uses the
+`KZGS_TEMPORAL_INVALID_*` bits in `kzgs_temporal.h` and may also contain frame-wide identity or geometry failures.
+The status message names missing/invalid inputs when the temporal gate is the primary fallback.
 
 The host ends its render pass and supplies a recording graphics command buffer with source and output made available
 by Vulkan barriers. The provider may bind its own Vulkan state and issue work only on that command buffer. It must
@@ -176,8 +187,10 @@ world-to-view and view-to-clip transforms. `frame_time_ms` is positive elapsed t
 Providers must still check image formats, extents, subresources, and conventions before accepting a frame.
 
 The in-tree `kzgs_mock_provider` is a test-only C DLL which uses a Vulkan blit; it is not an upscaler adapter and is
-not staged with the game. It exercises negotiation, sized buffers, real command recording and fences, failures,
-redraw/reset/resize/device-loss handling, safe fallback, and unload under Vulkan validation.
+not staged with the game. Separate test-only C++ hooks explicitly permit this named spatial mock to exercise ABI
+command recording and fences, failures, redraw/reset/resize/device-loss handling, and unload. Those hooks are never
+enabled by configuration, reject temporal-capability providers, and are not vendor qualification; the gate tests run
+without them.
 
 Both optional adapters have only been exercised with fake SDKs, not real vendor headers, runtimes or GPUs. Their
 conditional initialization paths require the ABI 1.1 exclusive scope and explicit qualification; 1.0 hosts and the

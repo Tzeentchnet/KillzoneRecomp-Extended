@@ -29,6 +29,7 @@ PIPELINE_ORDER = [
     "cas",
     "present_filter",
 ]
+TEMPORAL_REQUIRED = (1 << 10) - 1
 
 
 def load_records(directory: Path) -> list[dict[str, Any]]:
@@ -87,6 +88,39 @@ def validate_upscaler_pipeline(effective_config: dict[str, Any]) -> None:
         for key in ("provider_result", "provider_reason", "provider_native_code"):
             if key in upscaler and (isinstance(upscaler[key], bool) or not isinstance(upscaler[key], int)):
                 raise ValueError(f"presentation_upscaler.{key} must be an integer")
+        temporal_fields = {
+            "temporal_observed", "temporal_valid", "temporal_frame", "temporal_valid_inputs",
+            "temporal_missing_inputs", "temporal_invalid_inputs", "temporal_invalid_reasons",
+        }
+        if temporal_fields & upscaler.keys():
+            if not temporal_fields <= upscaler.keys():
+                raise ValueError("presentation_upscaler temporal diagnostics are incomplete")
+            for key in ("temporal_observed", "temporal_valid"):
+                if not isinstance(upscaler[key], bool):
+                    raise ValueError(f"presentation_upscaler.{key} must be a boolean")
+            for key in temporal_fields - {"temporal_observed", "temporal_valid"}:
+                value = upscaler[key]
+                if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < (1 << 64):
+                    raise ValueError(f"presentation_upscaler.{key} must be an unsigned integer")
+            valid = upscaler["temporal_valid_inputs"]
+            missing = upscaler["temporal_missing_inputs"]
+            invalid = upscaler["temporal_invalid_inputs"]
+            vendor = upscaler["requested"] in {"dlss", "xess"}
+            if vendor:
+                if missing != (TEMPORAL_REQUIRED & ~valid) or invalid & ~valid:
+                    raise ValueError("temporal input masks are inconsistent")
+                if upscaler["temporal_observed"] != (upscaler["temporal_frame"] != 0):
+                    raise ValueError("temporal observation must identify its frame")
+                if upscaler["temporal_valid"] and (
+                    not upscaler["temporal_observed"] or missing or invalid or upscaler["temporal_invalid_reasons"]
+                ):
+                    raise ValueError("a valid temporal contract cannot have missing or invalid inputs")
+            elif any(upscaler[key] for key in temporal_fields):
+                raise ValueError("non-temporal requests cannot report vendor temporal diagnostics")
+            if upscaler["effective"] in {"dlss", "xess"} and not upscaler["temporal_valid"]:
+                raise ValueError("an effective temporal provider requires matched temporal validity")
+        if upscaler["reported"] and upscaler["effective"] not in {"off", upscaler["requested"]}:
+            raise ValueError("effective presentation upscaler differs from the requested provider")
         if upscaler["effective"] == "fsr1":
             passes = ["fsr1_easu"]
             if upscaler["sharpening_effective"]:
@@ -385,6 +419,36 @@ def test_upscaler_pipeline() -> None:
         status.update(requested=provider, effective=provider, sharpening_effective=0)
         config["pipeline"] = PIPELINE_ORDER[:4] + [f"provider_{provider}"] + PIPELINE_ORDER[4:]
         validate_upscaler_pipeline(config)
+        status.update(
+            effective="off", reason="required_input_unavailable", sharpening_requested=37,
+            temporal_observed=True, temporal_valid=False, temporal_frame=42,
+            temporal_valid_inputs=1, temporal_missing_inputs=TEMPORAL_REQUIRED & ~1,
+            temporal_invalid_inputs=1, temporal_invalid_reasons=513,
+        )
+        config["pipeline"] = PIPELINE_ORDER
+        validate_upscaler_pipeline(config)
+        status["effective"] = provider
+        config["pipeline"] = PIPELINE_ORDER[:4] + [f"provider_{provider}"] + PIPELINE_ORDER[4:]
+        try:
+            validate_upscaler_pipeline(config)
+        except ValueError as error:
+            if "matched temporal validity" not in str(error):
+                raise
+        else:
+            raise ValueError("self-test accepted an effective provider with invalid temporal data")
+        status["effective"] = "off"
+        status["temporal_missing_inputs"] = 0
+        config["pipeline"] = PIPELINE_ORDER
+        try:
+            validate_upscaler_pipeline(config)
+        except ValueError as error:
+            if "input masks are inconsistent" not in str(error):
+                raise
+        else:
+            raise ValueError("self-test accepted inconsistent temporal diagnostics")
+        for key in tuple(status):
+            if key.startswith("temporal_"):
+                del status[key]
     status["provider_result"] = "invalid"
     try:
         validate_upscaler_pipeline(config)

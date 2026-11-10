@@ -73,7 +73,7 @@ The SDK-free provider ABI and Vulkan lifecycle test is built and run with:
 ```powershell
 .\tools\scripts\cmake_preset.ps1 -Preset win-msvc-tests -Action build -Target kzgs_provider_test
 .\tools\scripts\cmake_preset.ps1 -Preset win-msvc-tests -Action build -Target kzgs_test
-ctest --test-dir .\build\win-msvc-rel -R '^kzgs_provider_(vulkan|present|idle_error|init_error)_validation$' --output-on-failure
+ctest --test-dir .\build\win-msvc-rel -R '^kzgs_provider_(gate|vulkan|present|idle_error|init_error|reset_error)_validation$' --output-on-failure
 ```
 
 Its test-only C DLL checks sized API buffers, version and extension/feature negotiation, absent providers, missing
@@ -81,8 +81,11 @@ temporal inputs, create/reset/dispatch failures, real Vulkan blits, redraws, res
 actual fence retirement, and DLL unloading. The direct Vulkan-vector test enables synchronization validation; the
 synthetic GS presentation test uses standard validation, and checks real renderer dispatch, idle VSync/redraw,
 fallback, capture, resize, reset, and device recreation. Separate processes test retention and fail-closed behavior
-when device idle, SDK initialization, or reset cannot prove completion. The DLL does not implement a vendor upscaler and is not staged with production
-binaries.
+when device idle, SDK initialization, or reset cannot prove completion. A separate gate test leaves the test-only
+spatial-mock hook disabled and verifies both provider names, a present DLL with spatial or temporal capability,
+requested/effective metadata, exact missing/invalid masks, duplicate/reset history, pixel-identical native fallback,
+and explicit FSR1 selection. The hook is enabled only for generic spatial-mock lifecycle tests; the DLL does not
+implement a vendor upscaler and is not staged with production binaries.
 
 Temporal qualification and metadata-only GS observation are covered by:
 

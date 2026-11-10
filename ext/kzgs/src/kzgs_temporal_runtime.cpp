@@ -386,6 +386,7 @@ namespace kzgs
 		snapshot.backend = s.frame.mergedColor.backend;
 		snapshot.validInputs = s.frame.validInputs;
 		snapshot.missingInputs = decision.missingInputs;
+		snapshot.invalidInputs = decision.invalidInputs;
 		snapshot.invalidReasons = decision.invalidReasons;
 		snapshot.resetReasons = decision.resetReasons;
 		snapshot.committedHistoryFrames = s.tracker.CommittedFrames();
@@ -454,7 +455,7 @@ namespace kzgs
 				"world=%llu/%u motion=%llu/%u units=%u direction=%u jitter_inclusion_known=%u "
 				"masks=%llu/%u,%llu/%u,%llu/%u jitter_available=%u matched_delta_available=%u camera_parameters_available=%u "
 				"camera=%llu guest_flags=0x%x delivery_ms=%.3f valid=0x%llx missing=0x%llx "
-				"invalid=0x%llx reset=0x%llx history=%llu/%llu temporal_valid=0 presented=%u overflow=%u\n",
+				"invalid_inputs=0x%llx invalid=0x%llx reset=0x%llx history=%llu/%llu temporal_valid=0 presented=%u overflow=%u\n",
 				static_cast<unsigned long long>(snapshot.frameId),
 				static_cast<unsigned long long>(snapshot.presentationId),
 				static_cast<unsigned long long>(snapshot.sceneId),
@@ -484,6 +485,7 @@ namespace kzgs
 				static_cast<unsigned long long>(snapshot.cameraId),
 				snapshot.guestFlags, snapshot.deliveryDeltaMs, static_cast<unsigned long long>(snapshot.validInputs),
 				static_cast<unsigned long long>(snapshot.missingInputs),
+				static_cast<unsigned long long>(snapshot.invalidInputs),
 				static_cast<unsigned long long>(snapshot.invalidReasons),
 				static_cast<unsigned long long>(snapshot.resetReasons),
 				static_cast<unsigned long long>(snapshot.historyFrameId),

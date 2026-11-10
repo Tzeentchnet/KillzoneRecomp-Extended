@@ -4,8 +4,8 @@ These are **experimental, default-OFF developer targets**, not release features.
 neither matched temporal inputs nor a known color encoding, so both providers remain unavailable and fall back.
 No actual NVIDIA or Intel SDK was available to validate these adapters; test doubles are not evidence of SDK,
 driver, GPU, image-quality, or redistribution qualification.
-The host rejects **every temporal-capability provider before context creation**, even a provider claiming to require
-only color. The measured gate remains a no-go; see [temporal qualification](findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10).
+The host rejects **every DLSS/XeSS provider before context creation**, even a DLL claiming spatial or color-only
+capability. The measured gate remains a no-go; see [temporal qualification](findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10).
 In particular, NGX's real image layouts, synchronization, command-buffer-only evaluation, and motion/jitter
 behavior have not been independently established. DLSS refuses initialization unless an ABI 1.1 host provides
 exclusive device-idle initialization and explicitly attests to those SDK/runtime/device qualifications.

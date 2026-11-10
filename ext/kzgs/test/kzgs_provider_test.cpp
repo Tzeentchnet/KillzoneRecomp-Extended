@@ -78,12 +78,14 @@ namespace
 		return mock;
 	}
 
-	bool Open(HWND window, KzgsUpscalerReason reason, KzgsUpscaler provider = KzgsUpscaler::DLSS)
+	bool Open(HWND window, KzgsUpscalerReason reason, KzgsUpscaler provider = KzgsUpscaler::DLSS,
+		int sharpening = 0)
 	{
 		alignas(16) static uint8_t regs[0x2000]{};
 		KzgsConfig cfg;
 		cfg.renderer = KzgsRenderer::Vulkan;
 		cfg.upscaler = provider;
+		cfg.upscalerSharpening = sharpening;
 		cfg.debugDevice = true;
 		cfg.vsync = false;
 		std::string error;
@@ -99,7 +101,8 @@ namespace
 			std::fprintf(stderr, "expected %s, got %s\n", kzgsUpscalerReasonName(reason),
 				hasStatus ? kzgsUpscalerReasonName(status.reason) : "no status");
 		Check(hasStatus && status.requested == provider && status.effective == KzgsUpscaler::Off &&
-			status.reason == reason, "provider startup status and native fallback");
+			status.requestedSharpening == sharpening && status.effectiveSharpening == 0 &&
+			status.reason == reason, "requested/effective startup status and native fallback");
 		return true;
 	}
 
@@ -228,6 +231,7 @@ int main(int argc, char** argv)
 	if (uncertainIdle || uncertainInit || uncertainReset)
 	{
 		kzgs::ProviderTestSetPath(path.c_str());
+		kzgs::ProviderTestAllowSpatialMock(true);
 		mock.set(uncertainInit ? MOCK_CREATE_UNRESOLVED_SYNC :
 			uncertainReset ? MOCK_RESET_UNRESOLVED_SYNC : 0);
 		const KzgsMockStats beforeFailure = mock.Stats();
@@ -280,6 +284,7 @@ int main(int argc, char** argv)
 				"uncertain completion disables providers on later devices");
 		}
 		kzgs::ProviderTestSetPath(nullptr);
+		kzgs::ProviderTestAllowSpatialMock(false);
 		FreeLibrary(mock.module);
 		Check(GetModuleHandleW(path.c_str()) != nullptr,
 			"uncertain GPU completion retains the provider module");
@@ -291,10 +296,78 @@ int main(int argc, char** argv)
 		return failures ? 1 : 0;
 	}
 	kzgs::ProviderTestSetPath((path + L".missing").c_str());
-	if (Open(window, KzgsUpscalerReason::ProviderMissing))
-		kzgsClose();
+	for (const KzgsUpscaler provider : {KzgsUpscaler::DLSS, KzgsUpscaler::XeSS})
+	{
+		if (Open(window, KzgsUpscalerReason::ProviderMissing, provider, 37))
+		{
+			KzgsUpscalerStatus status;
+			Check(kzgsGetUpscalerStatus(status) && !status.temporalObserved && !status.temporalValid &&
+				status.temporalMissingInputs == KZGS_TEMPORAL_REQUIRED,
+				"missing DLL still reports the unobserved temporal contract");
+			kzgsClose();
+		}
+	}
 	kzgs::ProviderTestSetPath(path.c_str());
 
+	for (const KzgsUpscaler provider : {KzgsUpscaler::DLSS, KzgsUpscaler::XeSS})
+	{
+		const uint32_t kind = provider == KzgsUpscaler::XeSS ? MOCK_KIND_XESS : 0;
+		for (const uint32_t capability : {0u, static_cast<uint32_t>(MOCK_TEMPORAL_COLOR_ONLY),
+				static_cast<uint32_t>(MOCK_TEMPORAL_COLOR_ONLY | MOCK_DUAL_CAPABILITY),
+				static_cast<uint32_t>(MOCK_CREATE_FAILURE | MOCK_EVALUATE_FAILURE)})
+		{
+			mock.set(kind | capability);
+			const KzgsMockStats before = mock.Stats();
+			if (Open(window, KzgsUpscalerReason::RequiredInputUnavailable, provider, 37))
+			{
+				KzgsUpscalerStatus status;
+				Check(kzgsGetUpscalerStatus(status) && !status.temporalObserved && !status.temporalValid &&
+					status.temporalMissingInputs == KZGS_TEMPORAL_REQUIRED &&
+					std::strstr(status.providerMessage, "motion") &&
+					std::strstr(status.providerMessage, "world_color"),
+					"gate reports all named inputs before a frame is observed");
+				kzgsVsync(0, false);
+				kzgsSync();
+				kzgsReset();
+				kzgs::RunOnGSThread([] { kzgs::ProviderTestRedraw(); });
+				kzgsVsync(0, false);
+				kzgsSync();
+				Check(kzgsGetUpscalerStatus(status) && status.temporalObserved && !status.temporalValid &&
+					status.requested == provider && status.effective == KzgsUpscaler::Off &&
+					status.effectiveSharpening == 0,
+					"observed duplicate and reset retain native fallback");
+				KzgsTemporalDiagnostics diagnostics;
+				Check(kzgsGetTemporalDiagnostics(diagnostics) && !diagnostics.temporalValid &&
+					!diagnostics.historyFrameId && !diagnostics.committedHistoryFrames &&
+					status.temporalMissingInputs == diagnostics.missingInputs &&
+					status.temporalInvalidInputs == diagnostics.invalidInputs &&
+					status.temporalInvalidReasons == diagnostics.invalidReasons,
+					"status identifies the exact last observed temporal input failures");
+				kzgsClose();
+				const KzgsMockStats after = mock.Stats();
+				Check(after.creates == before.creates && after.evaluates == before.evaluates &&
+					after.resets == before.resets,
+					"unqualified DLSS/XeSS never create, evaluate, or reset vendor history");
+			}
+		}
+	}
+	mock.set(MOCK_QUERY_FAILURE);
+	if (Open(window, KzgsUpscalerReason::ProviderInvalid))
+	{
+		CheckStatus(KzgsUpscalerReason::ProviderInvalid, KZGS_PROVIDER_ERROR_INTERNAL, -404,
+			KZGS_PROVIDER_REASON_PROVIDER_FAILURE, "mock capability query failure");
+		kzgsClose();
+	}
+	mock.set(MOCK_UNSUPPORTED_DEVICE);
+	if (Open(window, KzgsUpscalerReason::DeviceExtensionUnavailable))
+	{
+		CheckStatus(KzgsUpscalerReason::DeviceExtensionUnavailable, KZGS_PROVIDER_ERROR_UNSUPPORTED, -405,
+			KZGS_PROVIDER_REASON_UNSUPPORTED_DEVICE, "mock unsupported device");
+		kzgsClose();
+	}
+
+	// The remaining tests exercise the generic ABI with a spatial blit, not a temporal provider.
+	kzgs::ProviderTestAllowSpatialMock(true);
 	const struct { uint32_t mode; KzgsUpscalerReason reason; const char* name; } fallbacks[] = {
 		{MOCK_VERSION_MISMATCH, KzgsUpscalerReason::ProviderVersionMismatch, "version mismatch"},
 		{MOCK_SHORT_API, KzgsUpscalerReason::ProviderVersionMismatch, "truncated provider API"},
@@ -609,6 +682,7 @@ int main(int argc, char** argv)
 	}
 	Check(mock.Stats().unsafe_destroys == 0, "device teardown waits before provider destruction");
 	kzgs::ProviderTestSetPath(nullptr);
+	kzgs::ProviderTestAllowSpatialMock(false);
 	FreeLibrary(mock.module);
 	Check(GetModuleHandleW(path.c_str()) == nullptr, "host releases the provider DLL after device teardown");
 	DestroyWindow(window);

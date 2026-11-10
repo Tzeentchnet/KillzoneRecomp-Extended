@@ -138,7 +138,7 @@ struct KzgsTemporalDiagnostics
 	uint64_t depthTargetId = 0, depthResourceId = 0, cameraId = 0;
 	uint64_t worldResourceId = 0, motionResourceId = 0;
 	uint64_t reactiveResourceId = 0, compositionResourceId = 0, uiResourceId = 0;
-	uint64_t validInputs = 0, missingInputs = KZGS_TEMPORAL_REQUIRED;
+	uint64_t validInputs = 0, missingInputs = KZGS_TEMPORAL_REQUIRED, invalidInputs = 0;
 	uint64_t invalidReasons = 0, resetReasons = 0;
 	uint64_t committedHistoryFrames = 0, historyFrameId = 0;
 	uint32_t width = 0, height = 0, nativeFormat = 0, rendererFormat = 0;

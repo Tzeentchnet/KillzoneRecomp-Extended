@@ -135,7 +135,22 @@ namespace
 	bool s_unresolvedDeviceWork = false;
 #ifdef KZGS_PROVIDER_TESTING
 	std::wstring s_testPath;
+	bool s_testAllowSpatialMock = false;
 #endif
+
+	bool TestSpatialMockAllowed()
+	{
+#ifdef KZGS_PROVIDER_TESTING
+		const size_t slash = s_testPath.find_last_of(L"\\/");
+		const std::wstring name = s_testPath.substr(slash == std::wstring::npos ? 0 : slash + 1);
+		return s_testAllowSpatialMock && name == L"kzgs_mock_provider.dll" && s.module && s.loaded &&
+			GetProcAddress(s.module, "kzgs_mock_set_mode") && GetProcAddress(s.module, "kzgs_mock_get_stats") &&
+			s.info.capabilities == KZGS_PROVIDER_CAP_SPATIAL &&
+			s.info.required_inputs == KZGS_PROVIDER_INPUT_COLOR;
+#else
+		return false;
+#endif
+	}
 
 	KzgsProviderStatus EmptyStatus()
 	{
@@ -478,6 +493,18 @@ namespace
 	bool Upscale(void*, const GSPresentationUpscaleFrame& frame, GSPresentationUpscaleOutput& output)
 	{
 		s.vsyncAttempted = true;
+		// The production host cannot provide qualified, frame-matched temporal resources.
+		// Only the explicitly enabled SDK-free spatial mock may exercise the lifecycle.
+		if (!TestSpatialMockAllowed())
+		{
+			kzgs::TemporalReset(KZGS_TEMPORAL_RESET_MISSING_INPUT);
+			Retire(KZGS_PROVIDER_RESET_DISCONTINUITY);
+			Failure(KzgsUpscalerReason::RequiredInputUnavailable, KZGS_PROVIDER_ERROR_INPUT, nullptr,
+				"Matched temporal inputs are not qualified.");
+			s.failure.providerReason = KZGS_PROVIDER_REASON_MISSING_INPUT;
+			Report(s.failure.reason);
+			return false;
+		}
 		if (s.deviceLost)
 		{
 			Report(s_unresolvedDeviceWork ? s.failure.reason : KzgsUpscalerReason::DeviceLost);
@@ -945,14 +972,13 @@ namespace kzgs
 			s.wantsProvider = true;
 			return {KzgsUpscalerReason::NoSurface};
 		}
-		if ((s.info.capabilities & KZGS_PROVIDER_CAP_TEMPORAL) ||
-			(s.info.required_inputs & ~KZGS_PROVIDER_INPUT_COLOR))
+		if (!TestSpatialMockAllowed())
 		{
 			ProviderStop();
 			s.wantsProvider = true;
 			TemporalReset(KZGS_TEMPORAL_RESET_MISSING_INPUT);
 			Failure(KzgsUpscalerReason::RequiredInputUnavailable, KZGS_PROVIDER_ERROR_INPUT, nullptr,
-				"Temporal qualification failed: matched world, depth, motion, jitter and masks are unavailable.");
+				"Matched temporal inputs are not qualified.");
 			s.failure.providerReason = KZGS_PROVIDER_REASON_MISSING_INPUT;
 			return s.failure;
 		}
@@ -995,6 +1021,11 @@ namespace kzgs
 	void ProviderTestSetPath(const wchar_t* path)
 	{
 		s_testPath = path ? path : L"";
+	}
+
+	void ProviderTestAllowSpatialMock(bool allow)
+	{
+		s_testAllowSpatialMock = allow;
 	}
 
 	bool ProviderTestUpscale(GSTexture* source, int left, int top, int right, int bottom,

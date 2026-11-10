@@ -101,7 +101,7 @@ int main()
 	Tracker empty;
 	const Decision absent = empty.Begin({});
 	Check(!absent.ready && absent.missingInputs == KZGS_TEMPORAL_REQUIRED &&
-		empty.CommittedFrames() == 0 && empty.HistoryFrame() == 0,
+		!absent.invalidInputs && empty.CommittedFrames() == 0 && empty.HistoryFrame() == 0,
 		"absent inputs fail closed without history");
 	for (uint64_t bit = 1; bit <= KZGS_TEMPORAL_UI; bit <<= 1)
 	{
@@ -169,6 +169,19 @@ int main()
 	bad = Frame(10, 9, 1);
 	bad.mergedColor.nativeFormat = VK_FORMAT_R8_UNORM;
 	Reject(bad, KZGS_TEMPORAL_INVALID_FORMAT, "unqualified merged color format is rejected");
+
+	bad = Frame(10, 9, 1);
+	bad.depth.frameId = 9;
+	bad.motionUnits = KzgsTemporalMotionUnits::Unknown;
+	bad.ui.nativeFormat = VK_FORMAT_R8G8B8A8_UNORM;
+	Tracker detailed;
+	const Decision detail = detailed.Begin(bad);
+	Check(!detail.ready && !detail.missingInputs &&
+		detail.invalidInputs == (KZGS_TEMPORAL_DEPTH | KZGS_TEMPORAL_MOTION | KZGS_TEMPORAL_UI) &&
+		(detail.invalidReasons & (KZGS_TEMPORAL_INVALID_IDENTITY | KZGS_TEMPORAL_INVALID_MOTION |
+			KZGS_TEMPORAL_INVALID_MASK)) ==
+			(KZGS_TEMPORAL_INVALID_IDENTITY | KZGS_TEMPORAL_INVALID_MOTION | KZGS_TEMPORAL_INVALID_MASK),
+		"diagnostics distinguish each invalid input and its reasons");
 
 	Tracker tracker;
 	const KzgsTemporalFrame first = Frame(10, 9, 1);

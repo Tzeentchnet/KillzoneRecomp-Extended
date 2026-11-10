@@ -1131,10 +1131,54 @@ bool kzgsIsOpen()
 
 bool kzgsGetUpscalerStatus(KzgsUpscalerStatus& out)
 {
-	std::lock_guard lock(s_upscaler_mutex);
-	if (!s_open.load(std::memory_order_acquire))
-		return false;
-	out = s_upscaler_status;
+	{
+		std::lock_guard lock(s_upscaler_mutex);
+		if (!s_open.load(std::memory_order_acquire))
+			return false;
+		out = s_upscaler_status;
+	}
+	if (out.requested == KzgsUpscaler::DLSS || out.requested == KzgsUpscaler::XeSS)
+	{
+		out.temporalMissingInputs = KZGS_TEMPORAL_REQUIRED;
+		KzgsTemporalDiagnostics diagnostics;
+		if (kzgs::TemporalGetDiagnostics(diagnostics) &&
+			diagnostics.providerId == static_cast<uint64_t>(out.requested) + 1)
+		{
+			out.temporalObserved = true;
+			out.temporalValid = diagnostics.temporalValid;
+			out.temporalFrameId = diagnostics.frameId;
+			out.temporalValidInputs = diagnostics.validInputs;
+			out.temporalMissingInputs = diagnostics.missingInputs;
+			out.temporalInvalidInputs = diagnostics.invalidInputs;
+			out.temporalInvalidReasons = diagnostics.invalidReasons;
+		}
+		if (out.reason == KzgsUpscalerReason::RequiredInputUnavailable)
+		{
+			const auto names = [](uint64_t mask) {
+				static constexpr const char* inputNames[] = {
+					"color", "depth", "motion", "jitter", "reactive", "composition",
+					"camera", "frame_time", "world_color", "ui"
+				};
+				std::string result;
+				for (size_t i = 0; i < std::size(inputNames); ++i)
+				{
+					if (mask & (UINT64_C(1) << i))
+					{
+						if (!result.empty())
+							result += ',';
+						result += inputNames[i];
+					}
+				}
+				return result.empty() ? std::string("none") : result;
+			};
+			const std::string missing = names(out.temporalMissingInputs);
+			const std::string invalid = names(out.temporalInvalidInputs);
+			std::snprintf(out.providerMessage, sizeof(out.providerMessage),
+				"temporal gate: missing=[%s] invalid=[%s] reasons=0x%llx observed=%u",
+				missing.c_str(), invalid.c_str(), static_cast<unsigned long long>(out.temporalInvalidReasons),
+				out.temporalObserved ? 1u : 0u);
+		}
+	}
 	return true;
 }
 

@@ -81,9 +81,13 @@ A provider must be selected
 before the Vulkan device is created so its required extensions and features can be negotiated; selecting a different
 provider on an already-open device reports `device_recreation_required` and falls back until KzGS is reopened
 (normally by restarting the game or replay).
-The current renderer exposes color only, with an unknown color encoding. Providers requiring matched depth, motion,
-jitter, masks, camera data, or a known encoding are rejected rather than given fabricated inputs. See the
-[provider ABI](upscaler-provider-abi.md) for the contract and limitations.
+The current renderer exposes composed color only, with an unknown color encoding. **Both DLSS and XeSS are
+unavailable**, even if a DLL claims spatial or color-only capability: the measured matched temporal-input gate is
+NO-GO. A vendor request uses native presentation with provider sharpening disabled; explicitly select `fsr1` to use
+the independent spatial path. No estimated or zero motion is substituted. Status and capture metadata distinguish
+requested/effective settings and report the last observed missing and invalid temporal-input masks; before the first
+observation all required inputs are reported missing. See the [provider ABI](upscaler-provider-abi.md) for the
+input names, contract and limitations.
 
 For a single run, use `KZ_UPSCALER` and `KZ_UPSCALER_SHARPENING`, or pass e.g.
 `--upscaler fsr1 --upscaler-sharpening 35` (`--option=value` also works). Each CLI setting takes precedence over

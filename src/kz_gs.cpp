@@ -402,7 +402,10 @@ namespace
             "\"native_height\":%d,\"target_height\":%d},"
             "\"presentation_upscaler\":{\"reported\":%s,\"requested\":\"%s\",\"effective\":\"%s\","
             "\"reason\":\"%s\",\"sharpening_requested\":%d,\"sharpening_effective\":%d,"
-            "\"provider_result\":%u,\"provider_reason\":%u,\"provider_native_code\":%d},"
+            "\"provider_result\":%u,\"provider_reason\":%u,\"provider_native_code\":%d,"
+            "\"temporal_observed\":%s,\"temporal_valid\":%s,\"temporal_frame\":%llu,"
+            "\"temporal_valid_inputs\":%llu,\"temporal_missing_inputs\":%llu,"
+            "\"temporal_invalid_inputs\":%llu,\"temporal_invalid_reasons\":%llu},"
             "\"output_resolution\":{\"width\":%d,\"height\":%d},"
             "\"pipeline\":[\"gs_merge\",\"aa\",\"sharp_prescale_if_upscaling\","
             "\"crop_aspect\",%s\"cas\",\"present_filter\"],"
@@ -424,6 +427,12 @@ namespace
             kzgsUpscalerName(upscaler.effective), kzgsUpscalerReasonName(upscaler.reason),
             upscaler.requestedSharpening, upscaler.effectiveSharpening,
             upscaler.providerResult, upscaler.providerReason, upscaler.providerNativeCode,
+            upscaler.temporalObserved ? "true" : "false", upscaler.temporalValid ? "true" : "false",
+            static_cast<unsigned long long>(upscaler.temporalFrameId),
+            static_cast<unsigned long long>(upscaler.temporalValidInputs),
+            static_cast<unsigned long long>(upscaler.temporalMissingInputs),
+            static_cast<unsigned long long>(upscaler.temporalInvalidInputs),
+            static_cast<unsigned long long>(upscaler.temporalInvalidReasons),
             s.windowWidth, s.windowHeight, upscalerPipeline, aspectName(k.aspect),
             k.anisotropy, k.mipmapMode == KzgsMipmapMode::BaseOnly ? "base_only" : "ps2",
             detail.renderDistance, detail.lodScale,
@@ -450,14 +459,22 @@ namespace
             current.effective == previous.effective && current.requestedSharpening == previous.requestedSharpening &&
             current.effectiveSharpening == previous.effectiveSharpening && current.reason == previous.reason &&
             current.providerResult == previous.providerResult && current.providerReason == previous.providerReason &&
-            current.providerNativeCode == previous.providerNativeCode)
+            current.providerNativeCode == previous.providerNativeCode &&
+            current.temporalObserved == previous.temporalObserved && current.temporalValid == previous.temporalValid &&
+            current.temporalValidInputs == previous.temporalValidInputs &&
+            current.temporalMissingInputs == previous.temporalMissingInputs &&
+            current.temporalInvalidInputs == previous.temporalInvalidInputs &&
+            current.temporalInvalidReasons == previous.temporalInvalidReasons)
             return;
         s.reportedUpscaler = current;
         s.hasReportedUpscaler = true;
         std::cout << "[kz] presentation upscaler: requested=" << kzgsUpscalerName(current.requested)
                   << ", effective=" << kzgsUpscalerName(current.effective)
                   << ", reason=" << kzgsUpscalerReasonName(current.reason)
-                  << ", sharpening=" << current.effectiveSharpening << std::endl;
+                  << ", sharpening=" << current.effectiveSharpening;
+        if (current.providerMessage[0])
+            std::cout << ", detail=" << current.providerMessage;
+        std::cout << std::endl;
         writeConfigRecordLocked(s, "config");
     }
 

@@ -58,6 +58,13 @@ struct KzgsUpscalerStatus
 	uint32_t providerReason = 0;
 	int32_t providerNativeCode = 0;
 	char providerMessage[192]{};
+	uint64_t temporalFrameId = 0;
+	uint64_t temporalValidInputs = 0;
+	uint64_t temporalMissingInputs = 0;
+	uint64_t temporalInvalidInputs = 0;
+	uint64_t temporalInvalidReasons = 0;
+	bool temporalObserved = false;
+	bool temporalValid = false;
 };
 
 const char* kzgsUpscalerName(KzgsUpscaler provider);

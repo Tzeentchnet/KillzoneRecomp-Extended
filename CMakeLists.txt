@@ -441,6 +441,15 @@ if(BUILD_TESTING)
         FAIL_REGULAR_EXPRESSION "Validation Error;SYNC-HAZARD")
     set_property(TEST kzgs_provider_present_validation APPEND PROPERTY ENVIRONMENT
         "VK_LAYER_VALIDATE_SYNC=0")
+    kz_add_iso_free_test(kzgs_provider_gate_validation kzgs_test
+        --provider-gate-validation "$<TARGET_FILE:kzgs_mock_provider>"
+        --out "${KZ_TEST_STATE_DIR}/kzgs/provider-gate")
+    set_tests_properties(kzgs_provider_gate_validation PROPERTIES
+        LABELS "iso-free;renderer;vulkan-validation"
+        RESOURCE_LOCK kzgs_gpu
+        FAIL_REGULAR_EXPRESSION "Validation Error;SYNC-HAZARD")
+    set_property(TEST kzgs_provider_gate_validation APPEND PROPERTY ENVIRONMENT
+        "VK_LAYER_VALIDATE_SYNC=0")
     kz_add_iso_free_test(kzgs_fsr1_vulkan_validation kzgs_fsr1_gpu_test)
     set_tests_properties(kzgs_fsr1_vulkan_validation PROPERTIES
         LABELS "iso-free;renderer;vulkan-validation"

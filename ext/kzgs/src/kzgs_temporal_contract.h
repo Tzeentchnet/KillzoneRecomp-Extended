@@ -8,6 +8,7 @@ namespace kzgs::temporal
 	struct Decision
 	{
 		uint64_t missingInputs = 0;
+		uint64_t invalidInputs = 0;
 		uint64_t invalidReasons = 0;
 		uint64_t resetReasons = 0;
 		bool ready = false;
