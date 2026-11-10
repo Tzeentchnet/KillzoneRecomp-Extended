@@ -27,6 +27,8 @@ The renderer also builds the [Tzeentchnet/pcsx2](https://github.com/Tzeentchnet/
 `61570a47840d2f14e802456eb4524ae5b0a597c7`, pinned in
 [`config/dependencies.lock.json`](../config/dependencies.lock.json). It is GPL-3.0-or-later; provide the
 corresponding source and notices for the exact distributed build, not just a link to unmodified upstream PCSX2.
+As of 2026-11-10 this companion revision is unpublished, so clean acquisition and corresponding-source availability
+remain release blockers until the separate publication work is complete.
 Optional local vendor builds have separate [license and provenance records](vendor-upscalers.md); their
 redistribution, including any combined binary, is not approved by this work.
 

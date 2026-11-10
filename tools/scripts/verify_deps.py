@@ -148,6 +148,8 @@ def verify_lock_schema(lock: dict[str, Any], report: Report) -> None:
                 report.failed(f"{dependency_id}: missing {field}")
 
         kind = dependency.get("kind")
+        if dependency.get("publication_status") not in (None, "unpublished", "published"):
+            report.failed(f"{dependency_id}: unsupported publication_status")
         revision = dependency.get("revision", "")
         if kind in {"git-submodule", "git-checkout", "cmake-git"} and not HEX40.fullmatch(
             revision
@@ -235,11 +237,16 @@ def verify_git_dependency(dependency: dict[str, Any], report: Report) -> None:
     if not local:
         return
 
+    if dependency.get("publication_status") == "unpublished":
+        report.warning(
+            f"{dependency['id']}: locked revision is recorded as unpublished; "
+            "local verification does not establish remote availability"
+        )
     path = ROOT / local["path"]
     required = bool(local.get("required_in_strict"))
     if not path.is_dir():
         report.missing(
-            f"{dependency['id']}: checkout is missing at {path}",
+            f"{dependency['id']}: checkout is missing at {path}. {dependency['acquisition']}",
             required,
         )
         return
@@ -267,6 +274,26 @@ def verify_git_dependency(dependency: dict[str, Any], report: Report) -> None:
             return
 
     report.passed(f"{dependency['id']}: locked checkout {head[:12]}")
+
+
+def self_test_publication_diagnostic() -> None:
+    dependency = {
+        "id": "unpublished-test",
+        "publication_status": "unpublished",
+        "acquisition": "Remote publication is pending.",
+        "local": {"path": "__kz_unavailable_dependency_selftest__", "required_in_strict": True},
+    }
+    report = Report(strict=True)
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        verify_git_dependency(dependency, report)
+    if (
+        report.warnings != 1
+        or report.failures != 1
+        or "local verification does not establish remote availability" not in output.getvalue()
+        or "Remote publication is pending." not in output.getvalue()
+    ):
+        raise VerificationError("unpublished checkout diagnostic did not warn and fail closed")
 
 
 def verify_archive_dependency(dependency: dict[str, Any], report: Report) -> None:
@@ -560,7 +587,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--selftest",
         action="store_true",
-        help="Exercise optional SDK reference schema without probing SDK paths.",
+        help="Exercise optional SDK schema and unpublished-checkout diagnostics without network access.",
     )
     return parser.parse_args()
 
@@ -577,10 +604,11 @@ def main() -> int:
     if arguments.selftest:
         try:
             self_test_optional_sdk_schema(lock)
+            self_test_publication_diagnostic()
         except (KeyError, TypeError, VerificationError) as error:
             report.failed(f"optional SDK schema self-test: {error}")
             return report.finish()
-        report.passed("optional SDK provenance and default-exclusion schema self-test")
+        report.passed("optional SDK provenance and unpublished-checkout diagnostics self-test")
         return report.finish()
 
     verify_lock_schema(lock, report)

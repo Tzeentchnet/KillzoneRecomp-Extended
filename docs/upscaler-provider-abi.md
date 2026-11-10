@@ -108,8 +108,10 @@ presentation and resets history before the next provider dispatch. Skipped/blank
 resets, resize, and configuration changes also break history. The caller never claims a successful presentation
 until PCSX2 confirms it.
 
-Presented-size readback and Vulkan bursts reuse the completed provider/CAS result without another evaluation.
-They recomposite that result rather than literally reading the swapchain image, and are invalidated with the context.
+Presented-size readback and Vulkan bursts may reuse a cached provider result without another evaluation. They are
+diagnostic recompositions, not literal swapchain images: skipped or failed presents can instead produce current-frame
+or pre-CAS snapshots. Negative-size bursts identify this as `presentation_recomposition`, and cached provider state
+is invalidated with the context.
 
 The source and output are distinct host-owned, single-mip/layer color images. Their handles, views, format, whole-image
 extents, half-open pixel rectangles, subresource ranges, layouts, guaranteed usage flags, and queue-family ownership

@@ -1976,8 +1976,10 @@ explicit contract:
 - `Upscale=0` selects `ceil(output_height / 448)`, clamped to 1x-8x, at renderer start or when settings are applied;
 - `Upscale=1..8` is a fixed integer GS render scale, independent of physical output resize;
 - resize changes the physical swap-chain output only; zero-size minimize retains the last valid dimensions;
-- aspect/crop, CAS and sharp/smooth filtering remain presentation operations, with the declared diagnostic order
-  `gs_merge -> aa -> sharp_prescale_if_upscaling -> crop_aspect -> cas -> present_filter`;
+- aspect/crop, CAS and sharp/smooth filtering remain presentation operations. Native fallback uses
+  `gs_merge -> aa -> sharp_prescale_if_upscaling -> crop_aspect -> cas -> present_filter`; an active presentation
+  upscaler is intended to receive the pre-prescale source, omitting sharp prescale and applying the provider before CAS.
+  The currently locked companion predates the required hook fix; that behavior needs the separate companion update;
 - `KZ_UPSCALE` is the explicit automation override for controlled sub-output experiments.
 
 The host logs the scale decision immediately, then `kzgsGetResolutionInfo` publishes exact dimensions after a

@@ -87,6 +87,9 @@ Focused FSR1 checks (the Vulkan tests require a Vulkan GPU and `VK_LAYER_KHRONOS
 ctest --test-dir .\build\win-msvc-rel -R 'kzgs_fsr1_reference|kzgs_fsr1_vulkan_validation|kzgs_vulkan_fsr1|kzgs_fsr1_replay' --output-on-failure
 ```
 
+The direct GPU test also simulates successful waits, device loss, and non-device-loss idle failures, checking that
+the latter never explicitly destroy potentially in-flight children.
+
 The SDK-free provider ABI and Vulkan lifecycle test is built and run with:
 
 ```powershell
@@ -167,19 +170,27 @@ the executable, and preservation of an occupied destination. The source and lega
 
 The CPU vectors check AMD constants and dispatch planning. The GPU-vector test enables synchronization validation,
 compares EASU with an independently compiled AMD native-gather reference and odd cropped rectangles with tightly
-packed inputs, checks edge/partial-tile writes and RCAS, and exercises failure cleanup and retry. The presentation
-test checks active/fallback status, initialization failure and retry, resize/recreation, separate RCAS and CAS
-effects, and repeated fixed-aspect/stretch capture without redispatch. The replay test generates a synthetic GS trace and compares
-presented readback with burst output; it also checks the optional debug replay tool when built. PCSX2's existing
+packed inputs, checks edge/partial-tile writes and RCAS, and exercises failure cleanup and retry. It also simulates
+successful idle, device loss, and a non-device-loss idle error after recorded FSR1 work; the last case retains every
+child until completion is proven, rather than destroying it in flight. The presentation
+test checks active/fallback status with the default SharpScaling enabled, pre-prescale source dimensions,
+initialization failure and retry, resize/recreation, separate RCAS and CAS effects, and repeated fixed-aspect/stretch
+capture without redispatch. The replay test generates a synthetic GS trace and compares labeled diagnostic
+recompositions with presented-size readback for that trace; it also checks the optional debug replay tool when built. PCSX2's existing
 synthetic-scene index upload produces a
 `SYNC-HAZARD-READ-AFTER-WRITE` under synchronization validation even with FSR off; synchronization validation is
 therefore kept on direct FSR1/provider vector tests, while the full presentation test uses standard validation.
 PCSX2 also emits the informational deprecated-device-layer VUID on this validation-layer version.
 
-For active Vulkan FSR1 or the test-only spatial mock, presented-size readback and negative-size bursts recomposite
-the completed post-upscaler/post-CAS texture into the requested output rectangle; they do not rerun the upscaler.
-This is not a literal swapchain-image readback. Internal-resolution captures and native presentation retain their
-existing behavior.
+For active Vulkan FSR1 or the test-only spatial mock, presented-size readback and negative-size bursts can
+recompose a cached image without rerunning the upscaler. A skipped or failed present may instead return a pre-CAS
+or current-frame snapshot. Negative-size Vulkan bursts are labeled `presentation_recomposition`, not
+`swapchain_backbuffer`, and their replay files use the `recomposed_` prefix. Do not treat them as evidence of a
+successful present or compare them with literal backbuffer captures. Internal-resolution captures and native
+presentation retain their existing behavior. Captures built with the reviewed companion API use pipeline contract 2:
+sharp prescale appears only on the fallback path. The older locked companion emits contract 1 instead, and the
+validator warns that active-upscaler pipeline order was not verified. The API capability check is supplemented by
+the SharpScaling integration regression.
 
 For an ISO-free, synthetic replay using the targets built above:
 

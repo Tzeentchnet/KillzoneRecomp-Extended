@@ -7,7 +7,9 @@ replaced by small stubs in `shim/`, so the library needs no BIOS, EE/IOP, VIF, D
 - PCSX2 source: `ext/pcsx2`, pinned in `config/dependencies.lock.json` to
   [Tzeentchnet/pcsx2](https://github.com/Tzeentchnet/pcsx2) companion commit
   `61570a47840d2f14e802456eb4524ae5b0a597c7`. It includes generic presentation, Vulkan device-negotiation,
-  completed-frame, and GS observation hooks. It is a separate checkout, not the PS2Recomp submodule.
+  completed-frame, and GS observation hooks. This revision is unpublished as of 2026-11-10; clean remote acquisition
+  is blocked pending publication. It is a separate checkout, not the PS2Recomp submodule, and it predates the
+  sharp-prescale hook review fix.
 - Dependencies: the official `pcsx2-windows-dependencies.7z` from the locked PCSX2 Windows dependency release,
   extracted to `ext/kzgs/deps` (so the headers are in
   `ext/kzgs/deps/deps/include`). It is not committed.
@@ -92,7 +94,7 @@ bool kzgsReadback(std::vector<uint8_t>& rgba, int& w, int& h,
                   int presentWidth = 0, int presentHeight = 0);  // last output frame, RGBA8; internal resolution, or as presented in a window of that size
 void kzgsSetLogCallback(KzgsLogFn fn);
 void kzgsSetSmaaThreshold(float threshold);              // SMAA luma edge threshold, 0.02..0.5 (default 0.1 = SMAA HIGH)
-void kzgsBurstArm(int count, int presentWidth, int presentHeight); // measurement: copy the next N presented frames (kzgsBurstTake)
+void kzgsBurstArm(int count, int presentWidth, int presentHeight); // measurement: capture the next N GS frames (kzgsBurstTake)
 bool kzgsBurstTake(std::vector<KzgsBurstFrame>& out);
 ```
 
@@ -135,9 +137,13 @@ new status. A Vulkan FSR1 request reports `waiting_for_frame` until a successful
 preserves the cropped source and destination aspect; it reports `no_upscale_needed` if either destination axis is
 smaller than the source or both are equal. Initialization and dispatch failures fall back to normal presentation.
 FSR1 sharpening 0 skips RCAS; 1..100 maps linearly from 2 to 0 attenuation stops, independently of existing CAS.
-Presented-size readbacks and Vulkan negative-size bursts recomposite the completed post-FSR/post-CAS texture without
-redispatching the upscaler; they are not literal swapchain-image readbacks. Surfaceless Vulkan retains the existing
-readback behavior and reports `no_surface`.
+If a Vulkan idle wait fails for a reason other than device loss, FSR1 abandons potentially in-flight child resources
+until device teardown rather than explicitly destroying them; repeated failures can accumulate allocations.
+Presented-size readbacks and Vulkan negative-size bursts can recomposite a cached upscaler result without
+redispatching. They are diagnostic snapshots, not literal swapchain-image readbacks: a skipped or failed present may
+instead yield a pre-CAS or current-frame snapshot. `kzgsBurstTakeEx` identifies this as
+`presentation_recomposition`, never `swapchain_backbuffer`; the legacy `kzgsBurstTake` remains available.
+Surfaceless Vulkan retains the existing readback behavior and reports `no_surface`.
 
 The [provider ABI](../../docs/upscaler-provider-abi.md) negotiates optional Vulkan extensions/features before device
 creation, records into a borrowed command buffer, and retires provider contexts only after actual GPU completion.
@@ -148,10 +154,16 @@ FAIL/NO-GO. The in-tree mock is a test-only blit, enabled only by test hooks. Th
 [local SDK adapters](../../docs/vendor-upscalers.md) are unqualified, and the current host provides no SDK
 initialization scope. Neither real SDKs nor vendor GPUs were tested.
 
-The companion hook supplies a crop/aspect-selected source to EASU, optionally RCAS, then existing CAS/final
-presentation. The presentation callback confirms success before the effective provider is reported; GPU completion
+The reviewed companion hook contract requires the original, pre-sharp-prescale source and its crop/aspect destination
+to reach EASU, optionally RCAS, then existing CAS/final presentation. Ordinary sharp prescale is used only when the
+hook falls back. The currently locked companion revision predates this fix, so the reviewed behavior requires the
+separate companion update and pin/revalidation.
+The presentation callback confirms success before the effective provider is reported; GPU completion
 fences govern resource retirement. The GS-thread temporal observer records bounded draw/display/present metadata and
 conservative resets, but does not promote candidate depth, motion, camera, or masks to qualified inputs.
+FSR1 teardown destroys its children after a successful idle wait, and treats confirmed device loss separately. A
+different idle-wait failure leaves its children and texture wrappers untouched until device teardown rather than
+destroying resources that could still be in flight.
 
 The EASU and RCAS pipelines use independently compiled entry points, not Vulkan specialization constants. AMD's
 unmodified MIT-licensed FSR 1 headers, source commit, hashes, and notice are in `third_party/fsr1`; resource staging
@@ -277,9 +289,9 @@ ext/kzgs/build/kzgs_replay.exe work/trace_full2.bin work/kzdbg/out --every 100 [
 - `--present WxH [--aspect 16:9|4:3|stretch] [--crop l,t,r,b]` also writes `present_<frame>.png`, the frame scaled and
   aspect-corrected as presented in a window of that size. `--adapter NAME`, `--hpo N`, `--native N`, `--fxaa`,
   `--antiblur 0|1`, `--interlace N` set the matching `KzgsConfig` fields.
-- `--window` (with `--present WxH`) opens a hidden window of that size, so the swap chain and the Bilinear Sharp pre-scale match the game.
-  `--backbuffer` then writes `bb_<frame>.png` from a presented burst. Active FSR1/provider bursts recomposite the
-  completed post-upscaler/post-CAS texture rather than literally reading the swapchain image.
+- `--window` (with `--present WxH`) opens a hidden window of that size. `--backbuffer` writes `bb_<frame>.png`
+  only for a Direct3D swap-chain capture. Vulkan diagnostic recompositions are named `recomposed_<frame>.png`
+  and labeled `presentation_recomposition`; they do not prove which image was presented.
   `--sharp 0|1`, `--bilinear 0|1`, `--cas N`, `--filter N` set the final-scaling and texture-filter fields. `--skip-idle` skips
   vblanks without new GIF packets like the game does, `--single-circuit` applies the game's display-register rewrite
   (read circuit 2 := read circuit 1, see docs/findings.md "Menu jitter and blur").
