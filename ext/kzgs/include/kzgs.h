@@ -21,6 +21,8 @@
 // forwarding packets, and raise INTC_GS itself.
 #pragma once
 
+#include "kz_host/core.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -49,12 +51,19 @@ enum class KzgsTextureFilter : int
 	ForcedExceptSprites = 3,
 };
 
+enum class KzgsMipmapMode : int
+{
+	PS2 = 0,
+	BaseOnly = 1,
+};
+
 struct KzgsConfig
 {
 	KzgsRenderer renderer = KzgsRenderer::D3D11;
 	int upscale = 1;                                   // internal resolution multiplier, 1..8
 	KzgsTextureFilter textureFiltering = KzgsTextureFilter::PS2;
 	int anisotropy = 0;                                // 0 (off), 2, 4, 8, 16
+	KzgsMipmapMode mipmapMode = KzgsMipmapMode::PS2;   // BaseOnly disables mip selection and samples level zero
 	bool fxaa = false;                                 // post-process FXAA
 	bool smaa = false;                                 // post-process SMAA 1x (Direct3D 11 only; others ignore it)
 	// PCSX2 texture replacement: files in <exe dir>/textures/SCUS-97402/replacements (named by PCSX2's texture hash) replace
@@ -99,10 +108,19 @@ struct KzgsConfig
 	bool debugDevice = false;                          // D3D/Vulkan validation layer
 };
 
-// Creates the GS thread and the render device on window `hwnd` (a Win32 HWND; the window must outlive kzgsClose).
+struct KzgsResolutionInfo
+{
+	int renderWidth = 0;                               // GS merged output before presentation crop/aspect/scale
+	int renderHeight = 0;
+	int outputWidth = 0;                               // current physical swap-chain output
+	int outputHeight = 0;
+};
+
+// Creates the GS thread and render device on `window`, which must outlive kzgsClose. An empty handle is surfaceless.
+// The current renderer backends accept Win32 windows and reject other native-window types explicitly.
 // `privRegs` is the caller's 0x2000-byte privileged register block (see above); it is read at open and at every
 // kzgsVsync. Returns false with a message in *err on failure. Only one kzgs instance can be open at a time.
-bool kzgsOpen(void* hwnd, const KzgsConfig& cfg, uint8_t* privRegs, std::string* err = nullptr);
+bool kzgsOpen(const kz::host::NativeWindow& window, const KzgsConfig& cfg, uint8_t* privRegs, std::string* err = nullptr);
 
 // Destroys the device and joins the GS thread. Safe to call when not open.
 void kzgsClose();
@@ -144,14 +162,19 @@ void kzgsReset();
 // Window client area changed.
 void kzgsResize(int width, int height);
 
+// Returns the most recent completed frame's exact render and output dimensions without blocking the GS thread.
+// False until the first frame has completed or after the renderer closes.
+bool kzgsGetResolutionInfo(KzgsResolutionInfo& out);
+
 // Applies new settings (renderer switches recreate the device on the same window).
 void kzgsUpdateConfig(const KzgsConfig& cfg);
 
 // Blocks until the GS thread has processed everything queued so far.
 void kzgsSync();
 
-// Reads back the last output frame (display circuits merged, before scaling to the window), at internal resolution:
-// e.g. 640x448 at upscale 1, 1280x896 at upscale 2. RGBA8, top-down, w*h*4 bytes. Blocks (drains the queue first).
+// Reads back the last output frame (display circuits merged, before scaling to the window), at its exact internal
+// resolution. Dimensions derive from the active GS display (for example, a 640x448 display becomes 1280x896 at 2x).
+// RGBA8, top-down, w*h*4 bytes. Blocks (drains the queue first).
 // With presentWidth/presentHeight > 0 the image is instead scaled and aspect-corrected the way it is presented in a
 // window of that size (letterboxed with black to exactly presentWidth x presentHeight).
 bool kzgsReadback(std::vector<uint8_t>& rgba, int& width, int& height, int presentWidth = 0, int presentHeight = 0);
@@ -169,6 +192,11 @@ void kzgsSetTraceHook(KzgsTraceFn fn);
 
 // SMAA edge-detection luma threshold (0.02 .. 0.5, default 0.1 = the HIGH preset); applied the next time the SMAA shaders are built.
 void kzgsSetSmaaThreshold(float threshold);
+bool kzgsSmaaAvailable();
+bool kzgsSmaaEffective();
+
+// Test/tooling only: forces the active D3D12 device through PCSX2's normal device-loss recovery path.
+bool kzgsDebugInjectDeviceLoss();
 
 // Frame-rate counter in the top-left corner of the window: presented frames per second, updated twice a second. Off by default.
 void kzgsSetShowFps(bool show);
@@ -184,7 +212,7 @@ struct KzgsBurstFrame
 	std::vector<uint8_t> rgba;
 	int width = 0, height = 0;
 	int field = 0;
-	std::string tcInfo; // texture cache render targets when the frame was presented
+	std::string tcInfo; // display mapping and texture-cache render/depth targets when the frame was presented
 	int scanmask = 0;  // GSState::m_scanmask_used after the frame was merged (PCRTC anti-blur is disabled while it is non-zero)
 	int rc[8] = {};    // display circuits after PCSX2's offset logic: framebufferRect (x,y,z,w) of circuit 1 then 2... y and w only: fb1.y fb1.w fb2.y fb2.w disp1.y disp1.w disp2.y disp2.w
 	int gameDeint = 0; // PCSX2 'game_deinterlacing' (selects the MAD/bob path in Merge)

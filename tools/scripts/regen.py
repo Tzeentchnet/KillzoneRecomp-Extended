@@ -1,11 +1,11 @@
 """Regenerate recompiled C++ and sync only changed files into generated/ (keeps rebuilds incremental).
 
 Steps: merge SCE library bindings from ps2_analyzer and missed function starts from find_code_pointers.py into the
-config (work/killzone.merged.toml), run ps2_recomp into work/gen_tmp, then copy changed/new files to generated/ and
-delete stale ones.
-Usage: python tools/scripts/regen.py [--pal]
+config (work/killzone.merged.toml), run ps2_recomp into work/gen_tmp, close emitted tail and resume dispatch targets
+to a fixed point, then copy changed/new files to generated/ and delete stale ones.
+Usage: python tools/scripts/regen.py [--pal] [--elf <path-to-boot-ELF>]
 """
-import filecmp, os, re, shutil, subprocess, sys, tomllib
+import argparse, filecmp, hashlib, json, os, re, shutil, subprocess, sys, tomllib
 
 # Killzone ships the register-locals code generator (patch 0017); PS2X_CODEGEN=classic regenerates the old style.
 os.environ.setdefault('PS2X_CODEGEN', 'locals')
@@ -14,68 +14,147 @@ os.environ.setdefault('PS2X_CODEGEN', 'locals')
 os.environ.setdefault('PS2X_CODEGEN_DSP', '1')
 os.environ.setdefault('PS2X_CODEGEN_FOLD', '1')
 from pathlib import Path
+from normalize_function_map import sections
 
 ROOT = Path(__file__).resolve().parents[2]
-# --pal (or KZ_CONFIG=config/killzone_pal.toml) regenerates the PAL set (issue #15). Every input and output path comes from
-# one preset per config, so a PAL run can never write into generated/ or reuse the US analyzer/code-pointer files. The
-# ELF, the output folder and the function list are read from the config's input / output / ghidra_output. Each path can
-# still be overridden with its env var (KZ_ELF, KZ_GEN_DIR, KZ_FUNCS_CSV, KZ_ANALYZER_TOML, KZ_CODE_POINTERS,
-# KZ_CODE_POINTERS_REJECT, KZ_MERGED, KZ_GEN_TMP, KZ_RECOMP_LOG); KZ_RECOMP_EXE picks another ps2_recomp.
+
+
+def repo_path(value: str | os.PathLike[str]) -> Path:
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else ROOT / path
+
+
 if "--pal" in sys.argv[1:]:
     os.environ.setdefault("KZ_CONFIG", str(ROOT / "config" / "killzone_pal.toml"))
-CFG = Path(os.environ.get("KZ_CONFIG", ROOT / "config" / "killzone.toml"))
+CFG = repo_path(os.environ.get("KZ_CONFIG", "config/killzone.toml"))
 PRESETS = {
-    "killzone": dict(KZ_ANALYZER_TOML="work/analyzer.toml", KZ_CODE_POINTERS="work/code_pointers.txt",
-                     KZ_CODE_POINTERS_REJECT="config/code_pointers_reject.txt", KZ_MERGED="work/killzone.merged.toml",
-                     KZ_GEN_TMP="work/gen_tmp", KZ_RECOMP_LOG="work/recomp.log"),
-    "killzone_pal": dict(KZ_ANALYZER_TOML="work/pal/analyzer_pal.toml", KZ_CODE_POINTERS="work/pal/code_pointers_pal.txt",
-                         KZ_CODE_POINTERS_REJECT="work/pal/code_pointers_reject_pal.txt",
-                         KZ_MERGED="work/pal/killzone_pal.merged.toml", KZ_GEN_TMP="work/pal/gen_tmp",
-                         KZ_RECOMP_LOG="work/pal/recomp_pal.log"),
+    "killzone": {
+        "analyzer": "work/analyzer.toml",
+        "code_pointers": "work/code_pointers.txt",
+        "reject": "work/code_pointers_reject.txt",
+        "merged": "work/killzone.merged.toml",
+        "temporary": "work/gen_tmp",
+        "log": "work/recomp.log",
+    },
+    "killzone_pal": {
+        "analyzer": "work/pal/analyzer_pal.toml",
+        "code_pointers": "work/pal/code_pointers_pal.txt",
+        "reject": "work/pal/code_pointers_reject_pal.txt",
+        "merged": "work/pal/killzone_pal.merged.toml",
+        "temporary": "work/pal/gen_tmp",
+        "log": "work/pal/recomp_pal.log",
+    },
 }
 if CFG.stem not in PRESETS:
-    sys.exit(f"[regen] no path preset for {CFG.name}; add one to PRESETS in regen.py")
-_gen = tomllib.loads(CFG.read_text())["general"]
-for _k, _v in {**PRESETS[CFG.stem], "KZ_ELF": _gen["input"], "KZ_GEN_DIR": _gen["output"],
-               "KZ_FUNCS_CSV": _gen["ghidra_output"]}.items():
-    os.environ.setdefault(_k, str(ROOT / _v) if not Path(_v).is_absolute() else _v)  # find_code_pointers.py reads these too
-ELF = Path(os.environ["KZ_ELF"])
-ANALYZER_TOML = Path(os.environ["KZ_ANALYZER_TOML"])
-CODE_POINTERS = Path(os.environ["KZ_CODE_POINTERS"])
-REJECT = Path(os.environ["KZ_CODE_POINTERS_REJECT"])
-MERGED = Path(os.environ["KZ_MERGED"])
-TMP = Path(os.environ["KZ_GEN_TMP"])
-GEN = Path(os.environ["KZ_GEN_DIR"])
-RECOMP = Path(os.environ.get("KZ_RECOMP_EXE", ROOT / "build" / "ps2recomp" / "ps2xRecomp" / "ps2_recomp.exe"))
+    raise SystemExit(f"[regen] no path preset for {CFG.name}; add one to PRESETS in regen.py")
+CONFIG_GENERAL = tomllib.loads(CFG.read_text(encoding="utf-8"))["general"]
+PRESET = PRESETS[CFG.stem]
+CONFIG_ELF = repo_path(CONFIG_GENERAL["input"])
+ANALYZER_TOML = repo_path(os.environ.get("KZ_ANALYZER_TOML", PRESET["analyzer"]))
+FUNCTIONS_CSV = repo_path(
+    os.environ.get(
+        "KZ_FUNCS_CSV",
+        os.environ.get("KZ_FUNCTIONS_CSV", CONFIG_GENERAL["ghidra_output"]),
+    )
+)
+FUNCTIONS_METADATA = Path(f"{FUNCTIONS_CSV}.meta.json")
+FUNCTION_MAP_SCRIPT = ROOT / "tools" / "scripts" / "generate_function_map.ps1"
+FUNCTION_EXPORTER = ROOT / "ext" / "PS2Recomp" / "ps2xRecomp" / "tools" / "ghidra" / "ExportPS2Functions.java"
+CODE_POINTERS = repo_path(os.environ.get("KZ_CODE_POINTERS", PRESET["code_pointers"]))
+CODE_POINTER_REJECT = repo_path(
+    os.environ.get(
+        "KZ_CODE_POINTERS_REJECT",
+        os.environ.get("KZ_CODE_POINTER_REJECT", PRESET["reject"]),
+    )
+)
+STATIC_REJECT_FILES = [ROOT / "config" / "code_pointers_reject.txt"] if CFG.stem == "killzone" else []
+hook_manifest_value = os.environ.get("KZ_HOOK_MANIFEST")
+HOOK_MANIFEST = (
+    repo_path(hook_manifest_value)
+    if hook_manifest_value
+    else ROOT / "config" / "generated-manifest.json"
+    if CFG.stem == "killzone"
+    else None
+)
+# KZ_GEN_DIR / KZ_GEN_TMP / KZ_MERGED / KZ_RECOMP_EXE redirect the run (used for alternative code generators, e.g.
+# PS2X_CODEGEN=locals into work/generated_cg) without touching generated/.
+MERGED = repo_path(os.environ.get("KZ_MERGED", PRESET["merged"]))
+TMP = repo_path(os.environ.get("KZ_GEN_TMP", PRESET["temporary"]))
+GEN = repo_path(os.environ.get("KZ_GEN_DIR", CONFIG_GENERAL["output"]))
+RECOMP = repo_path(os.environ.get("KZ_RECOMP_EXE", "build/ps2recomp/ps2xRecomp/ps2_recomp.exe"))
 ANALYZER = ROOT / "build" / "ps2recomp" / "ps2xAnalyzer" / "ps2_analyzer.exe"
+RECOMP_LOG = repo_path(os.environ.get("KZ_RECOMP_LOG", PRESET["log"]))
 
 
-def merged_config() -> str:
+def merged_config(elf: Path, closure_entries: set[int]) -> str:
     text = CFG.read_text()
+    base_config = tomllib.loads(text)
     if not ANALYZER_TOML.exists():
-        subprocess.run([str(ANALYZER), str(ELF), str(ANALYZER_TOML)],
+        subprocess.run([str(ANALYZER), str(elf), str(ANALYZER_TOML)],
                        check=True, stdout=subprocess.DEVNULL)
-    have = {s.split("@")[1].upper() for s in tomllib.loads(text)["general"]["stubs"] if "@" in s}
+    have = {s.split("@")[1].upper() for s in base_config["general"]["stubs"] if "@" in s}
     extra = [s for s in tomllib.loads(ANALYZER_TOML.read_text())["general"].get("stubs", [])
              if "@" in s and s.split("@")[1].upper() not in have]
     lines = "".join(f'  "{s}",\n' for s in extra)
     text = re.sub(r"(stubs = \[\n)", lambda m: m.group(1) + lines, text, count=1)
+    text = re.sub(r'^input = .*$', f'input = "{elf.as_posix()}"', text, count=1, flags=re.M)
     text = re.sub(r'^output = .*$', f'output = "{TMP.as_posix()}"', text, count=1, flags=re.M)
-    # The config's paths are relative to the repo root; ps2_recomp gets them absolute.
-    text = re.sub(r'^input = .*$', lambda m: f'input = "{ELF.resolve().as_posix()}"', text, count=1, flags=re.M)
-    text = re.sub(r'^ghidra_output = .*$', lambda m: f'ghidra_output = "{Path(os.environ["KZ_FUNCS_CSV"]).resolve().as_posix()}"',
-                  text, count=1, flags=re.M)
+    text = re.sub(
+        r'^ghidra_output = .*$',
+        f'ghidra_output = "{FUNCTIONS_CSV.as_posix()}"',
+        text,
+        count=1,
+        flags=re.M,
+    )
     print(f"[regen] +{len(extra)} SCE library bindings from ps2_analyzer")
-    subprocess.run([sys.executable, str(ROOT / "tools" / "scripts" / "find_code_pointers.py")], check=True)
-    entries = [l.strip() for l in CODE_POINTERS.read_text().splitlines() if l.strip()]
-    entry_line = "entry_points = [" + ", ".join(f'"{e}"' for e in entries) + "]\n"
-    text = re.sub(r"(\[general\]\n)", lambda m: m.group(1) + entry_line, text, count=1)
-    print(f"[regen] +{len(entries)} entry points from find_code_pointers")
+    subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools" / "scripts" / "find_code_pointers.py"),
+            "--elf",
+            str(elf),
+            "--functions",
+            str(FUNCTIONS_CSV),
+            "--output",
+            str(CODE_POINTERS),
+            *[
+                argument
+                for reject in [*STATIC_REJECT_FILES, CODE_POINTER_REJECT]
+                for argument in ("--reject", str(reject))
+            ],
+        ],
+        check=True,
+    )
+    discovered_entries = {
+        int(line, 16)
+        for line in CODE_POINTERS.read_text().splitlines()
+        if line.strip()
+    }
+    hook_entries = set()
+    if HOOK_MANIFEST is not None:
+        manifest = json.loads(HOOK_MANIFEST.read_text(encoding="utf-8"))
+        hook_entries = {int(hook["address"], 0) for hook in manifest["hooks"]}
+    configured_entries = {
+        int(entry, 0)
+        for entry in base_config["general"].get("entry_points", [])
+    }
+    entries = sorted(configured_entries | discovered_entries | hook_entries | closure_entries)
+    entry_line = "entry_points = [" + ", ".join(f'"0x{entry:08X}"' for entry in entries) + "]\n"
+    entry_pattern = r"^entry_points\s*=\s*\[.*?\]\s*(?:#.*)?$"
+    if re.search(entry_pattern, text, flags=re.M | re.S):
+        text = re.sub(entry_pattern, entry_line.rstrip(), text, count=1, flags=re.M | re.S)
+    else:
+        text = re.sub(r"(\[general\]\n)", lambda m: m.group(1) + entry_line, text, count=1)
+    print(
+        f"[regen] {len(entries)} configured entry points "
+        f"({len(configured_entries)} explicit, {len(discovered_entries)} discovered, "
+        f"{len(hook_entries)} locked hooks, {len(closure_entries)} generated closure)"
+    )
     return text
 
 
 def sync() -> None:
-    GEN.mkdir(exist_ok=True)
+    GEN.mkdir(parents=True, exist_ok=True)
     new = {p.name for p in TMP.iterdir()}
     changed = 0
     for name in new:
@@ -90,35 +169,209 @@ def sync() -> None:
 
 
 def main() -> int:
-    MERGED.write_text(merged_config())
-    if TMP.exists():
-        shutil.rmtree(TMP)
-    log = Path(os.environ["KZ_RECOMP_LOG"])
-    with log.open("w") as f:
-        r = subprocess.run([str(RECOMP), str(MERGED)], stdout=f, stderr=subprocess.STDOUT)
-    if r.returncode != 0:
-        print(f"[regen] ps2_recomp failed ({r.returncode}); see {log}")
-        return r.returncode
-    reject_data_candidates(log)
-    sync()
-    return 0
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pal", action="store_true", help="use config/killzone_pal.toml and PAL-specific outputs")
+    parser.add_argument("--elf", default=os.environ.get("KZ_ELF", os.environ.get("KZ_GAME_ELF", str(CONFIG_ELF))))
+    args = parser.parse_args()
+    if not args.elf:
+        parser.error("specify --elf or set KZ_GAME_ELF")
+    elf = Path(args.elf).expanduser().resolve()
+    if not elf.is_file():
+        parser.error(f"ELF does not exist: {elf}")
+
+    for directory in {
+        ANALYZER_TOML.parent,
+        FUNCTIONS_CSV.parent,
+        CODE_POINTERS.parent,
+        CODE_POINTER_REJECT.parent,
+        MERGED.parent,
+        TMP.parent,
+        GEN.parent,
+        RECOMP_LOG.parent,
+    }:
+        directory.mkdir(parents=True, exist_ok=True)
+    ensure_function_map(elf)
+    log = RECOMP_LOG
+    closure_entries: set[int] = set()
+    for attempt in range(1, 9):
+        MERGED.write_text(merged_config(elf, closure_entries))
+        if TMP.exists():
+            shutil.rmtree(TMP)
+        with log.open("w") as f:
+            result = subprocess.run([str(RECOMP), str(MERGED)], stdout=f, stderr=subprocess.STDOUT)
+        rejected = reject_data_candidates(log, closure_entries)
+        if rejected:
+            closure_entries.difference_update(rejected)
+            print(
+                f"[regen] retrying after rejecting {len(rejected)} data candidate(s), "
+                f"attempt {attempt}/8"
+            )
+            continue
+        if result.returncode != 0:
+            print(f"[regen] ps2_recomp failed ({result.returncode}); see {log}")
+            return result.returncode
+        rejected_entries = load_rejected_entries()
+        new_tails = (
+            find_missing_tail_entries(TMP, elf)
+            - rejected_entries
+            - closure_entries
+        )
+        new_resumes = (
+            find_missing_resume_entries(TMP)
+            - rejected_entries
+            - closure_entries
+        )
+        new_entries = new_tails | new_resumes
+        if new_entries:
+            closure_entries.update(new_entries)
+            print(
+                f"[regen] closing {len(new_tails)} tail and "
+                f"{len(new_resumes)} resume target(s), "
+                f"attempt {attempt}/8"
+            )
+            continue
+        sync()
+        return 0
+    print(f"[regen] dispatch closure did not converge after 8 attempts; see {log}")
+    return 1
 
 
-def reject_data_candidates(log: Path) -> None:
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def ensure_function_map(elf: Path) -> None:
+    current = False
+    if FUNCTIONS_CSV.is_file() and FUNCTIONS_METADATA.is_file():
+        try:
+            metadata = json.loads(FUNCTIONS_METADATA.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError as error:
+            print(f"[regen] invalid function-map metadata; regenerating: {error}")
+        else:
+            if not isinstance(metadata, dict):
+                print("[regen] invalid function-map metadata shape; regenerating")
+            else:
+                current = (
+                    metadata.get("schema_version") == 3
+                    and metadata.get("elf_sha256") == file_sha256(elf)
+                    and metadata.get("exporter_sha256") == file_sha256(FUNCTION_EXPORTER)
+                    and metadata.get("normalization")
+                    == "clamp_bodies_align_instructions_extend_delay_slots_v3"
+                )
+    if current:
+        return
+    subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(FUNCTION_MAP_SCRIPT),
+            "-Elf",
+            str(elf),
+            "-Output",
+            str(FUNCTIONS_CSV),
+            "-Metadata",
+            str(FUNCTIONS_METADATA),
+        ],
+        check=True,
+    )
+
+
+def find_missing_tail_entries(generated: Path, elf: Path) -> set[int]:
+    register_text = (generated / "register_functions.cpp").read_text(encoding="utf-8")
+    dispatch_addresses = {
+        int(address, 16)
+        for address in re.findall(r"// 0x([0-9A-Fa-f]+)", register_text)
+    }
+    tail_addresses = set()
+    pattern = re.compile(r"ps2DspTail\(ctx,\s*0x([0-9A-Fa-f]+)u\)")
+    legacy_pattern = re.compile(r"ctx->pc = 0x([0-9A-Fa-f]+)u;\s*return;")
+    legacy_dispatch_pattern = re.compile(r"dispatchGuestBranch\(rdram,\s*ctx,\s*0x([0-9A-Fa-f]+)u")
+    for source in generated.glob("*.cpp"):
+        if source.name == "register_functions.cpp":
+            continue
+        text = source.read_text(encoding="utf-8", errors="replace")
+        tail_addresses.update(int(address, 16) for address in pattern.findall(text))
+        if os.environ.get("PS2X_CODEGEN_DSP", "1") == "0":
+            tail_addresses.update(int(address, 16) for address in legacy_pattern.findall(text))
+            tail_addresses.update(int(address, 16) for address in legacy_dispatch_pattern.findall(text))
+
+    elf_data = elf.read_bytes()
+    text_address, _, text_size = next(
+        (address, offset, size)
+        for name, address, offset, size in sections(elf_data)
+        if name == ".text"
+    )
+    text_end = text_address + text_size
+    return {
+        address
+        for address in tail_addresses - dispatch_addresses
+        if address % 4 == 0 and text_address <= address < text_end
+    }
+
+
+def find_missing_resume_entries(generated: Path) -> set[int]:
+    register_text = (generated / "register_functions.cpp").read_text(encoding="utf-8")
+    dispatch_addresses = {
+        int(address, 16)
+        for address in re.findall(r"// 0x([0-9A-Fa-f]+)", register_text)
+    }
+    resume_addresses = set()
+    pattern = re.compile(r"case 0x([0-9A-Fa-f]+)u:\s*goto label_")
+    return_pattern = re.compile(r"// 0x([0-9A-Fa-f]+):[^\n]*\bjr\s+\$ra\b")
+    for source in generated.glob("*.cpp"):
+        if source.name == "register_functions.cpp":
+            continue
+        text = source.read_text(encoding="utf-8", errors="replace")
+        resume_addresses.update(int(address, 16) for address in pattern.findall(text))
+        if os.environ.get("PS2X_CODEGEN_DSP", "1") == "0":
+            resume_addresses.update(int(address, 16) for address in return_pattern.findall(text))
+
+    return {
+        address
+        for address in resume_addresses - dispatch_addresses
+        if address % 4 == 0
+    }
+
+
+def load_rejected_entries() -> set[int]:
+    rejected = set()
+    for reject_file in [*STATIC_REJECT_FILES, CODE_POINTER_REJECT]:
+        if reject_file.exists():
+            rejected.update(
+                int(line.split()[0], 16)
+                for line in reject_file.read_text().splitlines()
+                if line.strip() and not line.startswith("#")
+            )
+    return rejected
+
+
+def reject_data_candidates(log: Path, closure_entries: set[int]) -> set[int]:
     """Record added entry points whose bodies failed to decode (data embedded in .text) so the next regen skips them."""
-    cands = {int(l, 16) for l in CODE_POINTERS.read_text().split()}
+    cands = {
+        int(line, 16)
+        for line in CODE_POINTERS.read_text().split()
+    } | closure_entries
     bad = set()
     for line in log.read_text(errors="replace").splitlines():
         m = re.search(r"\[error\] unhandled-instruction function=entry_([0-9a-f]+) ", line)
         if m and int(m.group(1), 16) in cands:
             bad.add(int(m.group(1), 16))
-    reject = REJECT
+    reject = CODE_POINTER_REJECT
+    reject.parent.mkdir(parents=True, exist_ok=True)
     old = reject.read_text().splitlines() if reject.exists() else ["# data mistaken for code; generated by regen.py"]
     have = {l.split()[0].lower() for l in old if l.strip() and not l.startswith("#")}
     new = [f"0x{v:08X}" for v in sorted(bad) if f"0x{v:08x}" not in have]
     if new:
         reject.write_text("\n".join(old + new) + "\n")
         print(f"[regen] {len(new)} entry points rejected as data (take effect next regen)")
+    return bad
 
 
 if __name__ == "__main__":

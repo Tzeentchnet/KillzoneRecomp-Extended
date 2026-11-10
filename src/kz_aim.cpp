@@ -256,6 +256,7 @@ namespace
         }
         g_player = player;
         g_ctrl = ctrl;
+        kzInputMarkGameplayStarted();
         kzInputSetAimPatchActive(true);
 
         const auto now = std::chrono::steady_clock::now();

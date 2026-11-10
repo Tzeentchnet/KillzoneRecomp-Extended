@@ -1,0 +1,180 @@
+From 192d8092b75db1cd1562d11b7c79e4601d97c8f7 Mon Sep 17 00:00:00 2001
+From: Tzeentchnet <58480142+Tzeentchnet@users.noreply.github.com>
+Date: Sat, 17 Oct 2026 19:41:23 -0700
+Subject: [PATCH] Bound MPEG refill recursion
+
+---
+ ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp    | 13 +++-
+ ps2xRuntime/src/lib/Kernel/Stubs/MPEG.h      |  1 +
+ ps2xTest/src/ps2_runtime_expansion_tests.cpp | 65 ++++++++++++++++++++
+ 3 files changed, 78 insertions(+), 1 deletion(-)
+
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+index 86a3fde..0579a42 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+@@ -581,6 +581,7 @@ namespace ps2_stubs
+             uint64_t presentationEndTickQ32 = std::numeric_limits<uint64_t>::max();
+             int64_t firstPresentedPts90k = -1;
+             uint64_t ptsPresentationBaseTickQ32 = 0u;
++            uint32_t prefetchCallbacksSincePicture = 0u;
+         };
+ 
+         struct MpegStreamCallbackEvent
+@@ -2048,6 +2049,12 @@ namespace ps2_stubs
+         playback.decodedFrames.push_back(std::move(frame));
+     }
+ 
++    void notifyMpegPssProgressForTesting()
++    {
++        std::lock_guard<std::mutex> lock(g_mpeg_stub_mutex);
++        ++g_mpeg_stub_state.pssBytesAppended;
++    }
++
+     void notifyMpegCdStreamStart(PS2Runtime *runtime)
+     {
+         (void)runtime;
+@@ -2694,6 +2701,7 @@ namespace ps2_stubs
+         constexpr uint32_t kMpegCbNodata = 1u; // sceMpegCbNodata
+         bool s_nodataMadeNoProgress = false;    // set for the retry after a callback that demuxed nothing
+         constexpr size_t kNodataReadAheadPictures = 4u;
++        constexpr uint32_t kMaxPrefetchCallbacksPerPicture = 2u; // bound time away from guest audio maintenance
+ 
+         // PS2X_MPEG_READAHEAD=0 turns the NoData read-ahead in sceMpegGetPicture off.
+         bool mpegNodataReadAheadDisabled()
+@@ -2876,12 +2884,14 @@ namespace ps2_stubs
+                 s_nodataMadeNoProgress = false;
+                 if (!lastMadeNoProgress && playback.decodedFrames.size() < kNodataReadAheadPictures &&
+                     g_mpeg_stub_state.cdStreamGeneration == 0u && !playback.streamEnded && !playback.sawSequenceEnd &&
+-                    !playback.decoderFailed && !mpegNodataReadAheadDisabled())
++                    !playback.decoderFailed && !mpegNodataReadAheadDisabled() &&
++                    playback.prefetchCallbacksSincePicture < kMaxPrefetchCallbacksPerPicture)
+                 {
+                     uint32_t nodataData = 0u;
+                     const uint32_t nodataFunc = mpegNodataCallback(mpegAddr, nodataData);
+                     if (nodataFunc != 0u && runtime->hasFunction(nodataFunc))
+                     {
++                        ++playback.prefetchCallbacksSincePicture;
+                         lock.unlock();
+                         invokeNodataCallback(rdram, ctx, runtime, mpegAddr, nodataFunc, nodataData);
+                     }
+@@ -2941,6 +2951,7 @@ namespace ps2_stubs
+                 g_mpeg_stats.intervalQ32 = frameIntervalQ32;
+                 playback.width = static_cast<uint32_t>(frame->width);
+                 playback.height = static_cast<uint32_t>(frame->height);
++                playback.prefetchCallbacksSincePicture = 0u;
+                 width = playback.width;
+                 height = playback.height;
+                 frameCount = playback.picturesServed;
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.h b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.h
+index bbf7edf..80757ce 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.h
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.h
+@@ -6,6 +6,7 @@ namespace ps2_stubs
+ {
+     void resetMpegStubState();
+     void enqueueMpegDecodedFrameForTesting(uint32_t mpegAddr);
++    void notifyMpegPssProgressForTesting();
+     void notifyMpegCdStreamStart(PS2Runtime *runtime = nullptr);
+     void notifyMpegCdStreamDataProduced(uint32_t byteCount, bool endOfStream);
+     void notifyMpegCdStreamEof(PS2Runtime *runtime = nullptr);
+diff --git a/ps2xTest/src/ps2_runtime_expansion_tests.cpp b/ps2xTest/src/ps2_runtime_expansion_tests.cpp
+index 4772f3f..d8165c4 100644
+--- a/ps2xTest/src/ps2_runtime_expansion_tests.cpp
++++ b/ps2xTest/src/ps2_runtime_expansion_tests.cpp
+@@ -184,6 +184,8 @@ namespace
+     std::atomic<uint32_t> gMpegWaitStage{0u};
+     std::atomic<uint32_t> gMpegNoDuplicateStage{0u};
+     std::atomic<uint32_t> gMpegNoDuplicateProducerStage{0u};
++    std::atomic<uint32_t> gMpegPrefetchCallbackCount{0u};
++    std::atomic<uint32_t> gMpegPrefetchStage{0u};
+ 
+     constexpr uint32_t kMpegWaitMainPc = 0x00125000u;
+     constexpr uint32_t kMpegWaitResumePc = 0x00125010u;
+@@ -195,6 +197,11 @@ namespace
+     constexpr uint32_t kMpegNoDuplicateProducerPc = 0x00125050u;
+     constexpr uint32_t kMpegNoDuplicateHandle = 0x00124000u;
+     constexpr uint32_t kMpegNoDuplicateImage = 0x00131000u;
++    constexpr uint32_t kMpegPrefetchMainPc = 0x00125060u;
++    constexpr uint32_t kMpegPrefetchResumePc = 0x00125070u;
++    constexpr uint32_t kMpegPrefetchCallbackPc = 0x00125080u;
++    constexpr uint32_t kMpegPrefetchHandle = 0x00124500u;
++    constexpr uint32_t kMpegPrefetchImage = 0x00132000u;
+     constexpr uint32_t kIpuInitMainPc = 0x00125100u;
+     constexpr uint32_t kIpuInitResumePc = 0x00125104u;
+     constexpr uint32_t kIpuSetD4Pc = 0x00126428u;
+@@ -284,6 +291,30 @@ namespace
+         ctx->pc = 0u;
+     }
+ 
++    void testMpegPrefetchMain(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
++    {
++        gMpegPrefetchStage.store(1u, std::memory_order_release);
++        setRegU32(*ctx, 4, kMpegPrefetchHandle);
++        setRegU32(*ctx, 5, kMpegPrefetchImage);
++        ctx->pc = kMpegPrefetchResumePc;
++        ps2_stubs::sceMpegGetPicture(rdram, ctx, runtime);
++    }
++
++    void testMpegPrefetchResume(uint8_t *, R5900Context *ctx, PS2Runtime *runtime)
++    {
++        gMpegPrefetchStage.store(3u, std::memory_order_release);
++        ctx->pc = 0u;
++        runtime->requestStop();
++    }
++
++    void testMpegPrefetchCallback(uint8_t *, R5900Context *ctx, PS2Runtime *)
++    {
++        gMpegPrefetchCallbackCount.fetch_add(1u, std::memory_order_acq_rel);
++        gMpegPrefetchStage.store(2u, std::memory_order_release);
++        ps2_stubs::notifyMpegPssProgressForTesting();
++        ctx->pc = 0u;
++    }
++
+     void testRecordMpegStreamCallback(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+     {
+         if (!rdram || !ctx)
+@@ -811,6 +842,40 @@ void register_ps2_runtime_expansion_tests()
+                      "only the injected decoder frame should be counted as served");
+         });
+ 
++        tc.Run("sceMpegGetPicture caps proactive refills before presenting a picture", [](TestCase &t)
++        {
++            PS2Runtime runtime;
++            std::vector<uint8_t> rdram(PS2_RAM_SIZE, 0u);
++            ps2_stubs::resetMpegStubState();
++            for (int i = 0; i < 4; ++i)
++            {
++                ps2_stubs::enqueueMpegDecodedFrameForTesting(kMpegPrefetchHandle);
++            }
++
++            runtime.registerFunction(kMpegPrefetchMainPc, testMpegPrefetchMain);
++            runtime.registerFunction(kMpegPrefetchResumePc, testMpegPrefetchResume);
++            runtime.registerFunction(kMpegPrefetchCallbackPc, testMpegPrefetchCallback);
++
++            R5900Context callbackCtx{};
++            setRegU32(callbackCtx, 4, kMpegPrefetchHandle);
++            setRegU32(callbackCtx, 5, 1u);
++            setRegU32(callbackCtx, 6, kMpegPrefetchCallbackPc);
++            setRegU32(callbackCtx, 7, 0u);
++            ps2_stubs::sceMpegAddCallback(rdram.data(), &callbackCtx, &runtime);
++
++            gMpegPrefetchCallbackCount.store(0u, std::memory_order_release);
++            gMpegPrefetchStage.store(0u, std::memory_order_release);
++            R5900Context mainContext{};
++            mainContext.pc = kMpegPrefetchMainPc;
++            runtime.eeScheduler().reset(rdram.data(), mainContext);
++            runtime.eeScheduler().run();
++
++            t.Equals(gMpegPrefetchCallbackCount.load(std::memory_order_acquire), 2u,
++                     "low-water decoded queue should cap consecutive proactive refill callbacks");
++            t.Equals(gMpegPrefetchStage.load(std::memory_order_acquire), 3u,
++                     "picture delivery should resume after the prefetch callback");
++        });
++
+         tc.Run("sceSdRemote isolates voice transfers from block streaming state", [](TestCase &t)
+         {
+             std::vector<uint8_t> rdram(PS2_RAM_SIZE, 0u);
+-- 
+2.55.0.windows.5
+

@@ -1,14 +1,17 @@
 // kzgs: glue between the public API (src/kzgs.cpp) and the host shims (shim/*.cpp).
 #pragma once
 
+#include "kz_host/core.h"
+
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace kzgs
 {
-	// Window handed to PCSX2 through Host::AcquireRenderWindow(). nullptr = surfaceless (no swap chain).
-	void SetRenderWindow(void* hwnd);
+	// Window handed to PCSX2 through Host::AcquireRenderWindow(). An empty handle is surfaceless.
+	void SetRenderWindow(const kz::host::NativeWindow& window);
 
 	// Last error reported by the GS through Host::ReportErrorAsync / ReportFormattedErrorAsync (thread-safe).
 	void ClearLastError();
@@ -22,10 +25,13 @@ namespace kzgs
 	// Measurement: while a sink is set, every Direct3D 11 Present first hands the finished back buffer (RGBA8) to it (src/kz_present11.cpp).
 	using PresentSink = void (*)(const uint8_t* rgba, int width, int height);
 	bool PresentCapture(PresentSink sink);
+	bool PresentCaptureD3D12(PresentSink sink);
+	bool InjectD3D12DeviceLoss();
+	int EndPresentVtableIndex();
 
 	// GSState::m_scanmask_used (src/kz_inspect.cpp): frames left in which PCSX2 treats the output as scan-masked (anti-blur is off while > 0).
 	int ScanmaskUsed();
-	std::string DescribeTargets(); // one line per render target of PCSX2's texture cache (src/kz_inspect.cpp)
+	std::string DescribeTargets(); // display mapping plus render/depth targets in PCSX2's texture cache (src/kz_inspect.cpp)
 
 	void SmaaSetEnabled(bool on);
 	void SmaaInstall();

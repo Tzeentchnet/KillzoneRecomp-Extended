@@ -1,6 +1,8 @@
 // Replays a GS trace recorded by the game (KZ_GS_TRACE, see src/kz_gs.cpp) through kzgs and saves output frames.
 //
-// Usage: kz_gs_replay <trace> <outdir> [--every N] [--upscale N] [--renderer d3d11|d3d12|vulkan] [--stats]
+// Usage: kz_gs_replay <trace> <outdir> [--every N] [--upscale N] [--renderer d3d11|d3d12|vulkan]
+//        [--fxaa] [--smaa] [--cas N] [--bilinear 0|1] [--sharp 0|1] [--crop L,T,R,B] [--present WxH]
+//        [--backbuffer] [--stats]
 //   --stats  also prints a histogram of GS registers written (PACKED A+D and PACKED reg descriptors) and the last
 //            value seen for the interesting ones.
 
@@ -32,9 +34,16 @@ namespace
         uint64_t tags[4] = {};
         uint32_t zMin = 0xFFFFFFFFu, zMax = 0;
         std::map<uint32_t, std::map<uint64_t, uint64_t>> distinct; // A+D reg -> value -> count (TEST/ZBUF/FRAME/ALPHA)
+        uint64_t tex1Writes = 0;
+        uint64_t mipEnabledTex1Writes = 0;
+        std::map<uint32_t, uint64_t> mipLevels;
+        std::map<uint32_t, uint64_t> minFilters;
+        std::map<uint64_t, uint64_t> mipWritesByFrame;
+        int mipKMin = 2047;
+        int mipKMax = -2048;
     };
 
-    void scan(const uint8_t *data, uint32_t size, Stats &st)
+    void scan(const uint8_t *data, uint32_t size, uint64_t upcomingFrame, Stats &st)
     {
         uint32_t off = 0;
         while (off + 16 <= size)
@@ -79,6 +88,24 @@ namespace
                             st.adWrites[static_cast<uint32_t>(addr & 0xFF)]++;
                             st.lastAd[static_cast<uint32_t>(addr & 0xFF)] = val;
                             const uint32_t a = static_cast<uint32_t>(addr & 0xFF);
+                            if (a == 0x14 || a == 0x15)
+                            {
+                                const uint32_t mxl = static_cast<uint32_t>((val >> 2) & 0x7);
+                                const uint32_t mmin = static_cast<uint32_t>((val >> 6) & 0x7);
+                                int k = static_cast<int>((val >> 32) & 0xFFF);
+                                if (k & 0x800)
+                                    k -= 0x1000;
+                                st.tex1Writes++;
+                                st.mipLevels[mxl]++;
+                                st.minFilters[mmin]++;
+                                st.mipKMin = std::min(st.mipKMin, k);
+                                st.mipKMax = std::max(st.mipKMax, k);
+                                if (mxl > 0 && mmin >= 2 && mmin <= 5)
+                                {
+                                    st.mipEnabledTex1Writes++;
+                                    st.mipWritesByFrame[upcomingFrame]++;
+                                }
+                            }
                             if (a == 0x47 || a == 0x48 || a == 0x4E || a == 0x4F || a == 0x4C || a == 0x42 || a == 0x06)
                                 st.distinct[a][val]++;
                         }
@@ -149,28 +176,90 @@ int main(int argc, char **argv)
     SetUnhandledExceptionFilter(crashFilter);
     if (argc < 3)
     {
-        std::fprintf(stderr, "usage: kz_gs_replay <trace> <outdir> [--every N] [--upscale N] [--renderer d3d11|d3d12|vulkan] [--stats]\n");
+        std::fprintf(stderr,
+                     "usage: kz_gs_replay <trace> <outdir> [--every N] [--upscale N] "
+                     "[--renderer d3d11|d3d12|vulkan] [--fxaa] [--smaa] [--cas N] "
+                     "[--aniso N] [--mip ps2|base] [--tex-replace 0|1] [--bilinear 0|1] [--sharp 0|1] "
+                     "[--aspect 4:3|16:9|stretch] [--crop L,T,R,B] [--present WxH] [--from N] [--to N] "
+                     "[--backbuffer] [--stats]\n");
         return 2;
     }
     const std::string tracePath = argv[1];
     const std::filesystem::path outDir = argv[2];
-    int every = 30, upscale = 2;
-    bool stats = false, fixDy = false;
+    int every = 30, upscale = 2, presentWidth = 0, presentHeight = 0;
+    uint64_t captureFrom = 1, captureTo = UINT64_MAX;
+    bool stats = false, fixDy = false, backbuffer = false;
     KzgsConfig cfg;
     for (int i = 3; i < argc; ++i)
     {
         const std::string a = argv[i];
         if (a == "--every" && i + 1 < argc) every = std::atoi(argv[++i]);
+        else if (a == "--from" && i + 1 < argc) captureFrom = std::strtoull(argv[++i], nullptr, 10);
+        else if (a == "--to" && i + 1 < argc) captureTo = std::strtoull(argv[++i], nullptr, 10);
         else if (a == "--upscale" && i + 1 < argc) upscale = std::atoi(argv[++i]);
         else if (a == "--stats") stats = true;
         else if (a == "--aniso" && i + 1 < argc) cfg.anisotropy = std::atoi(argv[++i]);
+        else if (a == "--mip" && i + 1 < argc)
+        {
+            const std::string mode = argv[++i];
+            if (mode == "base")
+                cfg.mipmapMode = KzgsMipmapMode::BaseOnly;
+            else if (mode != "ps2")
+            {
+                std::fprintf(stderr, "invalid --mip value: %s\n", mode.c_str());
+                return 2;
+            }
+        }
+        else if (a == "--tex-replace" && i + 1 < argc) cfg.loadTextureReplacements = std::atoi(argv[++i]) != 0;
         else if (a == "--fxaa") cfg.fxaa = true;
+        else if (a == "--smaa") cfg.smaa = true;
+        else if (a == "--backbuffer") backbuffer = true;
+        else if (a == "--cas" && i + 1 < argc) cfg.casSharpness = std::clamp(std::atoi(argv[++i]), 0, 100);
+        else if (a == "--bilinear" && i + 1 < argc) cfg.bilinearPresent = std::atoi(argv[++i]) != 0;
+        else if (a == "--sharp" && i + 1 < argc) cfg.sharpPresent = std::atoi(argv[++i]) != 0;
+        else if (a == "--crop" && i + 1 < argc)
+        {
+            if (std::sscanf(argv[++i], "%d,%d,%d,%d", &cfg.crop[0], &cfg.crop[1], &cfg.crop[2], &cfg.crop[3]) != 4)
+            {
+                std::fprintf(stderr, "invalid --crop value\n");
+                return 2;
+            }
+        }
+        else if (a == "--present" && i + 1 < argc)
+        {
+            if (std::sscanf(argv[++i], "%dx%d", &presentWidth, &presentHeight) != 2 ||
+                presentWidth <= 0 || presentHeight <= 0)
+            {
+                std::fprintf(stderr, "invalid --present value\n");
+                return 2;
+            }
+        }
         else if (a == "--adapter" && i + 1 < argc) cfg.adapter = argv[++i];
         else if (a == "--fix-dy") fixDy = true;
+        else if (a == "--aspect" && i + 1 < argc)
+        {
+            const std::string mode = argv[++i];
+            if (mode == "4:3")
+                cfg.aspect = KzgsAspect::Ratio4_3;
+            else if (mode == "16:9")
+                cfg.aspect = KzgsAspect::Ratio16_9;
+            else if (mode == "stretch")
+                cfg.aspect = KzgsAspect::Stretch;
+            else
+            {
+                std::fprintf(stderr, "invalid --aspect value: %s\n", mode.c_str());
+                return 2;
+            }
+        }
         else if (a == "--renderer" && i + 1 < argc)
         {
             const std::string r = argv[++i];
             cfg.renderer = r == "vulkan" ? KzgsRenderer::Vulkan : r == "d3d12" ? KzgsRenderer::D3D12 : KzgsRenderer::D3D11;
+        }
+        else
+        {
+            std::fprintf(stderr, "unknown or incomplete option: %s\n", a.c_str());
+            return 2;
         }
     }
     cfg.upscale = upscale;
@@ -184,15 +273,18 @@ int main(int argc, char **argv)
         return 1;
     }
     SDL_Init(SDL_INIT_VIDEO);
-    SDL_Window *win = SDL_CreateWindow("gs_replay", 1280, 896, SDL_WINDOW_HIDDEN);
+    const int windowWidth = presentWidth > 0 ? presentWidth : 1280;
+    const int windowHeight = presentHeight > 0 ? presentHeight : 896;
+    SDL_Window *win = SDL_CreateWindow("gs_replay", windowWidth, windowHeight, SDL_WINDOW_HIDDEN);
     void *hwnd = SDL_GetPointerProperty(SDL_GetWindowProperties(win), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+    const kz::host::NativeWindow nativeWindow = kz::host::NativeWindow::win32(hwnd);
     alignas(16) static uint8_t regs[0x2000] = {};
     std::string err;
     kzgsSetLogCallback([](int level, const char *msg) {
         if (level <= 1)
             std::fprintf(stderr, "[kzgs] %s\n", msg);
     });
-    if (!kzgsOpen(hwnd, cfg, regs, &err))
+    if (!kzgsOpen(nativeWindow, cfg, regs, &err))
     {
         std::fprintf(stderr, "kzgsOpen failed: %s\n", err.c_str());
         return 1;
@@ -218,7 +310,7 @@ int main(int argc, char **argv)
         if (hdr[0] == 1)
         {
             if (hdr[1] <= 3) packets[hdr[1]]++;
-            if (stats) scan(buf.data(), hdr[2], st);
+            if (stats) scan(buf.data(), hdr[2], frame + 1, st);
             kzgsGifTransfer(static_cast<int>(hdr[1]), buf.data(), hdr[2] / 16u);
         }
         else if (hdr[0] == 2)
@@ -234,13 +326,35 @@ int main(int argc, char **argv)
                         d = (d & ~(0x7FFull << 12)) | (0x32ull << 12) | ((off == 0xA0u) ? 0 : 0);
                     std::memcpy(regs + off, &d, 8);
                 }
+            const uint64_t upcomingFrame = frame + 1u;
+            const bool capture = every > 0 && upcomingFrame >= captureFrom && upcomingFrame <= captureTo &&
+                                 upcomingFrame % static_cast<uint64_t>(every) == 0u;
+            if (capture && backbuffer)
+                kzgsBurstArm(1, -1, -1);
             kzgsVsync(static_cast<int>(hdr[1]), true);
             ++frame;
-            if (every > 0 && frame % every == 0)
+            if (capture)
             {
                 std::vector<uint8_t> px;
                 int w = 0, h = 0;
-                if (kzgsReadback(px, w, h))
+                bool readbackOk = false;
+                if (backbuffer)
+                {
+                    kzgsSync();
+                    std::vector<KzgsBurstFrame> captured;
+                    readbackOk = kzgsBurstTake(captured) && captured.size() == 1u;
+                    if (readbackOk)
+                    {
+                        px = std::move(captured[0].rgba);
+                        w = captured[0].width;
+                        h = captured[0].height;
+                    }
+                }
+                else
+                {
+                    readbackOk = kzgsReadback(px, w, h, presentWidth, presentHeight);
+                }
+                if (readbackOk)
                 {
                     size_t nonBlack = 0;
                     for (size_t i = 0; i + 3 < px.size(); i += 4)
@@ -250,6 +364,11 @@ int main(int argc, char **argv)
                     savePng(px, w, h, (outDir / name).string());
                     std::printf("frame %llu: %dx%d nonblack %.1f%%\n", static_cast<unsigned long long>(frame), w, h,
                                 100.0 * nonBlack / (px.size() / 4 ? px.size() / 4 : 1));
+                }
+                else
+                {
+                    std::fprintf(stderr, "frame %llu: readback failed\n", static_cast<unsigned long long>(frame));
+                    return 1;
                 }
             }
         }
@@ -268,6 +387,23 @@ int main(int argc, char **argv)
         std::printf("\nA+D registers (count, last value):\n");
         for (auto &[r, n] : st.adWrites)
             std::printf("  %02X  %8llu  %016llx\n", r, static_cast<unsigned long long>(n), static_cast<unsigned long long>(st.lastAd[r]));
+        std::printf("TEX1 writes: %llu, mip-enabled states: %llu, K range %.4f..%.4f\n",
+                    static_cast<unsigned long long>(st.tex1Writes),
+                    static_cast<unsigned long long>(st.mipEnabledTex1Writes),
+                    st.tex1Writes ? static_cast<double>(st.mipKMin) / 16.0 : 0.0,
+                    st.tex1Writes ? static_cast<double>(st.mipKMax) / 16.0 : 0.0);
+        std::printf("  MXL:");
+        for (const auto &[value, count] : st.mipLevels)
+            std::printf(" %u:%llu", value, static_cast<unsigned long long>(count));
+        std::printf("\n  MMIN:");
+        for (const auto &[value, count] : st.minFilters)
+            std::printf(" %u:%llu", value, static_cast<unsigned long long>(count));
+        std::printf("\n");
+        std::printf("  mip-enabled writes by upcoming frame:");
+        for (const auto &[mipFrame, count] : st.mipWritesByFrame)
+            std::printf(" %llu:%llu", static_cast<unsigned long long>(mipFrame),
+                        static_cast<unsigned long long>(count));
+        std::printf("\n");
     }
     if (stats)
     {

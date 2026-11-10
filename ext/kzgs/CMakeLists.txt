@@ -8,6 +8,10 @@
 cmake_minimum_required(VERSION 3.24)
 project(kzgs C CXX ASM_MASM)
 
+if(NOT TARGET kz_host_core)
+	add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../host" "${CMAKE_CURRENT_BINARY_DIR}/kz_host")
+endif()
+
 if(NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
 	message(FATAL_ERROR "kzgs only supports MSVC x64.")
 endif()
@@ -23,6 +27,7 @@ set(KZGS_ISA "AVX2" CACHE STRING "Vector ISA the GS is compiled for (SSE4, AVX, 
 set_property(CACHE KZGS_ISA PROPERTY STRINGS MULTI SSE4 AVX AVX2)
 option(KZGS_BUILD_TEST "Build the kzgs_test executable" ${PROJECT_IS_TOP_LEVEL})
 option(KZGS_BUILD_TOOLS "Build kzgs debug tools (kzgs_replay)" ${PROJECT_IS_TOP_LEVEL})
+option(KZGS_ADDRESS_SANITIZER "Instrument kzgs with clang-cl AddressSanitizer" OFF)
 
 get_filename_component(KZGS_PCSX2_DIR "${KZGS_PCSX2_DIR}" ABSOLUTE)
 set(P2 "${KZGS_PCSX2_DIR}")
@@ -66,6 +71,13 @@ target_compile_options(kzgs_flags INTERFACE
 	"$<$<COMPILE_LANGUAGE:CXX>:/Zc:externConstexpr;/Zc:__cplusplus;/permissive-;/Zc:preprocessor>"
 	"$<$<COMPILE_LANGUAGE:C,CXX>:/utf-8;/Zo;/GS-;/fp:contract;/W1;/wd4005;/wd4996>"
 )
+if(KZGS_ADDRESS_SANITIZER)
+	if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+		message(FATAL_ERROR "KZGS_ADDRESS_SANITIZER requires clang-cl.")
+	endif()
+	target_compile_options(kzgs_flags INTERFACE $<$<COMPILE_LANGUAGE:C,CXX>:/fsanitize=address>)
+	target_link_options(kzgs_flags INTERFACE /fsanitize=address)
+endif()
 if(KZGS_ISA STREQUAL "AVX2")
 	target_compile_options(kzgs_flags INTERFACE $<$<COMPILE_LANGUAGE:C,CXX>:/arch:AVX2>)
 elseif(KZGS_ISA STREQUAL "AVX")
@@ -308,7 +320,7 @@ endif()
 
 file(GLOB KZGS_SHIM_SRCS CONFIGURE_DEPENDS "${KZGS_ROOT}/shim/*.cpp")
 add_library(kzgs_gs OBJECT ${KZGS_GS_SRCS} ${KZGS_SHIM_SRCS})
-target_link_libraries(kzgs_gs PRIVATE kzgs_flags)
+target_link_libraries(kzgs_gs PRIVATE kzgs_flags kz_host_core)
 target_precompile_headers(kzgs_gs PRIVATE "${P2SRC}/PrecompiledHeader.h")
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -319,6 +331,7 @@ add_library(kzgs STATIC
 	"${KZGS_ROOT}/src/kz_smaa11.cpp"
 	"${KZGS_ROOT}/src/kz_smaa_vt.cpp"
 	"${KZGS_ROOT}/src/kz_present11.cpp"
+	"${KZGS_ROOT}/src/kz_present12.cpp"
 	"${KZGS_ROOT}/src/kz_inspect.cpp"
 	"${KZGS_ROOT}/include/kzgs.h"
 	$<TARGET_OBJECTS:kzgs_3rdparty>
@@ -326,6 +339,7 @@ add_library(kzgs STATIC
 	$<TARGET_OBJECTS:kzgs_gs>
 )
 target_link_libraries(kzgs PRIVATE kzgs_flags)
+target_link_libraries(kzgs PUBLIC kz_host_core)
 target_precompile_headers(kzgs PRIVATE "${P2SRC}/PrecompiledHeader.h")
 target_include_directories(kzgs PUBLIC "${KZGS_ROOT}/include")
 target_include_directories(kzgs PRIVATE "${KZGS_ROOT}/third_party/smaa")
@@ -339,6 +353,7 @@ target_include_directories(kzgs PRIVATE "${KZGS_ROOT}/third_party/smaa")
 # CMakeLists.txt (kz_pcsx2_libs) links kzgs, kzipu, kzspu2, then all sse4 libraries, then all avx, then all avx2.
 # A standalone kzgs build links its own three here.
 # ---------------------------------------------------------------------------------------------------------------------
+set(_kzgs_component_link kzgs)
 if(KZGS_ISA STREQUAL "MULTI")
 	set(KZGS_ARCH_sse4 "")
 	set(KZGS_ARCH_avx "/arch:AVX")
@@ -359,6 +374,9 @@ if(KZGS_ISA STREQUAL "MULTI")
 	if(PROJECT_IS_TOP_LEVEL)
 		list(JOIN _kzgs_isa_libs "," _kzgs_isa_libs)
 		target_link_libraries(kzgs INTERFACE "$<LINK_LIBRARY:WHOLE_ARCHIVE,${_kzgs_isa_libs}>")
+	else()
+		list(JOIN _kzgs_isa_libs "," _kzgs_component_isa_libs)
+		set(_kzgs_component_link "$<LINK_LIBRARY:WHOLE_ARCHIVE,kzgs,${_kzgs_component_isa_libs}>")
 	endif()
 endif()
 
@@ -406,16 +424,20 @@ endfunction()
 
 if(KZGS_BUILD_TEST)
 	add_executable(kzgs_test "${KZGS_ROOT}/test/kzgs_test.cpp")
-	target_link_libraries(kzgs_test PRIVATE kzgs)
+	target_link_libraries(kzgs_test PRIVATE "${_kzgs_component_link}")
 	target_compile_features(kzgs_test PRIVATE cxx_std_20)
-	target_compile_definitions(kzgs_test PRIVATE KZGS_TEST_OUT_DIR="${KZGS_ROOT}/test")
+	target_compile_definitions(kzgs_test PRIVATE KZGS_TEST_OUT_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-output")
 	kzgs_stage_resources(kzgs_test)
+
+	add_executable(kzgs_palette_test "${KZGS_ROOT}/test/kzgs_palette_test.cpp")
+	target_link_libraries(kzgs_palette_test PRIVATE "${_kzgs_component_link}" kzgs_flags)
+	target_compile_features(kzgs_palette_test PRIVATE cxx_std_20)
 endif()
 
 if(KZGS_BUILD_TOOLS)
 	# Debug replay of game GS traces with access to PCSX2 GS internals (compiled with kzgs' private flags).
 	add_executable(kzgs_replay "${KZGS_ROOT}/tools/kzgs_replay.cpp")
-	target_link_libraries(kzgs_replay PRIVATE kzgs kzgs_flags)
+	target_link_libraries(kzgs_replay PRIVATE "${_kzgs_component_link}" kzgs_flags)
 	target_precompile_headers(kzgs_replay PRIVATE "${P2SRC}/PrecompiledHeader.h")
 	kzgs_stage_resources(kzgs_replay)
 endif()

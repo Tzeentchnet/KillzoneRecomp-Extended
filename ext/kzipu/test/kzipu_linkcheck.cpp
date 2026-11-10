@@ -18,7 +18,7 @@ int main(int argc, char** argv)
 	if (argc > 99) // never true; keeps the kzgs API referenced so kzgs.lib is pulled into the link
 	{
 		KzgsConfig gcfg;
-		kzgsOpen(nullptr, gcfg, nullptr, &err);
+		kzgsOpen({}, gcfg, nullptr, &err);
 		kzgsClose();
 	}
 	std::printf("kzipu init %s (INTC x%u), kzvu init %s, kzgs open=%d\n", ipuOk ? "ok" : "failed", st.intcCount,

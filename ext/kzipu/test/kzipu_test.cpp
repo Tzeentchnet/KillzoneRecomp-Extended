@@ -1042,6 +1042,11 @@ int main(int argc, char** argv)
 		else if (a == "--frames" && i + 1 < argc) maxFrames = std::stoul(argv[++i]);
 		else if (a == "--es-mb" && i + 1 < argc) esMb = std::stoul(argv[++i]);
 	}
+	if (iso.empty())
+	{
+		std::printf("FAIL: specify --iso with an authorized disc image\n");
+		return 2;
+	}
 	constexpr double kMinPsnr = 30.0;
 	std::error_code ec;
 	fs::create_directories(outDir, ec);

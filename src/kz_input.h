@@ -64,6 +64,8 @@ void kzInputPulseButton(uint16_t padMask, uint32_t milliseconds);
 
 // When the engine aim patch is active, mouse motion goes there; otherwise it is mapped onto the right stick.
 void kzInputSetAimPatchActive(bool active);
+// Records the first validated local-player controller update for gameplay-relative automation.
+void kzInputMarkGameplayStarted();
 
 // Next / previous weapon (bindings NextWeapon / PrevWeapon, or KZ_INPUT_SCRIPT "t:nextweapon" / "t:prevweapon"). Each press
 // queues one step; a step the game could not take (a weapon change is still running) stays queued for 0.4 s, then is dropped.
@@ -82,9 +84,14 @@ enum : uint16_t
 };
 void kzInputSetTextEntryActive();
 bool kzInputTakeTextKey(uint16_t &key);
+// True while the on-screen keyboard is open. Text queued before it opens is discarded when it opens.
+bool kzInputTextEntryOpen();
+// Queues keys for the open on-screen keyboard as if typed (printable ASCII or the KZ_TEXT_* codes).
+void kzInputQueueText(const std::string &text);
 // KZ_INPUT_SCRIPT "t:type=abc" queues text at t (automated tests of text entry; "\n" is not available, use t:enter).
 
-// Clock for KZ_INPUT_SCRIPT event times (seconds). Default: wall time.
+// Clock for KZ_INPUT_SCRIPT event times (seconds). Default: wall time. Prefix an event time with `g` to count from
+// the first gameplay frame, or `v` to count from the first text-entry Enter.
 void kzInputSetScriptClock(double (*clock)());
 
 // Raw Key=Target pairs from killzone.ini [Bindings], or the defaults when the section is missing.

@@ -24,6 +24,8 @@ std::vector<std::vector<uint8_t>> g_recompGifPackets;
 PS2Memory::PS2Memory() {}
 PS2Memory::~PS2Memory() {}
 
+GS::GS() = default;
+
 void PS2Memory::submitGifPacket(GifPathId pathId, const uint8_t* data, uint32_t sizeBytes, bool, bool)
 {
 	g_recompGifPackets.emplace_back(data, data + sizeBytes);
@@ -32,6 +34,12 @@ void PS2Memory::submitGifPacket(GifPathId pathId, const uint8_t* data, uint32_t 
 void GS::processGIFPacket(const uint8_t*, uint32_t)
 {
 	std::abort(); // never reached: VU1Interpreter prefers PS2Memory::submitGifPacket when it has a memory object
+}
+
+GS& recompGs()
+{
+	static GS gs;
+	return gs;
 }
 
 PS2Memory* recompCreateMemory(uint8_t* vu1Code, uint8_t* vu1Data)

@@ -106,6 +106,28 @@ namespace
         bool quit = false;
     };
 
+    void applyValidatedGraphicsPreset(KzConfig &cfg)
+    {
+        cfg.renderer = KzRenderer::D3D12;
+        cfg.vsync = true;
+        cfg.upscale = 0;
+        cfg.aspect = KzAspect::Widescreen16x9;
+        cfg.anisotropy = 16;
+        cfg.mipmapMode = KzMipmapMode::HighestDetail;
+        cfg.fxaa = false;
+        cfg.smaa = false;
+        cfg.textureReplacement = false;
+        cfg.bilinear = true;
+        cfg.sharpScaling = true;
+        cfg.sharpen = 30;
+        cfg.noiseFilter = false;
+        cfg.motionBlur = false;
+        cfg.glow = false;
+        cfg.lensBlur = false;
+        cfg.renderDistance = 2.0f;
+        cfg.lodScale = 1.0f;
+    }
+
     void onFileChosen(void *userdata, const char *const *files, int)
     {
         auto *st = static_cast<LauncherState *>(userdata);
@@ -308,7 +330,9 @@ namespace
                                                  "Auto: on for the US disc, off for the European disc.");
                         enumCombo<int>("##threaded", cfg.threadedGraphics,
                                        {{-1, "Auto"}, {1, "On (faster, less stable)"}, {0, "Off (stable, slower)"}});
-                        toggleRow("Skip intro movies", "Skips the long intro movie after the logos. Story cutscenes still play.", cfg.skipIntro);
+                        toggleRow("Skip intro movie",
+                                  "Skips the long intro after the Sony and Guerrilla logos. Story cutscenes still play.",
+                                  cfg.skipLongIntro);
                         toggleRow("Skip logos", "Runs the Sony and Guerrilla logo screens at startup through in a moment.", cfg.skipLogos);
                         ImGui::EndTable();
                     }
@@ -323,6 +347,13 @@ namespace
                     ImGui::AlignTextToFramePadding();
                     ImGui::TextDisabled("Presets:");
                     ImGui::SameLine();
+                    if (ImGui::Button("Validated enhancements"))
+                        applyValidatedGraphicsPreset(cfg);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Measured stock-game test setup: D3D12, V-Sync on, auto render scale, 16x anisotropy,\n"
+                                          "base-mip detail, replacement textures off, clean PS2 effects,\n"
+                                          "2x view distance and 30%% sharpening.");
+                    ImGui::SameLine();
                     if (ImGui::Button("Sharp and clean"))
                     {
                         cfg.fxaa = false; cfg.smaa = true; cfg.sharpScaling = true; cfg.bilinear = true; cfg.anisotropy = 16;
@@ -332,6 +363,7 @@ namespace
                     if (ImGui::Button("Original PS2 look"))
                     {
                         cfg.fxaa = false; cfg.smaa = false; cfg.sharpScaling = false; cfg.bilinear = true;
+                        cfg.mipmapMode = KzMipmapMode::PS2;
                         cfg.noiseFilter = true; cfg.motionBlur = true; cfg.glow = true; cfg.lensBlur = true;
                         cfg.renderDistance = 1.0f; cfg.lodScale = 1.0f; cfg.sharpen = 0; cfg.fov = 0.0f; cfg.weaponFov = 0.0f;
                     }
@@ -339,14 +371,16 @@ namespace
                     section("Output");
                     if (beginRows("output"))
                     {
-                        row("Renderer", "Direct3D 11 is the tested default.");
+                        row("Renderer", "Choose the graphics API used to render and present the game.");
                         enumCombo<KzRenderer>("##renderer", cfg.renderer,
                                               {{KzRenderer::D3D11, "Direct3D 11"}, {KzRenderer::D3D12, "Direct3D 12"}, {KzRenderer::Vulkan, "Vulkan"}});
-                        row("Internal resolution", "Higher = sharper edges. Auto matches your display.");
-                        const char *scales[] = {"Auto (match display)", "1x (PS2 native 640x448)", "2x", "3x (about 1080p)", "4x (about 1440p)",
+                        row("Internal render scale", "Integer GS render scale. Auto chooses the smallest whole scale that covers the output height.");
+                        const char *scales[] = {"Auto (from output height)", "1x (native GS)", "2x", "3x (about 1080p)", "4x (about 1440p)",
                                                 "5x", "6x (about 4K)", "7x", "8x"};
                         ImGui::Combo("##upscale", &cfg.upscale, scales, IM_ARRAYSIZE(scales));
-                        row("Aspect ratio", "Ultrawide: more of the world at the sides, HUD stays in the middle 16:9, menus and movies get side bars.");
+                        row("Aspect ratio",
+                            "16:9 uses the game's native widescreen FOV and HUD. Ultrawide shows more at the sides while "
+                            "keeping the HUD in the middle; menus and movies get side bars.");
                         enumCombo<KzAspect>("##aspect", cfg.aspect,
                                             {{KzAspect::Widescreen16x9, "16:9 widescreen (native)"},
                                              {KzAspect::Classic4x3, "4:3 original"},
@@ -354,7 +388,7 @@ namespace
                                              {KzAspect::UltrawideAuto, "Ultrawide: match window (more view at the sides)"},
                                              {KzAspect::Ultrawide21x9, "Ultrawide 21:9"},
                                              {KzAspect::Ultrawide32x9, "Ultrawide 32:9"}});
-                        row("Scaling to the screen", "How the picture is fitted to your display.");
+                        row("Output scaling filter", "How the rendered picture is fitted to the output. This does not change internal render scale.");
                         int scaling = cfg.sharpScaling ? 0 : 1;
                         const char *scalings[] = {"Sharp (crisp pixels)", "Smooth (softer)"};
                         if (ImGui::Combo("##scaling", &scaling, scalings, 2))
@@ -375,7 +409,19 @@ namespace
                     section("Anti-aliasing");
                     if (beginRows("aa"))
                     {
-                        toggleRow("SMAA", "Smooths jagged edges; costs a little fine texture detail. Direct3D 11 only.", cfg.smaa);
+                        const bool smaaAvailable = kzRendererSupportsSmaa(cfg.renderer);
+                        row("SMAA", smaaAvailable
+                                        ? "Smooths jagged edges; costs a little fine texture detail."
+                                        : "Unavailable on this renderer. Enable FXAA explicitly or raise internal resolution.");
+                        ImGui::PushID("SMAA");
+                        ImGui::BeginDisabled(!smaaAvailable);
+                        ImGui::Checkbox("##v", &cfg.smaa);
+                        ImGui::EndDisabled();
+                        ImGui::SameLine();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted(smaaAvailable ? (cfg.smaa ? "On" : "Off")
+                                                           : "Unavailable (Direct3D 11 only)");
+                        ImGui::PopID();
                         toggleRow("FXAA", "Softens the whole picture slightly.", cfg.fxaa, "On (softer)", "Off");
                         ImGui::EndTable();
                     }
@@ -388,7 +434,8 @@ namespace
                         const char *filterings[] = {"Bilinear (as the game intends)", "Nearest (blocky pixels)"};
                         if (ImGui::Combo("##filtering", &filtering, filterings, 2))
                             cfg.bilinear = filtering == 0;
-                        row("Anisotropic filtering", "Keeps ground and wall textures sharp at a distance.");
+                        row("Anisotropic filtering",
+                            "Improves eligible angled triangle textures. Paletted, sprite and manual-mipmap draws are unaffected.");
                         const int anisoValues[] = {0, 2, 4, 8, 16};
                         const char *aniso[] = {"Off", "2x", "4x", "8x", "16x"};
                         int anisoIdx = static_cast<int>(std::find(std::begin(anisoValues), std::end(anisoValues), cfg.anisotropy) - std::begin(anisoValues));
@@ -396,6 +443,11 @@ namespace
                             anisoIdx = 4;
                         if (ImGui::Combo("##aniso", &anisoIdx, aniso, 5))
                             cfg.anisotropy = anisoValues[anisoIdx];
+                        row("Mipmap detail",
+                            "PS2 transitions use authored lower-resolution mip levels. Highest detail always samples the base level.");
+                        enumCombo<KzMipmapMode>("##mipmapping", cfg.mipmapMode,
+                                               {{KzMipmapMode::PS2, "PS2 transitions"},
+                                                {KzMipmapMode::HighestDetail, "Highest detail (base mip only)"}});
                         toggleRow("Replacement textures", "Loads texture packs from the textures folder.", cfg.textureReplacement);
                         ImGui::EndTable();
                     }
@@ -413,10 +465,16 @@ namespace
                     section("Detail");
                     if (beginRows("detail"))
                     {
-                        row("View distance", "Pushes the fog back. 2x costs almost nothing.");
-                        ImGui::SliderFloat("##renderdist", &cfg.renderDistance, 1.0f, 4.0f, "%.1fx");
-                        row("Model detail distance", "Keeps detailed models further away. 4x costs about 8 % fps.");
-                        ImGui::SliderFloat("##lod", &cfg.lodScale, 1.0f, 4.0f, "%.1fx");
+                        row("View distance",
+                            "Pushes the fog back. 2x is the supported maximum; farther views expose enemy spawns "
+                            "and low-detail background geometry.");
+                        ImGui::SliderFloat("##renderdist", &cfg.renderDistance, 1.0f, 2.0f, "%.1fx");
+                        row("Model detail distance",
+                            "Unavailable: elevated model LOD hangs Escape in interactive gameplay.");
+                        cfg.lodScale = 1.0f;
+                        ImGui::BeginDisabled();
+                        ImGui::SliderFloat("##lod", &cfg.lodScale, 1.0f, 1.0f, "Unavailable (1x)");
+                        ImGui::EndDisabled();
                         row("Sharpening", "Extra edge contrast on the final picture (30 % by default).");
                         ImGui::SliderInt("##sharpen", &cfg.sharpen, 0, 100, cfg.sharpen == 0 ? "Off" : "%d%%");
                         ImGui::EndTable();
@@ -447,7 +505,7 @@ namespace
                     {
                         row("Stick dead zone", "Controllers are detected automatically (PS2 layout).");
                         ImGui::SliderFloat("##deadzone", &cfg.stickDeadzone, 0.0f, 0.5f, "%.2f");
-                        row("Stick range", "1.33 gives full speed on diagonals like a PS2 pad. 1.00 = the controller's raw circle.");
+                        row("Stick range", "1.33 gives full-speed diagonals like a PS2 pad; 1.00 keeps the controller's raw circle.");
                         ImGui::SliderFloat("##range", &cfg.stickRange, 1.0f, 1.5f, "%.2f");
                         ImGui::EndTable();
                     }
@@ -471,9 +529,17 @@ namespace
                     ImGui::TextDisabled("To change keys, edit the [Bindings] section of killzone.ini.");
                     if (ImGui::Button("Open killzone.ini"))
                     {
-                        kzSaveConfig(kzConfigPath(), cfg);
-                        const std::string url = "file:///" + kzConfigPath().generic_string();
-                        SDL_OpenURL(url.c_str());
+                        if (kzSaveConfig(kzConfigPath(), cfg))
+                        {
+                            const std::string url = "file:///" + kzConfigPath().generic_string();
+                            SDL_OpenURL(url.c_str());
+                        }
+                        else
+                        {
+                            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Killzone",
+                                                     "Could not save killzone.ini. See killzone.log for details.",
+                                                     window);
+                        }
                     }
                 }
                 ImGui::EndChild();
@@ -489,6 +555,65 @@ namespace
                         ImGui::SliderInt("##volume", &cfg.masterVolume, 0, 100, "%d%%");
                         ImGui::EndTable();
                     }
+                }
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Testing", nullptr, forcedTab("Testing")))
+            {
+                if (beginTabBody("testing"))
+                {
+                    section("Campaign");
+                    if (beginRows("campaign"))
+                    {
+                        toggleRow("Unlock all campaign levels",
+                                  "Every level, difficulty and animatic can be chosen with any profile. Your saves and progress are not changed.",
+                                  cfg.unlockAllLevels, "On (all unlocked)", "Off (normal progression)");
+                        ImGui::EndTable();
+                    }
+                    section("Start-up");
+                    if (beginRows("startup"))
+                    {
+                        toggleRow("Skip intro",
+                                  "Goes straight to the main menu: no logos, no intro movie. Known issue: loading a late "
+                                  "chapter afterwards sometimes crashes (being investigated).",
+                                  cfg.skipIntro,
+                                  "On (straight to menu)", "Off (logos and intro)");
+                        row("Start in", "Clicks through the menus into this chapter with the first profile on the memory "
+                                        "card. On an empty isolated test card, the configured test profile is created "
+                                        "through the game's front end. Skips the intro and unlocks all levels.");
+                        const std::string startLabel = cfg.startLevel == 0 ? "Main menu (normal start)" : "Chapter " + std::to_string(cfg.startLevel);
+                        if (ImGui::BeginCombo("##startlevel", startLabel.c_str()))
+                        {
+                            if (ImGui::Selectable("Main menu (normal start)", cfg.startLevel == 0))
+                                cfg.startLevel = 0;
+                            for (int level = 1; level <= 11; ++level)
+                                if (ImGui::Selectable(("Chapter " + std::to_string(level)).c_str(), cfg.startLevel == level))
+                                    cfg.startLevel = level;
+                            ImGui::EndCombo();
+                        }
+                        row("Difficulty", "Used with Start in.");
+                        ImGui::BeginDisabled(cfg.startLevel == 0);
+                        const char *difficulties[] = {"Easy", "Normal", "Hard"};
+                        ImGui::Combo("##startdifficulty", &cfg.startDifficulty, difficulties, 3);
+                        ImGui::EndDisabled();
+                        ImGui::EndTable();
+                    }
+                    section("Memory card");
+                    if (beginRows("card"))
+                    {
+                        toggleRow("Test memory card",
+                                  "Uses a separate memory card (the testcard folder next to killzone.ini), so testing never "
+                                  "touches your profiles. Recommended with Start in.",
+                                  cfg.testMemoryCard, "On (test card)", "Off (your memory card)");
+                        row("Empty-card profile",
+                            "Used only when Start in reaches Create Profile on an empty isolated test card. Override with "
+                            "[Testing] DefaultProfile or KZ_DEFAULT_PROFILE.");
+                        ImGui::TextUnformatted(cfg.defaultProfile.c_str());
+                        ImGui::EndTable();
+                    }
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("Testing options are for development. Turn them off for normal play.");
                 }
                 ImGui::EndChild();
                 ImGui::EndTabItem();
@@ -600,7 +725,13 @@ bool kzRunLauncher(KzConfig &cfg)
         renderFrame(st, s);
         SDL_RenderPresent(s.renderer);
     }
-    kzSaveConfig(kzConfigPath(), cfg);
+    if (!kzSaveConfig(kzConfigPath(), cfg))
+    {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Killzone",
+                                 "Could not save killzone.ini. See killzone.log for details.", s.window);
+        closeSession(s);
+        return false;
+    }
     closeSession(s);
     return st.play;
 }
@@ -623,4 +754,56 @@ bool kzLauncherScreenshot(KzConfig &cfg, const char *pngPath)
     }
     closeSession(s);
     return ok;
+}
+
+int kzLauncherSelfTest()
+{
+    int failures = 0;
+    const auto check = [&](bool condition, const char *label)
+    {
+        if (!condition)
+        {
+            std::fprintf(stderr, "[selftest] FAIL: launcher %s\n", label);
+            ++failures;
+        }
+    };
+
+    KzConfig cfg;
+    cfg.renderer = KzRenderer::Vulkan;
+    cfg.vsync = false;
+    cfg.upscale = 8;
+    cfg.aspect = KzAspect::Classic4x3;
+    cfg.anisotropy = 0;
+    cfg.mipmapMode = KzMipmapMode::PS2;
+    cfg.fxaa = true;
+    cfg.smaa = true;
+    cfg.textureReplacement = true;
+    cfg.bilinear = false;
+    cfg.sharpScaling = false;
+    cfg.sharpen = 0;
+    cfg.noiseFilter = true;
+    cfg.motionBlur = true;
+    cfg.glow = true;
+    cfg.lensBlur = true;
+    cfg.renderDistance = 1.0f;
+    cfg.lodScale = 4.0f;
+    cfg.masterVolume = 37;
+    cfg.startLevel = 7;
+
+    applyValidatedGraphicsPreset(cfg);
+    check(cfg.renderer == KzRenderer::D3D12 && cfg.vsync && cfg.upscale == 0 &&
+              cfg.aspect == KzAspect::Widescreen16x9,
+          "validated preset output contract");
+    check(cfg.anisotropy == 16 && cfg.mipmapMode == KzMipmapMode::HighestDetail &&
+              !cfg.textureReplacement && cfg.bilinear,
+          "validated preset texture controls");
+    check(!cfg.fxaa && !cfg.smaa && cfg.sharpScaling && cfg.sharpen == 30,
+          "validated preset presentation controls");
+    check(!cfg.noiseFilter && !cfg.motionBlur && !cfg.glow && !cfg.lensBlur,
+          "validated preset PS2 effects");
+    check(cfg.renderDistance == 2.0f && cfg.lodScale == 1.0f,
+          "validated preset detail bounds");
+    check(cfg.masterVolume == 37 && cfg.startLevel == 7,
+          "validated preset preserves unrelated settings");
+    return failures;
 }

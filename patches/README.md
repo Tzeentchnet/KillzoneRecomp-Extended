@@ -1,8 +1,16 @@
 # Local patches to submodules
 
-Applied on top of `ext/PS2Recomp` (upstream ran-j/PS2Recomp @ 75d729c). Re-apply after a fresh clone with:
+The numbered patches are historical topic-level records. They overlap, omit
+some final squash cleanup, and are not a linear `git apply` series. The
+generated `ps2recomp/combined.lock.diff` is the canonical base-to-gitlink
+reproduction patch. A fresh clone obtains the same tree through the pinned
+`ext/PS2Recomp` gitlink. Run:
 
-    git -C ext/PS2Recomp apply ../../patches/ps2recomp/*.patch
+    python tools/scripts/verify_deps.py
+
+The verifier checks every normalized topic-patch hash, validates the canonical
+patch hash, applies the canonical patch to the locked base, and requires the
+resulting tree to equal the pinned submodule tree.
 
 - `0001-recomp-resume-points-for-standalone-entry-blocks.patch` — the recompiler skipped resume-point registration
   for every `entry_*` function, assuming they are synthetic wrappers nested in a real function. Ghidra's export names
@@ -665,3 +673,48 @@ Applied on top of `ext/PS2Recomp` (upstream ran-j/PS2Recomp @ 75d729c). Re-apply
   structures and enemy / world sounds stayed silent until a restart (issue #17; docs/findings.md "Enemy audio cuts out for good"). The search now starts at the heap base (first fit) and
   `QueryMaxFreeMemSize` reports the largest free gap. `PS2X_IOP_HEAP_REUSE=0` = old allocator; `PS2X_IOP_HEAP_END=<hex>` ends the heap early (out-of-memory tests); `PS2X_IOP_MEMLOG=1`
   logs every allocation / free with the IRX's return address and `ALLOC FAILED` lines. Files: `ps2xIOP/src/emulator/core/iop_memory.cpp`, `imports/iop_sysmem.cpp`, `imports/iop_heaplib.cpp`.
+- **0029-mpeg-nodata-prefetch.patch** - self-fed movies used `sceMpegCbNodata` only after the decoded queue became
+  empty. Killzone's callback normally adds just one or two pictures, so asynchronous file-read latency repeatedly
+  starved a 29.97 fps stream for 4-10 vblanks. `sceMpegGetPicture` now asks the callback to refill when four or fewer
+  pictures remain, up to the existing eight-picture decode limit. The prefetch is limited to movies without an
+  `sceCdSt` producer and stops at EOF, decoder failure, or sequence end; the existing no-progress retry state lets
+  an already decoded picture be presented instead of spinning while a read is pending. A scheduler regression test
+  covers low-water callback invocation. Measured intro cadence improved from 31 image changes per 90 captures
+  (about 21/s) to source cadence; the cleaned build measured 30.3/s in the intro and 29.3/s behind the main menu.
+- **0030-mpeg-refill-budget.patch** - bounds proactive low-water refill to two callbacks before each
+  presented picture. The budget belongs to each MPEG playback object and resets after presentation, while the
+  existing no-progress guard still prevents retry spinning. This preserves the four-picture video reserve without
+  letting a long callback chain delay guest audio maintenance. The focused scheduler regression forces continued
+  callback progress and verifies that exactly two proactive callbacks run before the queued picture is returned.
+- **0031-vif1-mpg-address-wrap.patch** - VIF1 `MPG` now masks its destination into the 16 KB VU1 micro memory and
+  wraps an upload that crosses the end back to address 0, as the hardware does; `NUM=0` still means 256
+  instructions. A truncated payload stops the packet instead of being partly copied. Identical uploads still skip
+  invalidating host VU programs. Found while investigating WIN-06 (a suspicious `MSCAL 0x2CE8` XGKICK); it is a
+  correctness fix with focused memory tests, not the WIN-06 root cause (the ten-run gate still failed 2/10).
+- **0032-dmac-call-overflow-vif-provenance.patch** - a third nested DMAC `CALL` now transfers its local payload and
+  terminates the chain instead of following `ADDR` with the two-entry return stack already full, matching PCSX2.
+  A focused GIF-chain regression covers the boundary. The same investigation extends `PS2X_CHAIN_VERIFY=1` with
+  flattened-buffer source/tag and `ASR` provenance for the first unknown VIF command; optional
+  `PS2X_VIF1_STOP_ON_UNKNOWN=1` stops that diagnostic packet at the first unknown command. No CALL overflow occurred
+  in the WIN-06 acceptance workload, and source-mapped failures had zero unknown VIF commands, so this is retained as
+  a correctness fix and diagnostic rather than claimed as the WIN-06 root cause.
+- **0033-standalone-runtime-test-suite.patch** - restores the complete standalone PS2Recomp suite to 439/439 on
+  Windows. VIF1 UNPACK now treats zero `STCYCL.CL` as 256, matching the existing zero-`WL` handling and hardware
+  semantics. The libsd remote initializer keeps its non-runtime fallback safe when no `PS2Runtime` is supplied.
+  Regression fixtures now use the verified PCM stream key, place PATH2 image continuations inside a subsequent
+  `DIRECT`, reflect the optimized JALR return-only resume policy, and verify `SifInitRpc` without assuming synchronous
+  IOP timing. `PS2X_TEST_FILTER=<substring>` provides focused execution in the minimal test harness.
+- **experimental/ee-di-interrupt-gate.diff** (not applied; `git apply --directory=ext/PS2Recomp`) - makes
+  `EeScheduler` honour Status.EIE: while the running context is inside `di`/`ei`, pending interrupt, SIF and stream
+  invocations, time-slice preemption and event-driven thread switches wait for `ei` (50 ms safety valve,
+  `PS2X_DI_GATE=0|log`), plus a scheduler regression (`di holds a pending interrupt until ei`). The current runtime
+  delivers handlers inside guest critical sections, which real hardware never does. Measured on the WIN-06 workload
+  (2026-10-20): `log` mode saw 0-2 such deliveries per run, all benign (the frame-pipeline VIF1 handler during
+  `SyncDCache` or at the `ei` itself), and the ten-run gate scored 8/10 with the gate on, the same as without it. Kept
+  for a future fault that does involve a critical section; not adopted without evidence of benefit.
+- **experimental/audio-iop-cycle-credit-priority.diff** (not applied; `git apply --directory=ext/PS2Recomp`) -
+  charges offloaded RPC execution against future published IOP budget instead of advancing the same interval twice,
+  and raises the Windows IOP/SPU2 worker one priority level. In AUDIO-01 probes, cycle credit held IOP lead near 6 ms
+  instead of 9.8 seconds; combined with a 160 ms reserve, the automated 117-second run recorded 800 underrun frames
+  and no skips. The hands-on run was canceled, while a separate highest-priority experiment locked gameplay. Keep
+  this patch experimental until repeated interactive stability and zero-loss combat gates pass.

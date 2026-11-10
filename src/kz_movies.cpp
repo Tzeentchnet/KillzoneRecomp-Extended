@@ -21,15 +21,17 @@
 #include "kz_addrs.h"
 #include "ps2_runtime.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <string>
 
 namespace
 {
-    constexpr uint32_t kRamMask = 0x01FFFFFFu;
     constexpr const char *kIntroMovie = "Movies/Intro/Intro";
+    constexpr std::size_t kMaxMovieNameBytes = 128;
 
     PS2Runtime::RecompiledFunction g_origPlayMovie = nullptr;
     bool g_skipIntro = false;
@@ -39,32 +41,72 @@ namespace
     PS2Runtime::RecompiledFunction g_origMenuPageUpdate = nullptr;
     bool g_log = false;
 
-    uint32_t r32(const uint8_t *rdram, uint32_t a)
+    bool guestOffset(uint32_t address, std::size_t size, uint32_t &offset)
     {
-        uint32_t v;
-        std::memcpy(&v, rdram + (a & kRamMask), 4);
-        return v;
+        uint32_t physical = address;
+        if (address >= PS2_RAM_SIZE)
+        {
+            if ((address & 0xC0000000u) != 0x80000000u)
+                return false;
+            physical = address & 0x1FFFFFFFu;
+        }
+        if (physical > PS2_RAM_SIZE || size > PS2_RAM_SIZE - physical)
+            return false;
+        offset = physical;
+        return true;
     }
 
-    std::string movieName(const uint8_t *rdram, uint32_t stringObject)
+    bool readGuestU32(const uint8_t *rdram, uint32_t address, uint32_t &value)
     {
-        if (stringObject < 0x00100000u || stringObject >= 0x02000000u)
-            return {};
-        const uint32_t buffer = r32(rdram, stringObject);
-        if (buffer < 0x00100000u || buffer >= 0x02000000u)
-            return {};
-        const char *chars = reinterpret_cast<const char *>(rdram + ((buffer + 0x10u) & kRamMask));
-        return std::string(chars, strnlen(chars, 128));
+        uint32_t offset = 0;
+        if (!guestOffset(address, sizeof(value), offset))
+            return false;
+        std::memcpy(&value, rdram + offset, sizeof(value));
+        return true;
+    }
+
+    bool writeGuestU32(uint8_t *rdram, uint32_t address, uint32_t value)
+    {
+        uint32_t offset = 0;
+        if (!guestOffset(address, sizeof(value), offset))
+            return false;
+        std::memcpy(rdram + offset, &value, sizeof(value));
+        return true;
+    }
+
+    bool guestString(const uint8_t *rdram, uint32_t stringObject, std::string &name)
+    {
+        uint32_t buffer = 0;
+        if (!readGuestU32(rdram, stringObject, buffer) ||
+            buffer > std::numeric_limits<uint32_t>::max() - 0x10u)
+        {
+            return false;
+        }
+        uint32_t offset = 0;
+        if (!guestOffset(buffer + 0x10u, 1, offset))
+            return false;
+        const std::size_t limit = std::min<std::size_t>(kMaxMovieNameBytes, PS2_RAM_SIZE - offset);
+        std::size_t length = 0;
+        while (length < limit && rdram[offset + length] != 0)
+            ++length;
+        if (length == limit)
+            return false;
+        name.assign(reinterpret_cast<const char *>(rdram + offset), length);
+        return true;
     }
 
     void playMovie(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
     {
         if (ctx->pc == kzAddrs().playMovie)
         {
-            const std::string name = movieName(rdram, getRegU32(ctx, 4));
-            const bool skip = g_skipIntro && name == kIntroMovie;
+            std::string name;
+            const bool validName = guestString(rdram, getRegU32(ctx, 4), name);
+            const bool skip = validName && g_skipIntro && name == kIntroMovie;
             if (g_log || skip)
-                std::printf("[kz] movie \"%s\"%s\n", name.c_str(), skip ? ": skipped (Skip intro movies)" : "");
+                std::printf(
+                    "[kz] movie \"%s\"%s\n",
+                    validName ? name.c_str() : "<invalid guest string>",
+                    skip ? ": skipped (Skip intro movie)" : "");
             if (skip)
             {
                 ctx->pc = getRegU32(ctx, 31);
@@ -78,11 +120,16 @@ namespace
     void menuPageUpdate(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
     {
         const uint32_t menu = getRegU32(ctx, 4);
-        if (ctx->pc == kzAddrs().menuPageUpdate && menu >= 0x00100000u && menu < 0x02000000u && movieName(rdram, menu + 8) == "Logos")
+        std::string page;
+        uint32_t ms = 0;
+        if (ctx->pc == kzAddrs().menuPageUpdate &&
+            menu <= std::numeric_limits<uint32_t>::max() - 0x170u &&
+            guestString(rdram, menu + 8u, page) && page == "Logos" &&
+            readGuestU32(rdram, menu + 0x170u, ms))
         {
             static int frames = 0;
-            uint32_t ms = r32(rdram, menu + 0x170) + kLogoStepMs;
-            std::memcpy(rdram + ((menu + 0x170) & kRamMask), &ms, 4);
+            ms += kLogoStepMs;
+            writeGuestU32(rdram, menu + 0x170u, ms);
             if (frames++ == 0)
                 std::printf("[kz] boot logos: skipping (Skip logos)\n");
             if (g_logoLog)
@@ -94,14 +141,26 @@ namespace
 
 void kzMoviesInstall(PS2Runtime &runtime)
 {
-    g_skipIntro = kzConfig().skipIntro;
-    if (const char *v = std::getenv("KZ_SKIP_INTRO"); v && *v)
-        g_skipIntro = std::atoi(v) != 0;
-    g_log = std::getenv("KZ_MOVIE_LOG") != nullptr;
+    auto applyBoolOverride = [](const char *name, bool &target) {
+        if (const char *value = std::getenv(name); value && *value)
+        {
+            if (std::strcmp(value, "0") == 0)
+                target = false;
+            else if (std::strcmp(value, "1") == 0)
+                target = true;
+            else
+                std::fprintf(stderr, "[kz] ignoring invalid %s=%s (expected 0 or 1)\n", name, value);
+        }
+    };
+
+    g_skipIntro = kzConfig().skipLongIntro;
+    applyBoolOverride("KZ_SKIP_LONG_INTRO", g_skipIntro);
+    const char *movieLog = std::getenv("KZ_MOVIE_LOG");
+    g_log = movieLog && std::strcmp(movieLog, "0") != 0;
     g_skipLogos = kzConfig().skipLogos;
-    if (const char *v = std::getenv("KZ_SKIP_LOGOS"); v && *v)
-        g_skipLogos = std::atoi(v) != 0;
-    g_logoLog = std::getenv("KZ_LOGO_LOG") != nullptr;
+    applyBoolOverride("KZ_SKIP_LOGOS", g_skipLogos);
+    const char *logoLog = std::getenv("KZ_LOGO_LOG");
+    g_logoLog = logoLog && std::strcmp(logoLog, "0") != 0;
     if (g_skipLogos)
     {
         const uint32_t kUpdate = kzAddrs().menuPageUpdate;

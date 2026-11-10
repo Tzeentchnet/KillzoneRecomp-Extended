@@ -986,17 +986,25 @@ reflection data.
   gameplay dump: four zones with far = fog end = 65, 70, 50, 35 and fog start -10/-5, so the original view distance is 35-70 world units.
   `FUN_00339C38(manager, camera, out)` picks the zone around the camera (blending two at a boundary) and fills `out`: out[0] far plane
   (min of far and fog end when fog is on), byte out+4 fog enabled, out[2] fog start, out[3] fog end, out[4]/[5] densities, out[6] colour; returns 1 when a zone was found.
-- **Render distance option:** hook on `0x339C38` multiplies out[0], out[2], out[3] by the factor (clip and fog move together; scaling only the far plane would
-  hide the extra geometry in fog). Captured at the same frame (f20400 of the scripted run, `work/pp/view_distance_montage.png`): at 2x and 4x the
-  buildings and ruins behind the first hill, which are fully fogged at 1x, are visible; mean absolute difference to 1x 6.6 and 9.1 (of 255).
-  Frame rate: 1x 117.3, 2x 117.2, 4x 115.9 (-1.2 %).
+- **Render distance correction (2026-10-20):** the original wrapper on `0x339C38` tried to read outputs after calling
+  a recompiled guest function. That assumption is invalid: the generated owner tail-dispatches a continuation and
+  returns to the wrapper before the output is finalized. Its only newly instrumented call reported zeroes, so the
+  older screenshot and frame-rate attribution is withdrawn as acceptance evidence. The current implementation hooks
+  the finalized consumers instead: `0x1C1A2C` scales the camera far plane and `0x151180`, gated to the three
+  RenderZone fog call sites, scales fog start/end. A 2x first-mission run measured actual values
+  `70 -> 140` and `-10..70 -> -20..140`; both signatures are locked in the generated manifest.
 - **LOD:** the LOD selectors divide the distance by `ctx+0x1AC` (`FUN_003F4E70` static meshes, `FUN_003F4F10` skinned, `FUN_003EFAD8` multi-mesh, the grass and ~35
   other readers). `FUN_001C2168(f12 = fov, a0 = game object)` sets it to `obj[0x1C] * tan(refFov/2) / tan(fov/2)` (refFov 75 at 0x559540, obj = `*(0x559178)`, obj[0x1C] = 1.0
-  in the dump), the setter `FUN_00151E60` also restores saved values, so the root is hooked instead: the hook on `0x1C2168` multiplies obj[0x1C] around the call.
+  in the dump). Both the entry and `0x1C21B0` continuation wrappers were rejected because generated tail dispatch made
+  their temporary/readback assumptions false. The final hook scales f12 at setter continuation `0x151E64`, gated to
+  caller return `0x1C21D4`, immediately before it stores render-context `+0x1AC`.
   Other per-class distances exist as data: MeshResource "Maximum visible distance" (+0x1C, default -1 = none), Grass "Max View Distance"/"Max Animate Distance"
-  (default 20), LodStaticMeshResource/LodSkinnedMeshResource "LOD Info" tables. LOD scale 4x: frame rate 108.4 (-7.6 %), scene mean difference to 1x 4.5.
-- Config: `[Graphics] RenderDistance=1..16` (default 1 = original), `LodScale=0.25..16` (default 1); env `KZ_RENDER_DISTANCE`, `KZ_LOD_SCALE`. Only the first mission was
-  checked; the defaults stay at the original values because other levels' fog and portal setups were not looked at (indoor zones, boss areas).
+  (default 20), LodStaticMeshResource/LodSkinnedMeshResource "LOD Info" tables. The 4x hook logs the actual
+  `1.436 -> 5.742` setter transformation independently of RenderZone controls. The earlier frame-rate and image
+  deltas remain preliminary, not range-qualification evidence.
+- Config: `[Graphics] RenderDistance=1..2` (default 1 = original), `LodScale=1` (disabled); env
+  `KZ_RENDER_DISTANCE`, `KZ_LOD_SCALE`. The hands-on Escape retest froze at LOD 4x even with render distance 1x, so
+  product configuration now clamps LOD to 1x and does not install its experimental hook.
 
 ### 3. Shadows (identified, not changed)
 Materials carry "Cast Static Shadows / Cast Dynamic Shadows / Receives Dynamic Shadows" (MeshResource +0x?, light classes), shader variants PROJECTIVESHADOW
@@ -1031,8 +1039,8 @@ projector texture size and distance could not be measured and nothing was change
   Config `[Graphics] TextureReplacement=1` (default on, harmless when the folder is empty), env `KZ_TEX_REPLACE`, `KZ_TEX_DUMP`; replay `--dump-textures`, `--replace-textures`.
 
 ### Defaults chosen
-SMAA on (verified, no cost), motion blur / glow / lens blur off, texture replacement on, render distance 1x and LOD 1x (verified in the first mission only; 2x costs 0.1 fps, 4x
-1.2 %, LOD 4x 7.6 %).
+SMAA on (verified, no cost), motion blur / glow / lens blur off, texture replacement on, render distance 1x and LOD
+1x. Elevated distance/LOD costs and supported campaign ranges remain under GFX-03 qualification.
 
 ## Quit to the front end: white screen (2026-10-01)
 **Symptom.** Movies on (`KZ_IPU` unset): start a mission, pause, Quit, confirm. The front end comes back without its background movie; in the player's runs the whole
@@ -1527,3 +1535,1190 @@ RTSS notes: `RTSS.exe` needs admin and its hooks only reach processes on the sam
 - The request is `ctrl+0x58` = wanted slot index: `(current + 1) % count`, or with a type 0xD weapon in slot 0 `current + 1`, wrapping to 1 (`ctl+0x1DC` is the current slot). The reset function `FUN_0023E508` sets it to the current slot. The change itself (holster/draw animation, sounds, ammo display) runs in the game's own code afterwards, through the character controller's virtual at vtable +0x164 (`FUN_0020EFA8` -> `FUN_001F9470`, which ends in `FUN_001F9D10` setting `ctl+0x1DC`). The original only ever steps forward.
 - Patch (`src/kz_weapons.cpp`): a wrapper on the controller update, installed with the other hooks of the ELF (both discs, same offsets). After the update returns for local player 0 it takes one queued step (mouse wheel / keys bound to `NextWeapon` / `PrevWeapon` in `killzone.ini [Bindings]`) and writes `ctrl+0x58` with the same slot arithmetic and the same conditions as the button (previous = `current - 1`, wrapping to the last slot, or to the last slot instead of slot 0 in the type 0xD case). A step that the game cannot take yet (a change is running) waits 0.4 s, then is dropped; a step is also held back for one frame when the button itself asked for a weapon in that frame. `KZ_WEAPON_LOG=1` logs the steps and every change of the current slot; `KZ_INPUT_SCRIPT` takes `t:nextweapon` and `t:prevweapon`.
 - Mouse wheel used to be bound to the button (circle) in both directions; bindings files below `Version=4` are migrated (`WheelUp=Circle` -> `NextWeapon`, `WheelDown=Circle` -> `PrevWeapon`).
+
+## VU-01 portable interpreter isolation (2026-10-17)
+
+### Existing portable path
+
+- PS2Recomp already contains a cycle-accurate `VU1Interpreter` used by the runtime for both VU1 and VU0. The game
+  selects it with `KZ_VU=builtin` and `KZ_VU0=interp`.
+- When both built-in modes are selected, `kzVuInstall` returns before `kzvuInit`; no PCSX2 microVU object, x86
+  emitter, or JIT code cache is compiled into the portable conformance target or initialized by that runtime path.
+- The previous `ext/kzvu` build could not serve as an ARM64 gate: its CMake file deliberately requires MSVC x64,
+  defines x86/SSE/AVX flags, and always compiles microVU even when `KzvuConfig::useJit` is false.
+
+### Isolation and corpus
+
+- `KZ_PORTABLE_VU_ONLY=ON` is now an early top-level CMake path. It configures `ext/kzvu/portable` without the
+  Windows preflight, private generated tree, SDL, renderers, or any PCSX2 microVU source.
+- The `kzvu_interpreter_core` target compiles only PS2Recomp's three VU interpreter translation units. Apple Silicon
+  uses the already locked sse2neon revision; `ext/PS2Recomp` remains clean at
+  `cc1fc7d87930b48d20abd52974d1be77368eb60a`.
+- `kzvu_interpreter_conformance` performs 28 deterministic checks across arithmetic, four-cycle FMAC flag
+  visibility, dependent-pipeline stalls, branch delay slots, masked LQ/SQ behavior, wrapping XGKICK packets,
+  generation-driven decoded-code invalidation, bounded execution/resume, E- and T-bit stops, reset, and reuse.
+- The standalone test glue now provides a real default-constructed `GS` object rather than binding a `GS&` to raw
+  byte storage. XGKICK still routes through the lightweight `PS2Memory` capture, so no renderer is linked.
+
+### Evidence and remaining gate
+
+- Fresh portable-only configure/build/test on Windows: pass; only seven compile/link steps, all inside the
+  interpreter target and conformance executable.
+- MSVC `kzvu_interpreter_conformance`: 28/28 checks passed.
+- clang-cl `kzvu_interpreter_conformance`: 28/28 checks passed.
+- Existing MSVC microVU/PCSX2/PS2Recomp differential test: passed.
+- Complete ISO-free suites after adding the gate: MSVC 10/10 and clang-cl 10/10.
+- Strict dependency verification: 28 passed, 0 warnings, 0 failures. Generated inventory and resume-table checks:
+  pass. `git diff --check`: pass.
+- **Not yet verified:** native AppleClang ARM64 configure, compile, and execution. VU-01 remains in progress, and
+  VU-02 must not begin, until `cmake --preset macos-arm64`, `cmake --build --preset macos-arm64`, and the prescribed
+  `ctest --preset macos-arm64 ...` command pass on Apple Silicon.
+
+## MAC-01 renderer-free host smoke implementation (2026-10-17)
+
+### Darwin host boundary
+
+- `host/src/core_macos.mm` replaces the generic unsupported backend on Apple hosts. It implements executable-path
+  discovery, UTF-8 paths, environment mutation, monotonic timing through the shared core, pthread naming, ARM64/NEON
+  feature reporting, and the ARM64 FPCR flush-to-zero mode used for guest execution.
+- Anonymous mappings use `mmap`/`mprotect`; instruction publication uses `sys_icache_invalidate`. The backend rejects
+  writable-and-executable mappings rather than weakening W^X. The host component test now publishes and executes a
+  two-instruction AArch64 function after a read-write to read-execute transition.
+- Cocoa metrics are isolated in Objective-C++ and accept only the opaque `NativeWindow::cocoa` handle. They require
+  the main thread and report backing-pixel dimensions plus the `NSWindow` backing scale. Crash reporting, stack
+  sampling, and statistical profiling remain explicit unsupported errors on macOS.
+
+### Isolated build and smoke corpus
+
+- `KZ_MACOS_PHASE0_ONLY=ON` configures only `kz_host_core`, the two SDL host smokes, and the portable VU interpreter.
+  It does not inspect the private generated tree or configure game code, PCSX2 microVU, or a renderer.
+- SDL is built from the locked `SDL3-3.4.16.tar.gz` source archive
+  (`sha256 7322236cd12090c3eb40b9728be4d49c76f66ad17d04369584d4ecad5cf77c68`), not an unpinned package-manager
+  installation. Strict dependency verification now covers both the Windows development archive and this source tree.
+- `kz_host_window_smoke` creates a hidden high-density SDL window, verifies the platform-native handle and drawable
+  metrics, delivers a registered user event through the SDL queue, and tears the window down.
+- `kz_host_audio_smoke` opens the default playback device, validates its negotiated format, resumes the stream,
+  observes and services the callback with silence, pauses it, and destroys the stream. Windows CTest uses SDL's dummy
+  audio driver for hermetic automation; macOS intentionally exercises the default CoreAudio path.
+
+### Evidence and remaining gate
+
+- Focused clang-cl host suite: 3/3 passed.
+- Complete ISO-free suites: MSVC 12/12 and clang-cl 12/12.
+- Strict dependency verification: 31 passed, 0 warnings, 0 failures. Generated inventory and resume-table checks:
+  pass. `git diff --check`: pass.
+- **Not yet verified:** configuration, compilation, Cocoa main-thread behavior, the CoreAudio callback, AArch64 code
+  publication, and teardown under native AppleClang on Apple Silicon. MAC-01 remains in progress and GS-01 remains
+  blocked until the prescribed native host-smoke command passes.
+
+## Boot dispatch restoration and renderer isolation (2026-10-17)
+
+### Why a known-working upstream still failed locally
+
+- The failure was not evidence that upstream PS2Recomp could not execute Killzone. The local private input corpus had
+  diverged from the executable control-flow surface expected by the recompiler.
+- The previous normalization reconstructed discontiguous Ghidra ranges from the exported start plus body size. That
+  omitted executable continuations, partial final MIPS instructions, terminal branch delay slots, shared entries, and
+  callbacks that Ghidra did not publish as function starts.
+- PS2Recomp uses the low bit of `ctx->pc` as `PS2_TAIL_MARK`. Allowing an odd normalized end can therefore decode to
+  the preceding aligned address and create a self-dispatch loop. Both starts and ends must remain four-byte aligned.
+- Schema-3 normalization now clamps discontiguous bodies, rounds partial instructions to complete MIPS words, and
+  includes terminal branch/call/return delay slots. The final map has 35,352 records: 4,269 clamped, 154
+  instruction-aligned, and 903 delay-slot-extended.
+- Raw Ghidra maximum bounds are not a safe substitute. Thousands of discontiguous bodies span unrelated code or data;
+  the schema-3 transformation preserves only instruction-level evidence around the exported body.
+
+### Fixed-point dispatch closure
+
+- Regeneration now treats both emitted tail targets and generated resume cases as executable evidence and closes them
+  to a fixed point. Generated resume PCs are not restricted to the ELF section named `.text`.
+- The first pass found 2,277 emitted tails and 7,419 resume targets. The second pass found 15 additional resume
+  targets. Closure converged with 9,681 unique generated entries after overlap.
+- The merged configuration has 4 explicit entries, 24,953 discovered entries, 42 locked hooks, and 9,681 generated
+  closure entries, for 34,666 configured entries.
+- The generated tree has 31,998 files, 31,996 translation units, 31,995 generated functions, 142 generated stubs,
+  132,656 dispatch entries, 100,661 dispatchable resume cases, and 20,528 resume owners. PS2Recomp reports 101,715
+  resumable entry points across 20,955 owner functions.
+- Registration is global and first-registration-wins. Overlapping wrappers can contain the same resume PC, so the
+  correct invariant is that every distinct generated resume PC is present somewhere in the global dispatch table.
+  Requiring every overlapping owner to receive the same address incorrectly reported 3,098 failures.
+- The original resume blocker at `0x004E9224` already had a valid generated switch case but lacked a global dispatch
+  entry. It is now registered to its generated owner, and the manifest verifier enforces the global invariant.
+
+### Callback and SIF boundaries
+
+- Materialized callbacks require narrow structural rules. Publishing every prologue, return, or in-text constant would
+  hide corrupted targets and admit embedded VU/data words.
+- Discovery now accepts materialized leaf returns, materialized stack-decrement prologues, and materialized targets at
+  an unambiguous post-return boundary (`jr $ra`, its mandatory delay slot, optional known padding, then the target).
+  Only 15 of 252 otherwise-unclassified materialized in-text values satisfy the post-return rule.
+- The stack-prologue rule recovered `0x002B4288`, `0x004888E8`, and callback `0x004BBF50`. The latter is materialized
+  at `0x003440D4..0x003440E0`, passed to a registration routine, and begins in a Ghidra range gap.
+- The post-return rule recovered the FilePS2 command handler at `0x0014B6A0`. Guest code materializes it at
+  `0x0014B804..0x0014B80C` and passes it to `sceSifAddCmdHandler` at `0x0014B810`.
+- `0x002B3158` has legitimate dual ownership: it is both the `sceSifInitRpc` entry and the delay-slot instruction of
+  the preceding return. It is an explicit configured entry and is rebound authoritatively after generated-table
+  initialization so first-registration-wins cannot leave a generated owner in the runtime hook slot.
+- The fixed hook manifest now contains 42 unique signatures. `sceSifInitRpc` uses a 20-byte signature because its
+  first 16 bytes also occur at `0x002B66F8`.
+
+### FilePS2 completion and ISO mounting
+
+- When both `--elf` and `--iso` are supplied, the boot path now extracts and mounts the disc files at `cdrom0:` rather
+  than leaving the explicit ELF's directory as the disc root. `PFILE_R.IRX` and the later boot modules are therefore
+  available to the guest while the ISO still backs raw sector reads.
+- The IOP completes FilePS2 RPC SID `0x66662012`, function `0x320`, and posts command ID 0 to the EE handler at
+  `0x0014B6A0`.
+- Threaded IOP delivery can conceal a missing EE callback. Posting reports success when it queues the command, and the
+  later EE-side drain discards the boolean returned by `dispatchSifCommand`. A missing handler therefore left the
+  guest completion counter unchanged without emitting the usual missing-target diagnostic.
+- With the callback dispatchable, boot advances through FilePS2 completion and all subsequent observed IOP module
+  loads. The current probes produce no missing-target diagnostic.
+
+### D3D11/D3D12 split
+
+- A 15-second timeline recorded 862 DMA1 kicks, 861 completed VIF/GIF jobs, and 845 GS presents. Longer D3D11 probes
+  reached DMA 3,699 and VIF 3,696, with active PATH1 traffic, thousands of VU1 XGKICK packets, and increasing
+  primitive counts.
+- GS state matches known-good Killzone behavior: `PMODE=0x8063`, `SMODE2=1`, and framebuffer bases alternate between
+  `0` and `0x70`. Guest execution and frame production are no longer stalled.
+- On an NVIDIA GeForce RTX 5070 with driver `32.0.16.1742`, D3D11 captures remain exactly all-zero pixels through
+  90 seconds despite that healthy guest and GS state.
+- The same executable, ELF, ISO, and guest state render correctly through D3D12. A persisted-config probe, with no
+  `KZ_RENDERER` override, selected D3D12 and captured advancing SCEA/legal intro frames at 4, 8, and 12 seconds.
+- The local MSVC configuration now persists `Renderer=d3d12`. D3D11 remains selectable; the launcher tells users to
+  try D3D12 when D3D11 presents a black frame. This is a working configuration and backend isolation, not a claim
+  that the D3D11 defect has been repaired.
+- `dev9: unknown dev9 hardware` and unhandled `cdvdman:78` remain nonfatal; neither prevents D3D12 rendering.
+
+### D3D11 re-verification (2026-10-20)
+
+The historical all-zero result no longer reproduces on the same RTX 5070 and driver `32.0.16.1742` with the current
+pinned renderer stack. The hardware-adapter D3D11 golden passed at 1x and 2x with zero pixel mismatches. A 35-second
+isolated-card chapter 1 run exited 0 and produced nonblack captures from 10 seconds onward (35.0-99.1% nonblack).
+Four captures taken from the actual D3D11 swap-chain back buffer were also nonblack (55.5-71.4%). Finally, the
+original no-input 90-second scenario exited 0; its eight captures were distinct, and frames from 20 through 80
+seconds contained rendered output with nonblack coverage up to 94.4%.
+
+No renderer behavior was changed to force this result. The PCSX2 checkout did move from
+`646df006a4688063e56c0826e7ea4b8bb0c112c4` at the failed measurement to
+`d3e6982a3e36647d642bcd805d3ca5b442d0975c`, but the exact clearing change was not isolated. WIN-01 is closed as no
+longer reproducible on the supported pinned stack; the earlier finding remains above as historical evidence.
+
+### Late black screen: shadowed runtime stubs
+
+- Early D3D12 acceptance did not cover the complete boot path. A 60-second capture later showed valid SCEA, legal,
+  and Guerrilla frames through about 20 seconds, followed by exactly black frames from 25 seconds onward while
+  DMA/VIF/GS counters continued to advance. This was a second failure, independent of the D3D11 presentation issue.
+- The first concrete stall was a physical `MCSERV.IRX` RPC (`SID 0x80000400`, function `0x1`) entering MCMAN and
+  timing out twice in `WaitSema(6)`. The BIOS-less IOP does not emulate the SIO2 memory-card transfers that physical
+  MCMAN expects, but this was not the final root cause.
+- Routing only `MCSERV.IRX` to the runtime HLE removed that semaphore timeout. Its original initialization reply
+  advertised MCSERV/MCMAN versions `0x0205`/`0x0206`, below Killzone's minimum `0x020A`/`0x020E`; matching the retail
+  modules' `0x0210`/`0x0226` let the guest issue `GetInfo`. The screen still remained black in both cases.
+- The merged configuration classifies `sceMcInit@0x002BE788`, `sceMcGetInfo@0x002BF180`, and
+  `sceMcFormat@0x002BF458` as runtime stubs, but overlapping generated functions had already claimed those table
+  slots. `sceMcSync@0x002BF060` was a real generated host stub. Boot therefore mixed guest MCSERV RPC state with the
+  host stub's independent memory-card state and could never complete the intended synchronization sequence.
+- Authoritative post-registration bindings for all three shadowed memory-card entries restore one coherent host
+  implementation. The successful path performs three `GetInfo`/`Sync` sequences and one `GetDir`/`Sync` sequence.
+  With those bindings in place, physical MCSERV remains loaded but receives no boot-critical memory-card calls, so
+  the selective HLE loader and version changes were removed.
+
+### Movie black screen: asynchronous stub return contract
+
+- The same ownership audit found generated owners at `sceMpegGetPicture@0x003CD750` and
+  `sceMpegClearRefBuff@0x003CD9F8`, despite both addresses being configured runtime stubs. The other observed
+  libmpeg entries were generated as host-stub wrappers correctly.
+- Rebinding the two addresses directly to raw runtime handlers was not sufficient. A generated stub first assigns
+  `ctx->pc = $ra` and then calls its host handler. The direct binding helper can infer the fallthrough only for a
+  synchronous return; `sceMpegGetPicture` can suspend in an external MPEG wait and resume later, so the saved context
+  must already contain `$ra`.
+- Diagnostic runs proved FFmpeg was decoding and serving `512x448` frames while the guest remained black: without
+  the wrapper contract, resumed calls retained `pc=0x003CD750` and re-entered the handler instead of continuing at
+  the caller. Killzone-specific wrappers now set `pc` to `$ra` before invoking both MPEG handlers.
+- After that correction, captured D3D12 frames show the decoded opening movie continuously from 35 through at least
+  70 seconds. Scripted input reaches the rendered main menu by 75-80 seconds with IPU enabled. The minimized final
+  probe keeps physical `MCSERV.IRX`, reports successful host memory-card operations, shows no MCSERV semaphore
+  timeout, renders the movie, and reaches the menu.
+- This explains why upstream could be known-working while this build failed: runtime classification was correct,
+  but first-registration-wins let overlapping local generated owners shadow authoritative host boundaries. The fix
+  is local address ownership, not a change to the upstream memory-card service or decoder.
+
+### Final Windows evidence
+
+- A second regeneration converged to 31,998 files with **0 changed/new and 0 removed**.
+- Resume-table verification: 132,656 dispatch entries, 100,661 resume cases, 31,995 generated targets; pass.
+- Generated inventory and schema-3 provenance lock: pass, including all 42 unique fixed hook signatures.
+- Strict offline dependency and PS2Recomp patch reconstruction: 31 passed, 0 warnings, 0 failures.
+- Final MSVC ISO-free suite: 12/12 passed.
+- Final clang-cl ISO-free suite: 12/12 passed.
+- Persisted D3D12 12-second visual probe: exit code 0 and three nonblack, advancing captures.
+- Complete D3D12 movie probe: nonblack decoded FMV frames at 35, 40, 45, and 50 seconds.
+- Complete minimized boot probe: physical MCSERV loaded, host memory-card operations completed without a semaphore
+  timeout, opening movies rendered, and the main menu was visible at 80 seconds.
+
+## MPEG playback cadence and queue starvation (2026-10-17)
+
+### Symptom and exclusions
+
+- The opening cinematic, animated menu background, and especially the idle attract reel visibly paused and advanced
+  in bursts. The active configuration used D3D12, VSync off, an unlimited launcher frame cap, and a 59 Hz display, so
+  this was separate from the previously fixed high-refresh movie-clock scaling.
+- A 90-frame D3D12 burst during the opening cinematic changed image only 31 times, about 20.9 changes/s. Most changes
+  were two vblanks apart, as a 29.97 fps movie requires, but repeated four-vblank stalls and occasional six-to-eight
+  vblank stalls produced the visible choppiness.
+- The MPEG sequence header reports frame-rate code 4 and the decoded timestamps advance by 3,003 ticks on a 90 kHz
+  clock: the source is 29.97 fps, not an intentionally low-rate asset.
+- Disabling synchronous movie-audio callbacks produced 30 changes in the same 90-frame window (20.22/s). Temporarily
+  removing HLE picture-presentation pacing produced 29 (19.55/s). Audio-ring backpressure and over-throttling were
+  therefore not the principal cause; decoded pictures were unavailable when the game asked for them.
+
+### Root cause
+
+- A detailed intro trace recorded 296 elementary-stream feed events producing 321 decoded pictures. The queue after
+  a feed was normally one or two pictures and never exceeded four.
+- Across 318 served pictures, the normal two-vblank gap occurred 209 times, but there were 71 four-vblank, 21
+  six-vblank, nine eight-vblank, and five ten-vblank gaps. The runtime entered its empty-queue wait 496 times across
+  316 unique vblank ticks even though almost every timestamped picture had the correct 3,003-tick PTS delta.
+- `sceMpegGetPicture` invoked `sceMpegCbNodata` only after the decoded queue reached zero. Killzone has no separate
+  `sceCdSt` producer and normally demuxes only one or two pictures in that callback. The decoder consequently ran dry
+  before each asynchronous file read and demux refill completed.
+
+### Low-water prefetch
+
+- For self-fed movies, `sceMpegGetPicture` now invokes the registered nodata callback before returning the current
+  picture when four or fewer decoded pictures remain. At most two proactive callbacks run before one picture is
+  presented, which preserves refill throughput without holding the guest away from movie-audio maintenance for an
+  unbounded callback chain.
+- Proactive refill is disabled for `sceCdSt`-produced streams and after CD EOF, MPEG sequence end, stream end, or
+  decoder failure. The existing no-progress state is consumed on callback re-entry, so an asynchronous read that has
+  not completed presents the available picture rather than recursively invoking the callback.
+- The first experiment reached an eight-picture queue, held four to six pictures through normal playback, reduced
+  waits to 19 events on 13 unique ticks, and produced 499 ideal two-vblank gaps among the first 511 measured picture
+  gaps. Its 90-frame visual burst changed 42 times instead of 31.
+- The cleaned MSVC build, with all temporary timing and unthrottled-presentation diagnostics removed, measured:
+  - opening cinematic: 49 image changes over 1.6169 s, or 30.3 changes/s;
+  - animated main-menu background: 43 over 1.4664 s, or 29.32 changes/s;
+  - idle attract reel: 44 over 1.4724 s, or 29.88 changes/s. Of its measured change gaps, 42 were the ideal two
+    vblanks and one was four vblanks.
+- A 380-second timeline entered the attract reel by 160 seconds, showed advancing reel frames through 240 seconds,
+  returned to the menu by 260 seconds, and exited normally.
+- The standalone PS2Recomp test target compiles the change, and the new scheduler regression,
+  `sceMpegGetPicture caps proactive refills before presenting a picture`, passes. The broader upstream test
+  executable still reports unrelated existing failures and terminates with an access violation after the MPEG tests;
+  it is not represented as a full-suite pass.
+- Final integration checks pass: strict dependency reconstruction reports 31 passed, 0 warnings, and 0 failures;
+  both MSVC and clang-cl ISO-free suites pass 12/12; the generated inventory retains 42 locked hook signatures; and
+  the resume table retains 132,656 dispatch entries, 100,661 resume cases, and 31,995 generated targets.
+
+## FMV audio continuity under scheduler stalls (2026-10-17)
+
+### Two separate failure layers
+
+- A muted real SDL/WASAPI capture of the original four-picture-prefetch build inserted 5,536 zero frames during the
+  27-80 second opening-movie window: 115.3 ms of host-device underrun. `kz_audio.cpp` had a nominal 40 ms target, but
+  used it only as the destination of a high-water skip; playback began immediately with no actual reserve.
+- The raw pre-device SPU2 stream also stuttered. Comparing stereo PCM against itself at a 3,584-frame lag found 67
+  exact-equality intervals, 1.433062 seconds total, with a 116.812 ms maximum. Equality at exactly one complete guest
+  movie ring proves that SPU2 replayed stale ADPCM rather than the host device merely repeating or dropping samples.
+
+The state-2 movie uploader transfers `0x400` ADPCM bytes per channel at a time. One bank decodes to 1,792 frames
+(37.33 ms at 48 kHz); the original two-bank `0x800` ring therefore wraps every 3,584 frames (74.67 ms). A normal
+29.97 fps picture update is 33.37 ms apart, leaving little tolerance for a delayed movie update.
+
+Low-overhead refill instrumentation recorded 1,434 nodata callbacks across 1,405 presented-picture attempts:
+715 callbacks appended PSS data, 719 made no progress, 632 audio packets were accepted, and zero audio packets were
+refused as full. Long repeats aligned with movie-picture call gaps of 16-21 fields (267-350 ms). The remaining problem
+was therefore missed guest uploads during scheduling/refill stalls, not MPEG audio-ring backpressure.
+
+### Rejected experiments
+
+All repeat counts below use the same 27-80 second window, exact stereo equality at the active full-ring lag, and a
+minimum run of 256 frames.
+
+| Experiment | Intervals | Total stale audio | Maximum | Result |
+|---|---:|---:|---:|---|
+| no MPEG low-water prefetch | 211 | 11.116 s | 330.67 ms | much worse |
+| four-picture prefetch baseline | 67 | 1.433062 s | 116.812 ms | reference |
+| seven-picture prefetch | 76 | 13.188667 s | 843.958 ms | severe regression |
+| one proactive callback per picture | 106 | 2.311021 s | 110.896 ms | insufficient demux throughput |
+| `PS2X_WALLCLOCK=0` | 81 | 1.846125 s | 105.750 ms | wall-clock floor is not the root cause |
+| no periodic screenshots | 92 | 1.820500 s | 240.542 ms | readback is not the root cause |
+| nonblocking compatible picture return | 58 | 1.576271 s | 174.250 ms | no continuity improvement |
+| `KZ_AUDIO_PACE=0` | 89 | 3.080 s | 844.35 ms | pacing is protective |
+
+Calling `FUN_002df080` or `FUN_002df790` from a host-scheduled context corrupted or stalled the stream and was removed.
+Larger rings alone also trade fewer misses for much longer repeats. With unlimited refill recursion, four, eight, and
+sixteen banks still produced full-ring repeats. Even after bounding refill recursion, an eight-bank ring produced
+five and four 298.7 ms-ring intervals in paired runs (0.743500/0.744833 seconds total, 254.146/252.854 ms maximum).
+
+### Accepted guest fix
+
+- Twelve locked instruction patches in `config/killzone.toml` expand the stereo SPU2 allocation from `0x1000` to
+  `0x2000` bytes and each channel ring from `0x800` to `0x1000`. Allocation size, second-channel base, channel stride,
+  modulo shifts, wrap bias, available-space calculation, and ADPCM loop-end placement all change together. The
+  original instruction words and hashes are locked in `config/generated-manifest.json`; private generated files are
+  not published.
+- Proactive MPEG refill is capped at two callbacks per presented picture. The counter belongs to each MPEG playback
+  object and resets after a picture is consumed. This keeps the four-picture low-water benefit while bounding one
+  recursive guest refill burst. The focused PS2Recomp regression forces continuous PSS progress and verifies that
+  exactly two callbacks run before presentation.
+- Three low-overhead four-bank/capped captures contained **zero** old 3,584-frame repeats. Representative new
+  7,168-frame results were 11 intervals / 0.783479 s / 101.375 ms, 7 / 0.503042 s / 102.188 ms, and
+  12 / 0.878833 s / 106.083 ms. The larger ring cannot manufacture missing source audio during an exceptional
+  scheduler stall, but it removes the frequent 74.67 ms wrap/replay that caused the original pronounced stutter.
+- Video cadence remains correct: a 90-presented-field D3D12 intro burst changed image 44 times; 42 of 43 change gaps
+  were the ideal two fields and one was four fields.
+
+### Accepted host fix
+
+The SDL callback now waits until the SPU2 output ring contains the current device request plus a real 40 ms reserve
+before consuming its first frame. High-water recovery retains the same reserve after the current request. It does not
+re-arm after a later deficit, because that experiment converted three 10 ms underruns into 130 ms of deliberate
+rebuffer silence.
+
+On the same 480-frame WASAPI device, paired muted 90-second runs reduced movie-window underruns from 5,536 frames
+(115.3 ms) to 1,288 and 3,283 frames (26.8 and 68.4 ms), reductions of 77% and 41% despite host-timing variance.
+An 80 ms reserve was rejected after two runs developed multi-second emulator stalls and catch-up bursts; the
+conservative 40 ms policy is the validated default.
+
+The user accepted the final D3D12 build subjectively: "Audio seems fine for now." Together with the objective
+captures, this closes the current FMV-audio issue. Rare 149.3 ms-ring misses remain possible when the whole movie
+update is delayed for several hundred milliseconds, so a future regression report should include the exact scene
+and timestamp before this policy is changed.
+
+### Integration status
+
+PS2Recomp revision `6e4bc1827a65d45be92d10f9eca97c04f062f4b8` contains the two-callback budget and
+focused regression; `patches/ps2recomp/0030-mpeg-refill-budget.patch` and the 61-path canonical diff reconstruct
+that tree. Parent implementation commit `4ed9b95b877ad62fa58bd1d87dc88e4251b929ab` contains the coordinated guest,
+runtime, host-output, and dependency-lock changes.
+
+Final integration validation passed strict dependency reconstruction (31 checks), generated inventory, resume-table
+verification, the complete MSVC ISO-free suite (12/12), and the complete clang-cl ISO-free suite (12/12). The broad
+standalone PS2Recomp test executable still reaches its pre-existing `sceMpegDemuxPssRing` failure and later access
+violation; only the focused MPEG regression was represented as passing at that revision. WIN-03 resolves this later
+below.
+
+## PS2Recomp standalone suite restoration (2026-10-20)
+
+The prior broad-suite failure combined one stale MPEG fixture with an independent null-runtime crash. The PCM stream
+callback was registered with libmpeg type 2 but fed a private-stream header that could not match the verified
+`BD FF A0 00 00` key. After that assertion, the first `sceSdRemote` regression called `sceSdRemoteInit` without a
+`PS2Runtime`; the new SDRDRV probe dereferenced that null runtime before reaching the fallback model.
+
+Correcting the PCM header and guarding the optional runtime removed both symptoms. The now-completing suite exposed
+seven VIF regressions plus stale JALR and SIF expectations:
+
+- the PCSX2-derived UNPACK path treated zero `STCYCL.CL` as zero source vectors instead of 256;
+- two PATH2 fixtures placed raw image bytes outside a subsequent `DIRECT`, contradicting the corrected parser;
+- the unresolved-JALR test still expected broad caller fallback entries even though calls intentionally publish only
+  their return PC;
+- the SIF test sampled threaded IOP cycles synchronously instead of testing persistent IOP state.
+
+Zero `CL` now follows hardware semantics, and the fixtures assert the current contracts. The minimal harness also
+supports `PS2X_TEST_FILTER=<substring>` for focused reproduction. Focused audio (2/2), VIF (29/29), JALR (2/2) and
+SifInitRpc (1/1) runs pass. The complete standalone executable now exits 0 with 439/439 tests passing.
+
+## Versioned measurement harness (2026-10-20)
+
+TEST-01 extends the existing screenshot and burst paths without renaming their artifacts. Every run with
+`KZ_SHOT_DIR` writes `capture.jsonl` schema 1. Its run record contains only protected-content-safe state: the
+guest-vsync clock/rate, source ID, renderer/backend identity, adapter, effective graphics settings and effective
+testing/card mode. It deliberately excludes the ISO, ELF, memory-card and output-directory paths.
+
+Each saved internal, presented or swap-chain image gets a frame record with capture point, dimensions, present
+sequence and `frame_id == guest_vsync`. Burst metadata resolves kzgs' sequence to the host present sequence through
+the vblank log; the existing burst CSV now also carries `guest_vsync`. The guest pad provider records transitions of
+default fire action R1 as `player_fire_input`, tied to guest-vsync and present sequence. This is a deterministic input
+event for measurement alignment, not yet a claim that a projectile was emitted; WPN-01 can add an engine-confirmed
+shot event after discovering that path.
+
+`verify_capture_metadata.py` validates records and referenced images, rejects absolute paths, generates summaries
+containing hashes/counts/dimensions/configuration only, and aligns repeated runs by nearest same-type event within one
+guest second. Two 38-second D3D12 chapter-1 runs exited 0 with seven captures each. Four fire transitions aligned
+within two guest-vsyncs; a middle scripted pulse occurred while one run was not polling the pad and is reported as
+unmatched rather than silently discarded. A presented-output burst run produced four monotonic 1280x896 frame
+records. The contract self-test and product self-test pass.
+
+## D3D12 effective post-process parity (2026-10-20)
+
+The selected policy is explicit capability reporting, not an implicit fallback: SMAA remains available only on
+D3D11. D3D12/Vulkan gray the launcher control, preserve its persisted request for a later D3D11 switch, and direct
+users to explicit FXAA or higher internal resolution. D3D12 with the accepted baseline reports
+`aa=none, cas=30, scaling=sharp_bilinear, crop=4,3,4,4 (SMAA requested but unavailable)` in both stdout and
+`capture.jsonl`.
+
+To measure the final chain, D3D12 burst capture now copies the active swap-chain render target inside a compiler-safe
+`EndPresent` vtable hook, after scaling/CAS draws and before transition/Present. The clang-cl virtual-call thunk form
+resolves to slot 19. The copy uses PCSX2's own D3D12 download texture, restores the resource state and does not touch
+the protected game inputs. Offline replay gained the same post controls plus exact back-buffer capture.
+
+A single 120-frame active-gameplay GS trace drove all arms. Four 1600x900 frames per arm produced:
+
+- requested SMAA on D3D12: 4/4 byte-identical to baseline (disabled is truly baseline-identical);
+- FXAA: 8.611% pixels changed, mean absolute RGB 0.0985, max 36;
+- CAS 30 versus off: 19.243% changed, mean 0.1576, max 16;
+- sharp versus smooth bilinear: 32.816% changed, mean 0.2750, max 25;
+- crop `4,3,4,4` versus uncropped: 65.555% changed, mean 2.4556, max 120.
+
+The D3D12 hardware integration test also passes an 800x600 swap-chain resize, zero-size minimize followed by 640x448
+restore, injected device-loss recovery through PCSX2's normal reopen path, GIF ring stress, packet continuation and a
+D3D12-to-D3D11 renderer restart. All recovered outputs are nonblack and have the requested dimensions.
+
+## Internal render scale versus physical output (2026-10-20)
+
+No configuration migration or quality-default change was needed. The previously ambiguous behavior is now an
+explicit contract:
+
+- `Upscale=0` selects `ceil(output_height / 448)`, clamped to 1x-8x, at renderer start or when settings are applied;
+- `Upscale=1..8` is a fixed integer GS render scale, independent of physical output resize;
+- resize changes the physical swap-chain output only; zero-size minimize retains the last valid dimensions;
+- aspect/crop, CAS and sharp/smooth filtering remain presentation operations, with the declared diagnostic order
+  `gs_merge -> aa -> sharp_prescale_if_upscaling -> crop_aspect -> cas -> present_filter`;
+- `KZ_UPSCALE` is the explicit automation override for controlled sub-output experiments.
+
+The host logs the scale decision immediately, then `kzgsGetResolutionInfo` publishes exact dimensions after a
+completed frame. Exact dimensions cannot be predicted as `640 * scale`: the synthetic kzgs scene uses 640x448, while
+Killzone's active display measured 512x448. `capture.jsonl` records both the pre-frame 448-line selection contract and
+the completed-frame dimensions, and the verifier checks that the exact render height and physical output agree with
+that contract.
+
+Four eight-second D3D12 product runs with legacy `Upscale=0`, isolated cards and no path-bearing summary data passed:
+
+| Physical output | Scale | Exact internal render | Captures | Exit |
+|---|---:|---:|---:|---:|
+| 1280x720 | 2x | 1024x896 | 3 | 0 |
+| 1920x1080 | 3x | 1536x1344 | 3 | 0 |
+| 2560x1440 | 4x | 2048x1792 | 4 | 0 |
+| 3840x2160 | 5x | 2560x2240 | 3 | 0 |
+
+An independent hardware synthetic run held the internal scene at exactly 1280x896 (fixed 2x) while changing the
+swap chain through all four output sizes. Every final-back-buffer capture was nonblack and exact-sized. The test then
+restored an ordinary decorated window and passed minimize/restore, device-loss recovery and D3D12-to-D3D11 restart,
+showing that output history and renderer recreation do not silently rewrite the fixed internal scale.
+
+## GFX-03 control qualification (2026-10-20 to 2026-10-21)
+
+The inventory covers two guest controls (`RenderDistance`, `LodScale`) and three renderer controls (anisotropy,
+texture replacement and CAS). Default `RenderDistance=1`/`LodScale=1` installs no detail hooks. Elevated controls
+install independently: a 2x render-distance arm produced far/fog calls and no LOD calls; a 4x LOD arm produced LOD
+calls and no far/fog calls. The first LOD wrapper was not effective: it restored `obj+0x1C` before generated
+continuation `0x1C21B0` consumed it. The final hook is the call-site-gated setter continuation at `0x151E64`; at 4x it
+changes the actual selector input from 1.436 to 5.742. Environment overrides reject nonnumeric/non-finite values;
+`KZ_RENDER_DISTANCE` clamps to the supported 1..2 range and product `KZ_LOD_SCALE` remains fixed at 1.
+
+The human Escape reproducer found a critical interaction: render distance 2x plus LOD 4x froze about one second into
+level load with buzzing audio. The standard isolated run reproduced a guest stall at `pc=0x1A` with DMA/VIF fixed at
+2097/874 while host vblank advanced; 2/3 additional combined runs froze, and a 1.5x/4x arm reached an invalid
+`0x80001828` guest indirect target. Baseline and render 2x alone advanced through Escape. Although final LOD 4x
+advanced in the headless gate and logged the expected `1.436 -> 5.742` mutation, the second hands-on test froze again
+with view distance 1x. Headless success is not accepted over that interactive failure: `LodScale` is now constrained
+to 1x in config/environment resolution and shown unavailable in the launcher. An existing config with an elevated
+value installs no LOD hook; the isolated Escape validation advanced and exited 0.
+The final hands-on safe build showed LOD unavailable at 1x, exposed the mipmap selector, and loaded/played Escape
+normally. Audio cutouts still occurred in heavier scenes and remain AUDIO-01 rather than a graphics acceptance issue.
+
+The first exact-clock scene matrix used one cloned card, identical input, six captures at guest-vsync
+1800/2160/2520/2880/3240/3600 and six matching fire transitions in each arm. All three arms exited 0. It is not valid
+visual acceptance: a same-arm baseline repeat changed 80.377% of pixels with mean absolute RGB 13.2611. Against the
+first baseline, 2x render distance changed 91.828% / 12.5122 and 4x LOD changed 89.304% / 19.4528. Exact guest clocks
+do not remove front-end, loading and tutorial progression variance, so no image delta below or near that repeat
+variance is attributed to a control.
+
+Gameplay-relative automation now provides a narrower live measurement clock. `KZ_INPUT_SCRIPT=g<t>:...` schedules
+input from the first validated local-player controller update, and `KZ_SHOT_GUEST_FROM=g<n>` schedules captures `n`
+guest vblanks from the same origin. Capture metadata records `gameplay_offset_vsync`, which image comparison prefers
+when both arms provide it. At offset 150, a cloned-card same-arm repeat fell to 56.513% changed / 0.9629 mean absolute
+RGB, much lower than the boot-clock repeat but still not pixel deterministic. A paused six-frame repeat measured
+23.189% / 0.2070 mean; most of that is low-amplitude pause-filter noise.
+
+The replacement LOD investigation is deliberately narrower than the withdrawn shared-context mutation, but its first
+iteration was still too broad. Gating point-to-AABB helper `0x2C8178` only by helper return `0x3F4F84` admitted both
+outer callers of the blended selector. The 90,000-call / 39,626-change (44.03%) result is therefore withdrawn: its
+slots were filled by the `+0x2C` static-resource path (`0x3EF81C`), not character resources.
+
+The corrected diagnostic accepts only the `+0x30` skinned-resource paths: simple selector return `0x3F4EA0` with
+saved outer return `0x3FF3FC`, and blended selector return `0x3F4F84` with saved outer return `0x3FF4F0`. At 1x it
+executes the original guest helper; above 1x it divides squared distance by scale squared. Static resources,
+RenderZone state and scratchpad `renderContext+0x1AC` remain untouched. `KZ_CHARACTER_LOD_RESOURCE_LOG=<offset>`
+records runtime resource bounds and thresholds, while `KZ_CHARACTER_LOD_PROBE_CENTER=x,y,z,radius` limits mutation
+to one world-space group.
+
+At gameplay offset 180 the visible corpse resolves to three simple skinned parts with center approximately
+`(-461.80, 113.65, 34.96)` and authored threshold 3.0. Unzoomed metric `4.424` selects level 1; rifle zoom changes the
+same parts to metric `2.072`, selecting level 0 without any probe. A radius-1 unzoomed 4x arm changes the target to
+metric `1.106` and changed 495 of the first 10,000 skinned selections; the 90-second run exited normally.
+
+The targeted visual result is still not acceptable. At offset 180, corpse/tight-ROI same-arm means were
+3.3385/3.7678. The targeted probe measured 3.7330/4.3641 against one baseline and 6.5207/7.4372 against the other.
+Although both cross-run comparisons are higher, the margin against one repeat is small. More importantly, a
+same-process 180..300 targeted window produced a corpse activation-edge mean of 4.4227 while adjacent baseline
+temporal change was 8.8006; the deactivation edge was 3.4884 versus 2.9091 post-window temporal change. No clean,
+reversible mesh delta appears above scene motion. The diagnostic remains useful for attribution, but character LOD
+is a no-go for this milestone: no launcher setting replaces `LodScale`, the product clamp stays 1x, and hands-on or
+campaign/high-water probe gates are not justified.
+
+Render-distance qualification now has a repeatable campaign gate. `tools/scripts/gfx03_campaign_gate.ps1` clones the
+testing card for each baseline/render-2x arm, requires the selected chapter, uniform frames, no missing target or host
+exception, the original 1x path in baseline and measured far/fog calls at 2x. `run_headless.ps1` samples the child
+process every 250 ms and writes peak working-set, paged-memory and virtual-memory values to `process.json`; summaries
+contain no retail paths or image content.
+
+The first representative matrix ran chapters 1, 5 and 10 for 90 seconds per arm. All 6/6 runs exited 0 and produced
+17 `2048x1792` captures. First 2x measurements were:
+
+| Chapter | Far plane | Fog | Peak working set baseline / 2x |
+|---:|---|---|---:|
+| 1 | `70 -> 140` | `-10..70 -> -20..140` | 631.8 / 659.4 MiB |
+| 5 | `120 -> 240` | `10..120 -> 20..240` | 531.3 / 526.2 MiB |
+| 10 | `150 -> 300` | `-10..150 -> -20..300` | 547.8 / 500.8 MiB |
+
+Working-set deltas are +4.37%, -0.96% and -8.59%; paged and virtual peaks likewise show no monotonic increase.
+DMA/VIF counters continued advancing through every run. This qualifies the mechanism and three representative
+checkpoints. Human review accepted the fog at 2x and made it the supported maximum: larger values reveal enemy spawn
+activity and low-polygon background geometry that the authored fog is intended to hide. `RenderDistance`, the
+`KZ_RENDER_DISTANCE` override and the launcher therefore clamp to `1..2`; higher values report the clamp. Chapters
+2-4 and 7-9 subsequently passed both baseline and 2x arms. Chapter 2 needed a 90-second 2x retry before it reached the
+far/fog consumers. First transformed values across those chapters were `150/10..150 -> 300/20..300`,
+`110/0..110 -> 220/0..220`, `45/-5..45 -> 90/-10..90`, `45/0..45 -> 90/0..90`,
+`120/20..120 -> 240/40..240`, and `60/10..60 -> 120/20..120`.
+
+Chapter 6 is not valid memory-comparison evidence. Fixed-wall 90-second arms can pass and measure
+`50/-10..50 -> 100/-20..100`, but baseline and 2x reach active rendering at different times. A new automation limit
+counts presented frames after the local-player origin and requires 30 seconds of actual rendering; it passes a
+chapter 5 smoke but exposed chapter 6's nondeterminism. Baseline retries reached missing targets `0x08414615` from
+`0x2E67DC`, `0x0` from `0x1C8544`, and `0x20000` from `0x3B743C`, each followed by fixed DMA/VIF counters. One 2x
+retry exited with host access violation `0xC0000005` after reporting malformed render heights down to 16-24 pixels.
+Neither arm completed the aligned duration, so the prior 426.7/808.0 MiB comparison is withdrawn and no failure is
+attributed to render distance. These runs exercise direct chapter selection, which is now diagnostic-only.
+
+A focused baseline-only run (`gfx03_c06_allocator_diag1`) enabled the retained STAB-01 heap hooks with page watches
+disabled. At guest vsync 5242, cleanup owner `0x008044C0` passed `0x00FA0CA0` and then `0x0001000A` to `free` from
+return `0x2E819C`. Neither is a heap chunk: the surrounding words are a resource-record sequence containing
+`0x500`, `0x1000A`, `0x00FA0CA0`, `0x2820`, and subsequent numbered records. The calls came through the known
+`0x2E7B38 -> 0x2E7440 -> 0x2E8170` cleanup chain and were immediately followed by target `0x52F110` from virtual
+call `0x2E67DC`. A saved caller link slot identified `0x01F56E94`, but a second exact-word run
+(`gfx03_c06_linkwatch_diag2`) used a different allocation layout; it instead stalled at `0x2E6620`/return
+`0x2E68F0` with DMA/GIF/VIF fixed at `2753/390/798`.
+
+These baseline arms install no render-distance hooks. They localize Chapter 6 to the same cleanup/list and allocator
+investigation boundary as the historical STAB-01 work, but do not prove that Chapter 6 and Chapter 11 share an
+identical first writer. The result is retained as diagnostic evidence and is not a supported-path acceptance gate.
+
+Deterministic GS replay isolates renderer-only controls. On the first active-gameplay trace:
+
+- anisotropy 0x versus 16x is 4/4 byte-identical;
+- texture replacement off versus on with an empty replacement directory is 4/4 byte-identical;
+- CAS 30 remains independently measured by GFX-01 (19.243% changed versus off).
+
+That trace has 130 `TEX1` writes but no mip-enabled state (`MXL=0`, `MMIN=0`), so a mipmap option cannot change it.
+The docking trace has 148 mip-enabled states (`MXL=3`, K from -2.8125 to 0). Dense capture of all frames 83-107 found
+PS2 mipmapping versus base-only identical in 24/25 frames; frame 86 changed 2.87% of pixels (mean absolute RGB 0.03,
+max 19), for an aggregate 0.115% changed / 0.0010 mean. Config schema 2 therefore exposes two measured modes:
+`Mipmapping=ps2` (default) and `Mipmapping=highest` (disables `Mipmap`, `HWMipmap` and trilinear selection so level
+zero is sampled). Adjustable transition bias is deferred because PCSX2 has no corresponding public GS option.
+
+The frame-86 mip delta is spatially coherent rather than diffuse replay noise. All 26,345 changed pixels are within
+`x=378..648`, `y=316..576`, covering the distant bulkhead behind the squad; base-only restores its rivet and panel
+pattern. Characters occlude the delta and the HUD is unchanged. Changed pixels average 0.879 RGB levels with a 3.0
+95th percentile and maximum 19, so the mode is a narrow texture-detail option rather than a global sharpening claim.
+
+PCSX2 enables anisotropy only for triangle primitives which do not use its shader-emulated sampler and do not use
+manual trilinear LOD. Paletted textures, render-target textures, complex clamp/depth cases, sprites and manual-mipmap
+draws bypass it. The launcher now describes that eligibility instead of promising every ground/wall texture will
+change. The docking trace supplies the missing deterministic positive case. Its 0x arm is byte-identical to the prior
+25-frame PS2-mip replay; 16x changes five frames, with aggregate 0.306% changed / 0.0030 mean / maximum 30. Frame 86
+changes 69,724 pixels (7.599%) across the oblique floor, ceiling, bulkhead and foreground geometry; frames 87-90
+change another 138 pixels each.
+
+A four-way replay also checks the control interaction. At 16x, base-only mip mode changes five frames (aggregate
+0.211%, maximum 20). With base-only selected, 0x versus 16x anisotropy changes five frames (0.403%, maximum 30).
+Relative to PS2 mipmapping at 0x, the combined base-only/16x arm changes five frames (0.518%, maximum 30). The shader
+paths interact on 21,594 frame-86 pixels, as expected when base-only changes sampler eligibility, but neither control
+masks the other or affects unrelated frames.
+
+Texture clarity is therefore qualified with deliberately narrow claims: anisotropy improves eligible angled
+surfaces, and highest-detail mip mode forces level zero only where the game authored mipmapping. Character LOD is
+rejected for this milestone unless offline mesh evidence justifies reopening it. GFX-03 is complete. Supported map
+access uses exact `Shooterman` and native campaign selection; the direct-start Chapter 6 stress gate is retired.
+
+## GFX-04 temporal-input feasibility: no-go (2026-10-21)
+
+The current renderer boundary cannot provide a correct input contract for modern temporal reconstruction.
+
+### Color and composition
+
+PCSX2's `GSDevice::Merge` combines the active display circuits and makes that merged texture current; interlace,
+FXAA and other enabled post steps can replace it again before `kzgsReadback`. Standard color and the D3D12 swap chain
+are `DXGI_FORMAT_R8G8B8A8_UNORM`, with no declared scene-linear, HDR or sRGB resource contract. Live captures already
+contain weapon, HUD, tutorial overlays and the game's post effects. This is useful composed SDR color, not a
+pre-HUD scene-color input.
+
+### Depth target inventory
+
+`KzgsBurstFrame.tcInfo` now records both display circuits and every PCSX2 color/depth cache target. A diagnostic D3D12
+chapter-1 run produced two bounded consecutive samples:
+
+- Loading frames 1319-1338: all 20 had one depth target at `TBP0=0x01C00`, `PSM=0x31` (`PSMZ24`), texture
+  `1024x896`, valid rectangle `512x384`. The displayed color framebuffer was `0x00000`.
+- 3D gameplay frames 1796-1815: all 20 had **zero** depth targets. Three color targets occupied `0x00000`,
+  `0x00E00` and `0x01C00`, while the displayed framebuffer alternated between `0x00000` and `0x00070`.
+
+A sparse sequence independently showed `0x01C00` changing from depth during loading to color during gameplay. The
+cache therefore has no persistent, display-correlated gameplay depth surface or convention that can be handed to a
+temporal API. The direct-start option was used only to reach the diagnostic scene quickly; no release acceptance
+depends on it.
+
+### Camera, jitter and motion
+
+The GS vertex stream contains `ST`, `RGBAQ`, already transformed screen-space `XYZ`, `UV` and fog. View, projection
+and object transforms have already been consumed by guest VU/EE code. kzgs has no object identity, previous transform
+or motion-vector stream. A renderer-wide subpixel offset would jitter HUD, sprites, particles and post-process draws
+along with world geometry. Reconstructing per-object motion would require game-specific engine hooks or speculative
+draw matching; optical flow is not an engine motion-vector contract.
+
+### UI, reactive content and resets
+
+HUD, tutorial overlays, weapon, particles and transparency are composited into the same color targets without a
+separate UI or reactive mask. The host can reset history on resize, renderer/config restart and device loss, but the
+GS interface has no reliable semantic event for camera cuts, teleports, pause, save/load or gameplay transitions.
+
+### Decision and fallback
+
+GFX-04 is a technical **no-go** for DLSS/FSR/XeSS-style temporal reconstruction under the present architecture.
+Required inputs cannot be made correct without the broad game-specific draw/engine guessing prohibited by the stop
+condition. DLSS-01 is therefore stopped before SDK or licensing work. The native fallback is the validated spatial
+D3D12 path: integer internal scaling, sharp presentation, CAS, anisotropy, measured mip selection and bounded view
+distance. No temporal setting is exposed in the launcher.
+
+## GFX-05 display follow-up (2026-10-21)
+
+Killzone aspect handling has two layers. `kzPatchesApply` sets the game object's native widescreen word only for
+`Aspect=16:9`, changing engine FOV and HUD layout. kzgs separately applies the selected presentation aspect when the
+merged GS image is fitted to the physical output.
+
+The deterministic replay tool now accepts `--aspect 4:3|16:9|stretch`. Final-backbuffer replay of docking frame 86
+with the validated texture/presentation settings produced:
+
+| Output | Mode | Result |
+|---|---|---|
+| `1920x1080` | 4:3 | centered 4:3 picture with pillarboxes; 60.3% nonblack |
+| `1920x1080` | 16:9 | fills output; 80.4% nonblack |
+| `1920x1080` | stretch | byte-identical to 16:9 because the output is 16:9 |
+| `3440x1440` | 4:3 | centered 4:3 picture; 44.9% nonblack |
+| `3440x1440` | 16:9 | centered 16:9 picture with pillarboxes; 59.8% nonblack |
+| `3440x1440` | stretch | fills output; 80.4% nonblack and 96.938% of pixels differ from 16:9 |
+
+Matched live arms are required for engine geometry because presentation replay cannot change the game flag captured
+in a trace. Chapter-1 4:3 and 16:9 arms at gameplay offset 301 both exited 0. The 4:3 arm has narrower horizontal FOV,
+original HUD placement and pillarboxes; the 16:9 arm expands FOV and moves HUD/tutorial elements to the widescreen
+edges. Matched front-end captures likewise pass in both layouts.
+
+The recorded FMV frame fills 16:9 and is pillarboxed in 4:3; 16:9 and stretch are byte-identical on a 16:9 output.
+The current renderer remains untagged `R8G8B8A8_UNORM` composed SDR, so there is no scene-linear basis for an HDR
+claim. Native ultrawide is also not claimed: 16:9 correctly pillarboxes ultrawide output, while Stretch is an explicit
+distortion mode and is labeled as such in the launcher.
+
+Automated scope verification was not accepted: Chapter 1 suppressed zoom during its tutorial, and a Chapter-5
+direct-start arm reproduced the retired corruption path in one aspect arm. That run was excluded rather than
+attributed to aspect mode.
+
+Hands-on acceptance then closed GFX-05 through the supported native path. With Test memory card enabled and exact
+`Shooterman`, every campaign map and difficulty was available through the game's menus. On the ultrawide monitor,
+16:9 pillarboxed correctly, 4:3 appeared correct, Stretch filled with the expected distortion, and gameplay,
+scope/zoom and weapon switching remained normal. The Validated enhancements preset was used with VSync on. VSync off
+still produced egregious tearing, so VSync-on remains the accepted baseline and is now the default/preset value.
+
+## Testing options (2026-10-17)
+
+Launcher Testing tab (`[Testing]` in `killzone.ini`, all off by default; nothing is hooked while off): unlock all
+campaign levels (WIN-02), start in a chapter, and a separate test memory card (WIN-05). Code:
+`src/kz_testing.cpp`. Hook addresses are in the GEN-01 manifest (`SwitchToMenu`, `SetLevelFile`,
+`ProfileMaxDifficulty`, `ProfileLevelUnlocked`, `ProfileAnimaticUnlocked`; `MovieOpen` was already there).
+
+### Campaign unlock state
+
+- The front end is script-driven. PlayerProfile script methods are registered at 0x1D3558.. as member-function
+  pointers (name string followed by an 8-byte {delta, index -1, pfn}): `GetMaxDifficulty` 0x1D7118,
+  `IsLevelUnlocked` 0x1D7190, `IsAnimaticUnlocked` 0x1D7258.
+- `IsLevelUnlocked(profile, globalLevel)`: index = clamp(level-1, 0, 47); level 1 is always unlocked; otherwise true when
+  the profile data's per-level record `+0x2D4[index-1]` is > 0. `GetMaxDifficulty` returns `+0x214[index]`.
+- All three first compare the profile name with **"Shooterman"** (string 0x543C3C, referenced nowhere else): true, 2 and
+  true. **"Shooterman2"** (0x543C47) unlocks levels 1-5 only. A profile named Shooterman is the developers' cheat;
+  verified: the level list then opens on the last chapter and chapter 11 loads and plays.
+- Level select asks for the first sub-level of each of the 11 chapters: global levels 1, 5, 9, 12, 16, 20, 23, 26, 29,
+  31, 33. Difficulties are Easy 0, Normal 1, Hard 2.
+- The option replaces the three queries with the Shooterman answers; the profile is never written. Four unlock-on runs
+  left the memory-card files with identical SHA-256 hashes; an ordinary fresh profile (`Tester`) reached chapter 11.
+
+### Front-end flow
+
+- `main` (0x140138) opens menu sets with `OpenMenu(id, ...)` (0x18F7A8: 0 Intro, 1 FrontEnd, 2 Online, 3 Status,
+  4 EndGame, 5 TestMenu, 6/7 offline multiplayer, 8 Pause), Intro first, then the game loop 0x1402B0 opens FrontEnd.
+  The byte at 0x560110 also skips the Intro set; it is filled from `cdrom0:SYSTEM.CNF` (disc variant), so it was left
+  alone.
+- Screens are switched by `SwitchToMenu(menu, const char *name, push)` (0x1A9738). Intro: LanguageOutro, Logos (about
+  23 s, buttons do not skip it), MemoryCardTest, PlayGameIntro (cinematic `source:Movies/Intro/Intro_NTSC`, about 58 s).
+  FrontEnd campaign path: MainMenu, ScreenGame, ScreenSelectProfile (or ScreenCreateProfile on an empty card),
+  MapSelect, ScreenDifficulty, ScreenCharacterSelect.
+- `Game settings` (`*(*(0x559178)+0x74)`) setters called by the scripts: `SetModeScript("Story")`, `SetGameMode(0)`,
+  `SetGameType(0)`, `SetNrOfPlayers(1)`, `SetPlayerJoystick(0,0)`, `SetLevelFile("11.OTS")` (0x1B89A8, plain C string
+  "<chapter>.<name>", e.g. `1.Trenches`, `3.Station`), `SetGameScript("11.OTS.MissionScript")`,
+  `SetGameDifficulty(n)`, `SetPlayerCharacter(0, "Templar")`. Fields: level file +0x0C, abort +0x1A8, status +0x1AC,
+  difficulty +0x1B0, end-game option +0x1B4, game type +0x1B8, mode +0x1BC, players +0x220 (stride 0x1E0).
+- The menu object also has `EnableCheats` (0x433780, sets menu+0x260) and the profile option table lists God Mode, Hit
+  Info, Victory Status, Lock/Spread Circle and Show Coordinates. Not investigated further.
+- MapSelect is a one-item carousel that opens on the highest unlocked chapter; D-pad Up moves one chapter back (ten Ups
+  from chapter 11 chose `1.Trenches`).
+- `KZ_MC_ROOT` is the card folder itself (the default is `<ELF folder>/mc0`), not its parent.
+
+### Implementation choices
+
+- The original intro shortcut kept the Intro script running but pointed its "Logos" switch at "MemoryCardTest"
+  (found within 16 KB of "Logos"; 0x3F0 bytes before it) and failed the cinematic open. It reached the main menu at
+  5.4-7.2 s instead of about 87 s, but skipped required game initialization and was removed on 2026-10-20.
+- Skipping the whole Intro set (`OpenMenu(0)` returns at once) also reached the menu, but skips MemoryCardTest; an
+  empty card then goes straight to Create Profile without the "No profiles found" dialog. Rejected (see below).
+- Start in a chapter drives the menus with pad pulses keyed on `SwitchToMenu` (settle 1.2 s, 150 ms press, 450 ms gap)
+  and checks the chapter with `SetLevelFile`. On an empty explicitly isolated card, Create Profile types
+  `[Testing] DefaultProfile` (exact `Shooterman` by default, `KZ_DEFAULT_PROFILE` for automation) through the on-screen
+  keyboard, then answers Yes to save. Normal-card automation retains the legacy `Tester` name; populated cards only
+  take the existing first profile-screen entry and are never renamed or overwritten. It turns on the unlock (the
+  carousel count assumes chapter 11 is the start) but now waits for the full Intro menu set before automating the front
+  end. Explicit `KZ_UNLOCK_ALL=0` suppresses that convenience hook during Start in so a populated `Shooterman` card can
+  exercise the native profile queries. ISO-free self-tests cover selection, exact typing, overrides, invalid values,
+  hook suppression and populated-card no-type behavior.
+- PROFILE-01 BYOD acceptance (2026-10-20): an empty isolated card entered Create Profile at guest time 16.1 s, typed
+  exact `Shooterman`, saved three files totaling 60,304 bytes with one exact ASCII-name occurrence, reached
+  `1.Trenches` on Normal, exited 0 and produced 11 captures. A populated-card rerun with `KZ_UNLOCK_ALL=0` logged native
+  profile queries, installed no unlock hooks, reached `11.OTS` on requested difficulty 2, exited 0 and produced 11
+  captures. The populated test-card aggregate SHA-256 was unchanged at
+  `f221f592efe92aaf9a95d3b297beeb5985700d33d6bb9f231d4874cd39cf2cf0`; the normal card remained an empty tree with
+  SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. The local card and captures remain ignored
+  under `work/`.
+- A research call logger that wrapped about 30 front-end functions made the game thread jump to 0 during the chapter
+  11 load (2 of 2 runs); the shipped hooks either replace a whole leaf query or only inspect arguments before calling
+  the original.
+
+### Failure evidence: chapter 11 load after shortened startup (WIN-06)
+
+Chapter 11 (`11.OTS`) loads, win-clang-rel, headless, 2048x1792 frames:
+
+| Intro | Runs | Bad | Failures |
+|---|---:|---:|---|
+| played (baseline: `fe_nolog5`, `t_A`, `t_base1`-`4`) | 6 | 0 | - |
+| whole Intro set skipped (`t_p3`, `t_C2`, `t_B2`) | 3 | 2 | corrupt frame then 0xC0000005; corrupt HUD digits |
+| logos + cinematic skipped (`t_V1`-`3`) | 3 | 1 | 0xC0000374 heap corruption |
+| cinematic only skipped, `KZ_SKIP_INTRO_MASK=2` (`t_M2_1`-`3`) | 3 | 1 | 0xC0000005 |
+| logos + cinematic, menus started 80 s after boot (`t_D1`, `t_D2`) | 2 | 1 | 0xC0000005 |
+
+- Failures are in the host process (access violation, heap corruption), during or right after the chapter 11 loading
+  screen. Chapter 1 loaded cleanly after a skip (two runs). Delaying the level start does not help, so it is not the
+  time since boot; the common factor is that the intro cinematic was never played.
+- Skipping only the logos (`KZ_SKIP_INTRO_MASK=1`) left the cinematic playing past 160 s in 3 of 3 runs (normally it
+  ends at about 84 s), so the Logos screen also sets state that PlayGameIntro uses.
+- Later sections trace the downstream corruption and reject MPEG/IPU decoding as the cause. The decisive distinction
+  is that the supported path completes startup; the movie decoder itself is not the faulty component.
+
+## WIN-06: timer-alarm list, interrupt masking and movie A/B (2026-10-20)
+
+**Disposition (2026-10-21): retired diagnostic work, not a release blocker.** The gate below was created to qualify
+the direct-start/skip-level path. The project now uses exact `Shooterman`, whose native profile queries unlock every
+map, followed by the game's own campaign menu. Historical allocator and renderer evidence remains valuable, but no
+supported feature or release claim depends on this gate. This disposition does not claim the diagnostic path was
+fixed.
+
+Gate: `tools/scripts/win06_gate.ps1` (ten sequential headless runs, `KZ_START_LEVEL=11`, so the intro is skipped, each
+on a fresh copy of `work/win04_20261019_card`; win-clang-rel, D3D12, 35 s). A run fails on a non-zero exit, a guest
+`missing-target`, a host exception, a missing `11.OTS` level file or mixed capture sizes.
+
+### The alarm list that `0x2B70DC` walks
+
+- `0x2B6FB8` is libkernel's **Timer 2** handler (INTC 11; it reads `T2_COUNT`/`T2_MODE` at `0x10001000`/`0x10001010`),
+  not Timer 1 as earlier notes said. `0x2B70DC` is its `jalr` to the node's handler (`node+0x28`, gp `+0x2C`,
+  argument `+0x30`).
+- State block `0x517748`: `+0x00` overflow count (u64), `+0x08` INTC handler id, `+0x0C` sequence, `+0x10` nodes in
+  use, `+0x14` free list, `+0x18` active list head (**`0x517760`**, sorted by expiry), `+0x1C` id being handled.
+- `InitTimer` (`0x2B6B70`, called from libkernel init `0x2B65D0`) builds a pool of 128 nodes of 0x40 bytes at
+  **`0x56CB40`-`0x56EB40`**. Node: `+0` next, `+4` prev, `+8` tag, `+0xC` flags (bit 0 counting, bit 1 handler set),
+  `+0x10` start, `+0x18` base, `+0x20` schedule, `+0x28` handler. Ids are `node << 4 | tag`; `node = (id >> 10) << 6`.
+- API: `AllocTimerCounter` `0x2B72B8` (`0x2B7328` with interrupts off), `StartTimerCounter` `0x2B7380`/`0x2B7430`,
+  `SetTimerHandler` `0x2B74B0`/`0x2B75A8`, list insert `0x2B6EF8`, remove `0x2B6F80`, reprogram `0x2B6D68`.
+  `SetTimerAlarm` `0x2B7758` (and `iSetTimerAlarm` `0x2B7888`) adds a second pool of 64 records of 0x10 bytes at
+  `0x56EB40` (free head `0x56EF40`) and the trampoline `0x2B76F8`. The only caller of `SetTimerAlarm` is libkernel's
+  `DelayThread` (`0x2B7E38`: CreateSema, SetTimerAlarm with an iSignalSema callback, WaitSema, DeleteSema).
+- Consequence: the head value `0x5000` seen in `win06_timerhead_06` is **not a node at all** (outside the pool,
+  unaligned to it). The head is only written by insert/remove, so the list memory or a node link was overwritten by
+  a stray write. The other signatures point the same way: a jump to `0x7005728` with DMA-tag-like words at
+  `0x13F800` (main stack, `win06_dilog_01`), an indirect call from `0x3A40A4` to `0x123610` (inside the main stack
+  range, `win06_ipuoff_09`), and host access violations (`0xC0000005`) at 20-30 s.
+
+### Interrupt delivery inside `di`/`ei`
+
+- `EeScheduler::run()` injects pending invocations (interrupts, SIF and stream callbacks) and switches threads
+  without checking the running context's Status.EIE, so a handler can run inside a guest `di`/`ei` section; the
+  alarm-list edits rely on such sections. `PS2X_DI_GATE=log` (experimental runtime change) reported 2 deliveries in
+  the one failing run of three and none in the two passing runs; both were the frame-pipeline VIF1 handler
+  `0x14E0C8`, once at the `ei` of the interrupt-off wrapper `0x2B63B0` and once during `SyncDCache` (`0x2B1320`,
+  cache operations are no-ops here). Neither touches the alarm list.
+- With the gate enforced (`PS2X_DI_GATE` default in that build): **8/10** (`win06_digate_*`; runs 8 and 9 host
+  `0xC0000005`). Not the cause; kept as `patches/ps2recomp/experimental/ee-di-interrupt-gate.diff`.
+
+### Movies are not required
+
+- `KZ_IPU=off` makes every movie open fail (the path the intro skip takes), so no MPEG/IPU HLE state, decoder or
+  stream callback is ever created. Result: **8/10** (`win06_ipuoff_*`; run 8 host `0xC0000005` at about 22 s, run 9
+  the `0x3A40A4` indirect call). The baseline with movies on was 8/10 (`win06_mpgfix_*`).
+- So "the intro cinematic was never played" does not mean "a movie code path misbehaves": with every movie absent the
+  load still fails. What playing the cinematic contributes is something it leaves behind or the time it occupies
+  (heap and VRAM layout, IOP/SPU2 state) that moves or masks a stray write during the chapter 11 load.
+- Checked and ruled out on the way: the libmpeg HLE's callback scratch and private packet copies come from the
+  runtime arena `0x80000`-`0xB0000` (`ps2SetRuntimeArena`), not the game heap. The game's video stream callback
+  `0x2E0628` copies each packet into the player's ring (`*(0x55B3D8)`, `+0xF4` base, `+0xF8` size, `+0xFC` write)
+  and runs asynchronously in the HLE, which could write through a stale player; it cannot explain the movies-off
+  failures. `sceMpegDelete` is guest code (not HLE-bound).
+
+### Next
+
+- Superseded by "WIN-06: write watch names the realloc wrap (2026-10-20)" below.
+- Find the writer, not more signatures: a host write watch on the alarm pool and list head (`0x517748`-`0x517780`,
+  `0x56CB40`-`0x56EF50`) that logs any write from a pc outside libkernel's timer code (`0x2B6B50`-`0x2B7F00`), with
+  the guest pc and the DMA/VIF/SIF/IPU channel when the write comes from a host-side transfer. Generated stores go
+  through `FAST_WRITE*`, so a page-protection watch (as used for the quit-to-front-end white screen) is the
+  cheapest option that needs no regeneration.
+- Then compare heap state at the `11.OTS` level-file call with and without the cinematic (`KZ_DUMP_RAM`).
+
+## WIN-06: write watch names the realloc wrap (2026-10-20)
+
+Tool: `KZ_WIN06_WATCH=1` (`src/kz_win06_watch.cpp`, host-only, commit `6363163` plus the hooks described below). The
+host pages over `0x517748`-`0x517780` and `0x56CB40`-`0x56EF50` are read-only; a write fault saves the CONTEXT and a
+snapshot of the page, unprotects it and single-steps the store (trap flag), then re-protects and diffs. Each changed
+word is attributed from the PDB-symbolised host stack; generated functions carry the guest address in their names and
+the guest pc in their source comments, so the log gives the exact guest instruction. Cost: about 13,000 faults per
+35 s run (neighbouring data, mostly at boot) and about 500 watched changes, no visible slowdown. The same flag hooks
+`free` `0x172DD0`, `realloc` `0x173038`, the C realloc wrapper `0x173660` and the upload call `0x15A268` to validate
+their arguments (dlmalloc-style chunk header at ptr-8, size at ptr-4, heap descriptor `0x55EC20`, bounds
+`+0x448`/`+0x44C`).
+
+### Result
+
+| Batch | Result | What the failing runs showed |
+|---|---:|---|
+| `win06_watch` (watch only) | 6/10 | run 10: host-class writes to `0x517748`.. by `ps2CgWr128Slow` <- `FUN_00173038` (guest pc `0x1731B4`-`0x1731C4`) |
+| `win06_watch2` (+ registers) | 5/10 | run 08: same loop, destination `0x02517740` (host `r9`); run 07: packet builder `0x159F7C`-`0x15A100` |
+| `win06_watch3` (+ heap/upload hooks) | 8/10 | runs 02, 07: `realloc` called with `0x00000008` / `0x0D3A0C15` from ra `0x173694` |
+| `win06_watch4` (+ header checks) | 6/10 | host GS crashes and one corrupt vtable call; no realloc case in this batch |
+| `win06_iopsync` (`PS2X_IOP_THREAD=0`, no watch) | 4/10 | GS palette crash (4), missing frame size (1), missing-target (1) |
+
+- In passing runs only libkernel's timer code (`0x2B6B70` InitTimer, `0x2B6FB8` handler, list insert/remove) writes
+  the watched words. No host-side DMA, SIF, VIF or IPU write ever touched them.
+- **The writer of the timer block is the game allocator's realloc copy.** `FUN_00173038` (realloc) allocates the new
+  block (malloc `0x1727F8` returned a valid `0x01F1B3D0`), then copies `(old chunk size - 4) & ~0x3F` bytes with
+  `lq`/`sq` (`0x1731A0`-`0x1731C4`). The old pointer was garbage (`0x00000008`, `0x0D3A0C15`), so the "size" read from
+  its fake header is megabytes. The copy runs past `0x02000000`; `ps2CgWr128Slow` masks the address to RAM
+  (`Ps2FastWrite128`: `addr & PS2_RAM_MASK`), so the copy continues at `0x0` and overwrites the kernel area, the
+  runtime arena, the main stack `0x100000`-`0x140000` and libkernel's data up to `0x56xxxx`. On hardware an EE store
+  above 32 MB of physical RAM would be a bus error; here it silently wraps.
+- This explains every earlier signature: the alarm head `0x5000` and timer handlers jumping to garbage (the copied
+  bytes include MIPS code and strings such as `...dex1;right_index2;right_middle1...`), jumps into the main stack, and the
+  headless sampler showing the EE at pc `0x1731A0` ra `0x17314C` at 25-30 s in `win06_timerhead_06`.
+- The garbage pointer is the cause to chase, not the copy. `0x173660` is the C realloc wrapper (NULL -> malloc, size
+  0 -> free) with 300+ call sites (`0x2C0BE8`.., `0x41027C`-`0x513024`: container growth code), so the caller of the
+  wrapper identifies the container. Batch 4 had no realloc case, so the caller is not named yet.
+- Other failures are other consumers of corrupt heap data: an indirect call at `0x3B4978` through an object whose
+  fields hold `0x123610` (the same value as `win06_ipuoff_09`'s `0x3A40A4` call), and the upload walker `0x15A5E8`
+  passing a garbage record (address `0x7B90F5E8`, huge size) to the DMA packet builder `0x159D30`, whose write
+  pointer lives in scratchpad (`0x70003D3C`) and ran from `0x5175C0` into the timer block.
+- The host GS crash (`GSGetRGBA8AlphaMinMax` <- `GSTextureCache::AttachPaletteToSource`, reading unmapped host
+  memory) is the most common failure with or without the watch. It is consistent with a corrupt CLUT/texture
+  register from the same corruption, but it is a host crash in its own right: the GS should not read outside its
+  buffers whatever the guest sends.
+- Threaded IOP ruled out: `PS2X_IOP_THREAD=0` failed 6 of 10.
+
+### Notes on the tool
+
+- Generated functions often return through tail-jump fragments (`ps2DspTail` sets `ctx->pc = target | 1` and the
+  call site follows it), so a `replaceFunction` hook cannot read a result after calling the original; only argument
+  checks before the call are reliable. A first version that tracked malloc results recorded nothing and reported
+  every free as "never allocated".
+- dlmalloc small chunks (size < 0x51) do not clear the next chunk's in-use bit when freed, so double frees of small
+  blocks are not detected by the header check.
+
+## WIN-06: renderer guards expose the remaining guest corruption (2026-10-20)
+
+Two more unguarded ten-run batches reproduced the same 8/10 rate:
+
+- `win06_watch5`: run 2 returned through a corrupt object to missing target `0x3`; run 4 reached the allocator with
+  stale or reused high-heap pointers and rendered a wrong-sized frame. Neither run reached the bad realloc-wrapper
+  path. A later range-only batch names that caller below.
+- `win06_regs`: both failures were the host GS palette crash. The captured x64 arguments proved that the palette
+  pointer was valid but the requested width was `0xFFFFFFC7`: `GetAlphaMinMax(min, max)` had received an inverted
+  byte range, and `max - min + 1` wrapped to a roughly 4 GiB scan in release builds. The prior assertion was compiled
+  out.
+
+The PCSX2 dependency now returns the cached full-palette alpha range when the requested subrange is inverted or
+outside the 16/256-entry palette. This is conservative for alpha-test optimization and prevents an out-of-bounds
+read. A second guard skips the depth-alpha optimization when no depth target exists (the other observed host crash
+was a null `ds` dereference when frame and depth shared a base pointer). `kzgs_palette_guard` covers valid, inverted
+and out-of-range palette queries.
+
+The guards remove the host exceptions but are not the WIN-06 root fix:
+
+| Batch | Result | Remaining failure |
+|---|---:|---|
+| `win06_gsguard` | 8/10 | run 5: severe texture/CLUT corruption by 25 s and a `1280x896` frame at 30 s; run 6: EE `pc=ra=0x50`, packet-like words at `sp=0x13F810`, and a `1704x1792` frame |
+| `win06_guardwatch` | 10/10 | no bad allocator/upload report; the page-protection watch changes timing enough to mask this batch |
+| `win06_software` | 9/10 | the software GS still failed during D3D12 output-resource destruction, so the hardware texture cache is not the common origin |
+| `win06_callfix` | 9/10 | the PCSX2-parity DMAC CALL-stack-overflow fix did not trigger; run 2 still corrupted the GS local-memory read |
+| `win06_vifmap` | 8/10 | one GS crash and the recurring `0x2E67DC` bad callback; both had `unknown=0`, so invalid VIF commands are a later amplifier, not the origin in these runs |
+| `win06_recordwatch` | 8/10 | one corrupt frame and one bad realloc/missing-target run; the low-overhead range watch captured the realloc caller and overwrite |
+
+An additional half-open guest range can now be selected without rebuilding:
+`KZ_WIN06_WATCH_RANGE=<start>-<end>`; `KZ_WIN06_WATCH_DEFAULT=0` omits the timer ranges to reduce timing impact.
+The realloc diagnostics decode a caller's `lw a0, offset(base)` delay slot, retain the pointer-field address and
+request size when realloc frees the old block, and print all guest GPRs on a bad argument.
+
+`win06_recordwatch_08` names the `0x00000008` path:
+
+- Caller `0x2C0E9C` grows a four-byte-element vector and loads its old pointer from `[s0+8]`.
+- `s0` was the caller's zero-initialized stack object at `0x13FBE0`. Immediately before the bad call its words were
+  `{count=4, capacity=3, pointer=8}`; request size was `0x18`.
+- The stack chain is `0x2C0E9C` <- `0x2C0EF4` <- `0x2C1184` <- `0x3A6730`.
+  `FUN_003A66D0` explicitly clears the three vector words, then passes it to `FUN_002CF430`, a scratchpad-backed
+  query, before iterating and appending the returned values.
+- The bad realloc's copy begins wrapping above 32 MiB at vsync 1466 and writes the watched callback record at
+  `0x8D1AC8` from unmasked destinations `0x028D1AC0`, `0x048D1AC0`, and later aliases. Thus the recurring
+  `0x2E67DC` callback target is downstream of this realloc in that run, not the original corrupt field.
+
+A debug hook at the vector grow return (`0x2C0EA4`) checks `v0` before it is stored at `[s0+8]`.
+`win06_vectorgrow2` (30 runs, shortened to 28 s) failed 2/30. Run 26 captured the first bad state before the store:
+the vector was `{count=1, capacity=0, pointer=0}`, the locked heap bounds were still the valid
+`0x00591410-0x01FFFFF0`, and the allocator returned `v0=8`. Within the next eleven vblanks, many independent stack
+vectors also received `8`, then the bad realloc wrapped and destroyed the timer state. The source is therefore
+allocator metadata/control flow before the vector store, not `FUN_002CF430` overwriting an earlier valid vector
+pointer.
+
+A heap-descriptor-only page watch retained the last 64 writes, but page protection perturbed the timing enough to
+mask the bad result. A temporary direct trace in the otherwise unhooked generated allocator then reached guest
+`pc=0x172D8C` with `t1=0` and returned `8`; the temporary generated-source edit was removed and the normal generated
+tree rebuilt. This confirms the allocator result without treating a watched 10/10 batch as acceptance evidence.
+
+## WIN-06: startup shortcut and broader runtime A/B results (2026-10-20)
+
+The allocator trace above identified how an invalid result becomes broad low-RAM corruption, but did not find an
+emulation correction. Startup timing was initially correlated with failures, but a measured full-intro run disproved
+it as the common cause:
+
+| Startup path | Result | Evidence |
+|---|---:|---|
+| Logos retained, native Cross after 2 seconds (`win06_native_accept`) | 8/10 | same missing targets and visible corruption |
+| Logos retained, native Cross after 30 seconds, D3D12 | failed on run 1 | `2048x1792` and `1280x896` frames plus a missing target |
+| Full Intro menu set and movie (`win06_fullintro_timing_01`) | failed | `MainMenu` at 218.3 s, `11.OTS` at 225.7 s, missing target by 240 s |
+
+The shortcut therefore remains useful for reproducing the fault but is not its root cause. Additional A/B arms also
+retained failures:
+
+| Arm | Result |
+|---|---:|
+| locals with classic checkpoints | 8/10 |
+| synchronous/legacy VIF, GIF, scratchpad, dispatch, timer and RPC paths | failed 2/4 before the arm was stopped |
+| audited PS2Recomp `cc1fc7d` | failed on run 1 |
+| patch 0025 frame pipeline reversed | failed on run 5 |
+| closure-complete `PS2X_CODEGEN_DSP=0` | failed on run 1 with a wrong-size frame |
+| unmapped high-memory stores routed to the runtime null path | 8/10 |
+
+The stronger ownership diagnostics captured two earlier states than pointer `8`:
+
+- A four-byte vector at stack object `0x13FBE0` grew in place with valid `{count, capacity}` transitions
+  `{7,6}`, `{10,9}`, `{14,13}`, `{18,17}`. Realloc then encountered an already-corrupt adjacent chunk size; the
+  vector itself and its recorded previous allocation were consistent.
+- Another run reached cleanup `0x2E7B38 -> 0x2E7440 -> 0x2E8170` with list node `0x01F101C0` already shaped like a
+  free chunk before its first observed call to `free`. The later allocator return, wrapped copy, timer overwrite and
+  renderer crashes are downstream of this stale ownership transition.
+
+Follow-up batches resolved a cross-owner stale pointer:
+
+- In `win06_block1_01`, cleanup owner `0x007E1EC0` freed node `0x01F0FF00` at vsync 1655 through
+  `0x2E7B38 -> 0x2E7440 -> 0x2E8170`.
+- Live parent `0x01281020` still held that allocation in its embedded vector at `parent+0x58`, pointer field
+  `parent+0x5C = 0x0128107C`.
+- At vsync 1662, resize call `0x4299F4` requested 72 bytes by reallocating the freed pointer. The same stale field was
+  reused again at vsync 1671 and 1678. The call site's pointer-field neighborhood and the previous-free stack agree;
+  this is not an allocator-header heuristic.
+- In a separate successful watched run (`win06_listhead2_01`), a stack-local vector requested its first 12-byte
+  allocation and received `0x01051C30`, freed ten vsyncs earlier through the generic delete wrapper. Its chunk header
+  had already been overwritten with live float data. The run completed, proving that a pass/fail-only gate can miss
+  allocator corruption.
+
+Measured after the PROFILE-01 changes, the first uninstrumented batch was 10/10, but an independent repeat was 7/10:
+one 35-second hang, one host access violation and one indirect-call missing target. Watched `win06_watch5` and
+`win06_watch6` batches were each 4/5; later watched batches reached 10/10, confirming that page protection perturbs
+timing and cannot close the task.
+
+The watch now retains allocator bounds, cleanup owner/list head, delete-wrapper caller and bounded list-chain
+provenance. A whole-RAM reference scan was tested and removed because it performed 22,003 scans in five runs and
+materially perturbed timing. Debug hook `Vector36ResizeReturn` at `0x4299FC` (unique 128-byte executable signature)
+now associates resize results with owner fields, checks for a live owner at cleanup and reports the last owner on a
+bad realloc. Its first three ten-run batches were all 7/10; they reproduced GS faults, missing targets and mixed-size
+corruption, but not the exact earlier cross-owner alias. The third batch emitted no allocator/owner marker before its
+three failures, so the hook remains a targeted ownership diagnostic rather than a success oracle. At the time, this
+left WIN-06 open at the lifecycle transition that leaves the alias live; the later 2026-10-21 scope disposition
+retired the diagnostic instead of adding allocator guards, ignored frees or generic field clearing.
+
+One final bounded investigation tested whether the cleanup-list and 36-byte-vector allocations overlap before the
+later bad realloc. A manifest-validated return hook at `0x2E7238` records cleanup-list node allocations and compares
+them with the existing `0x4299FC` resize-owner history. `win06_listoverlap1` ran with page watches disabled and was
+8/10: one missing-target/mixed-frame run and one host access violation. Neither failure nor any passing run emitted
+an overlap or linked-free marker. The corrupt run instead caught a first-allocation failure: `malloc(0x600)` returned
+`0x01F101A0`, whose header was live non-allocator data, while heap descriptor word `0x0055EC6C` changed from
+`0x01F10198` to `0x00000600` during the call. A follow-up single-word hardware-watch arm, `win06_heapword1`, was
+7/10 and reproduced the same shape with `malloc(0x400)` returning `0x01F10020` before the allocator collapsed to
+`0x408` and then `0x8`; it yielded no usable writer event.
+
+These arms show that the earlier cross-owner alias is real but not a universal first-fault signature. The common
+frontier remains allocator candidate/bin corruption before the invalid return. By project decision on 2026-10-21,
+the direct-start investigation is retired rather than fixed. Its hooks and logs remain available for diagnostics,
+but it is not an M4 or release requirement.
+
+## Windows gameplay baseline re-verification (2026-10-19)
+
+The scripted portion of WIN-04 used `win-clang-rel`, D3D12 and an isolated empty memory card. The front-end autopilot
+created and saved `Tester`, selected `1.Trenches` on Normal and reached first-mission gameplay. The guest reported a
+120 Hz vblank/frame rate; the host exited 0 at the 120-second headless limit with no crash signature.
+
+The run produced 11 captures at 10-second intervals through 110 seconds. All 11 SHA-256 hashes were distinct, sampled
+nonblack coverage ranged from 81% to 99%, and the later frames visibly contain first-person gameplay, HUD, world
+geometry and animation. This proves the scripted gameplay portion only. WIN-04 remains open for a hands-on run with
+testing options disabled that covers save/load, quit to the front end, high-refresh behavior and mouse aim.
+
+### Hands-on closure (2026-10-20)
+
+Two hands-on D3D12 runs with every testing option off completed BASE-01. Normal profile selection, first-mission
+gameplay, controller input, game timing and mouse aim passed. Quit to menu followed by Continue/load resumed saved
+progress. Closing the window completed promptly with exit code 0 and no crash or hang.
+
+The first run used the recorded `VSync=0` configuration and showed screen tearing. A focused A/B with `VSync=1`
+eliminated tearing; the human owner selected VSync-on as the comparison baseline. Two observations remain tracked,
+not hidden in the sign-off: short-distance LOD pop-in is aggressive at original `RenderDistance=1`/`LodScale=1`
+(GFX-03), and action-heavy first-mission firefights repeatedly truncate gunfire/effects and dialogue by roughly
+100 ms on speakers (AUDIO-01).
+
+### Display and audio re-verification (2026-10-21)
+
+The GFX-05 hands-on matrix passed with VSync on, Validated enhancements, Test memory card and exact `Shooterman`.
+VSync off still tears badly. Hope gameplay had no observed audio issue, while Escape firefights continued to truncate
+effects/dialogue; AUDIO-01 should use Escape as the positive arm and Hope as a negative comparison.
+
+## AUDIO-01 callback-boundary instrumentation (2026-10-21)
+
+`KZ_AUDIO_WAV` already records the raw 48 kHz stereo mix before the SPU2 output ring. `KZ_AUDIO_DIAG` now records a
+schema-1 CSV row for every SDL request: host time and callback gap, the corresponding raw-WAV frame, SPU2 producer
+drops, queue depth before/after, high-water skips, reads, startup priming and underrun silence, SDL input/output queue
+depth, submission failures and diagnostic-record loss. The audio callback only appends to a bounded SPSC memory
+queue; a background thread writes and flushes the CSV so disk I/O cannot stall the real-time callback. The
+`summarize_audio_diag.py` validator rejects malformed, non-monotonic or incomplete callback sequences and reports a
+protected-content-safe JSON summary for the whole trace or a host-time window.
+
+A 12.37-second muted SDL/WASAPI smoke using the configured disc image exercised the measurement path:
+1,239 contiguous callbacks, maximum callback gap 10.066 ms, zero diagnostic-record loss, producer overflow, underrun
+silence, SDL queue-query failure or stream-submit failure. One existing high-water event at host time 3.398358 s saw
+7,231 SPU2 frames queued and discarded 4,831 frames before ending at the 1,920-frame target. That is 100.65 ms of
+audio, close to the reported Escape truncation duration. Similar one-time 4,838/5,302-frame skips exist in earlier
+intro-device logs, so this is a concrete lead rather than proof of the combat defect.
+
+### Paired hands-on localization
+
+The paired speaker runs used VSync on, the isolated test card and exact `Shooterman`. Escape reproduced many cuts
+across background audio and combat chatter; Hope reproduced a few across background, scripted dialogue and combat
+chatter, so Hope is lower severity rather than a clean negative arm.
+
+| Run | Host span | Underrun silence | High-water skip | Loss rows |
+|---|---:|---:|---:|---:|
+| Escape baseline | 184.04 s | 317,863 frames / 6.62 s | 254,851 / 5.31 s | 1,104 |
+| Hope comparison | 220.45 s | 161,858 / 3.37 s | 166,077 / 3.46 s | 466 |
+
+Both callbacks remained near 10 ms and recorded zero SPU2 producer overflow, SDL queue-query failure, stream-submit
+failure or diagnostic-record loss. Loss therefore begins between SPU2 production and callback delivery: the queue
+empties while the IOP worker falls behind, then catch-up production crosses high water and the old path discards back
+to its reserve. A focused audible enemy-wave cut coincided with published-cycle backlog growing from 181.21 ms to
+954.27 ms while the callback stayed timely.
+
+### Mitigation and rejected experiments
+
+The retained host mitigation raises the initial/reserve target from 40 to 120 ms and high water from 150 to 320 ms.
+Diagnostic overrides are `KZ_AUDIO_BUFFER_MS=10..400` and `KZ_AUDIO_HIGH_MS=<reserve+10>..480`. The hands-on candidate
+had no noticeable firing/reload delay and reduced many cuts to a few, but one large combat dropout remained; AUDIO-01
+is therefore not complete.
+
+- Synchronous IOP reduced one short probe but regressed the long 120 ms gate to 63,765 underrun frames, 30,595 skipped
+  frames and 4,182 producer drops. Rejected.
+- Highest Windows priority for the IOP/SPU2 worker reduced automated backlog but locked interactive Escape. Rejected.
+- Accounting offloaded RPC execution against future published IOP budget held IOP lead near 6 ms instead of growing
+  to 9.8 seconds. It improved the clock model but a hands-on run still ended after a large dropout.
+- RPC cycle credit plus above-normal worker priority and a 160 ms reserve left only 800 underrun frames and zero skips
+  in a 117-second automated run. Its hands-on run was canceled, so it is not product code. The exact candidate is
+  preserved at `patches/ps2recomp/experimental/audio-iop-cycle-credit-priority.diff`; the locked submodule is clean.
+
+First-pass captures should use `KZ_AUDIO_DIAG` without `KZ_AUDIO_WAV`: the callback ledger writes on a background
+thread, while the raw WAV tap necessarily writes from the producer thread and can perturb the boundary being
+measured. Add the WAV only for a targeted producer-side comparison.
+
+## Direct-upstream hardening and input options (2026-10-24)
+
+The bounded upstream comparison in `docs/upstream_comparison.md` identified five changes that apply cleanly to this
+fork without importing upstream's overlapping runtime or graphics work.
+
+### Yield-safe SIF module calls
+
+`sceSifLoadModule` and `sceSifStopModule` were address-bound directly to runtime handlers. Those handlers write a
+return value but do not advance the saved guest PC. If the call boundary yields, scheduler re-entry can invoke the
+same module operation again; repeated loads eventually exhaust the IOP module arena. The two local module wrappers
+now save `$ra`, call the runtime handler, and assign `ctx->pc = $ra`, matching the return contract already used by
+this fork's yielding MPEG wrappers. Search and unload remain synchronous custom HLE calls.
+
+The first forced `PS2X_STRESS_YIELD=2` acceptance run then exposed the same contract one call earlier at the
+fork-local `sceSifInitRpc` address binding: all three runs remained at that guest PC. The shared returning wrapper now
+covers `sceSifInitRpc` and the three local memory-card address bindings as well. Three corrected stress boots loaded
+13 modules each, advanced DMA continuously, reached the rendered main menu, and reported no arena exhaustion.
+
+### One durable host-log stream
+
+The Windows and macOS launch paths previously opened `stdout` in truncate mode and `stderr` independently in append
+mode. The two buffered streams had independent file positions, so a later `stdout` write could overwrite an earlier
+`stderr` record. Windows also treats `_IOLBF` as full buffering, which could lose the final block on a hang or forced
+termination. Both backends now open the log once, duplicate its descriptor onto `stderr`, and make both C streams
+unbuffered. The ISO-free `kz_host_log_component` test launches a child with no usable standard output, interleaves
+records on both streams, exits through `std::_Exit`, and verifies exact-once records plus intact previous-log
+rotation.
+
+### Aim-mode ownership and scope ordering
+
+Hold-to-aim reconciliation is now keyboard/mouse-only. A controller retains Killzone's original R3 toggle instead of
+having the host immediately pulse its zoom state back off. Aim modes 1 and 2 are both treated as zoomed.
+
+Scope weapons use aim mode 2 and run a reticle-offset block after `ApplyLook`; that block interprets mouse turn
+commands as stick positions, swallowing small motion and clamping larger motion. For keyboard/mouse input, the hook
+temporarily presents mode 1 before entering `ApplyLook`, then restores mode 2 at the first call after the scope block.
+Making the swap before the original call is required because a guest yield can return from the wrapper before later
+host statements execute. A pending restore is also repaired at the next controller update if the normal probe never
+runs. The new probe is locked in the generated manifest with a unique 68-byte ELF signature.
+
+### Controller range, sprint, and intro behavior
+
+Controller dead zones are radial rather than per-axis. After removing the radial dead zone, each axis is multiplied
+by `[Input] StickRange` (default 1.33, clamped to 1.0-1.5) and clamped separately. A modern circular stick's full
+diagonal therefore becomes about `(0.94, 0.94)` instead of `(0.71, 0.71)`, while cardinals remain full scale.
+
+Optional toggle sprint latches L3 on the first gameplay press, releases on the next press, and also releases after
+more than 300 ms without movement. It resets outside gameplay and when disabled; hold-to-sprint remains the default.
+
+The default-off intro hook recognizes only the exact game string `Movies/Intro/Intro`. Returning zero from that
+single movie-player call skips the long boot intro after the logos; story FMVs, menu backgrounds, and attract
+playback still call the original player. Guest object and character pointers are range-checked and the name scan is
+bounded to 128 bytes.
+
+The rewritten branch already reserves `[Testing] SkipIntro` and `KZ_SKIP_INTRO` for its automation path, which skips
+the logos and cinematic together. The precise player option therefore remains `[Game] SkipIntro`, but its one-run
+override is `KZ_SKIP_LONG_INTRO=0|1`; `KZ_MOVIE_LOG=1` exposes the movie timeline.

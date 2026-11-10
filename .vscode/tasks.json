@@ -1,0 +1,227 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Killzone: Verify dependencies",
+      "type": "process",
+      "command": "python",
+      "args": [
+        "${workspaceFolder}\\tools\\scripts\\verify_deps.py",
+        "--strict"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Killzone: Verify generated manifest",
+      "type": "process",
+      "command": "python",
+      "args": [
+        "${workspaceFolder}\\tools\\scripts\\inventory_generated.py",
+        "--check"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Killzone: Provision Ninja",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\tools\\scripts\\provision_ninja.ps1"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Killzone: Configure MSVC",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\tools\\scripts\\cmake_preset.ps1",
+        "-Preset",
+        "win-msvc-rel",
+        "-Action",
+        "configure"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOrder": "sequence",
+      "dependsOn": "Killzone: Provision Ninja",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Killzone: Build MSVC",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\tools\\scripts\\cmake_preset.ps1",
+        "-Preset",
+        "win-msvc-rel",
+        "-Action",
+        "build"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOrder": "sequence",
+      "dependsOn": "Killzone: Configure MSVC",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Killzone: Build MSVC tests",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\tools\\scripts\\cmake_preset.ps1",
+        "-Preset",
+        "win-msvc-tests",
+        "-Action",
+        "build"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOrder": "sequence",
+      "dependsOn": "Killzone: Configure MSVC",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Killzone: Test MSVC ISO-free",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\tools\\scripts\\cmake_preset.ps1",
+        "-Preset",
+        "win-msvc-rel",
+        "-Action",
+        "test",
+        "-Label",
+        "iso-free"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOrder": "sequence",
+      "dependsOn": "Killzone: Build MSVC tests",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Killzone: Configure clang-cl",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\tools\\scripts\\cmake_preset.ps1",
+        "-Preset",
+        "win-clang-rel",
+        "-Action",
+        "configure"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "KZ_LLVM_BIN": "${input:llvmBin}"
+        }
+      },
+      "dependsOrder": "sequence",
+      "dependsOn": "Killzone: Provision Ninja",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Killzone: Build host core (clang-cl)",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\tools\\scripts\\cmake_preset.ps1",
+        "-Preset",
+        "win-clang-rel",
+        "-Action",
+        "build",
+        "-Target",
+        "kz_host_core"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "KZ_LLVM_BIN": "${input:llvmBin}"
+        }
+      },
+      "dependsOrder": "sequence",
+      "dependsOn": "Killzone: Configure clang-cl",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Killzone: Build clang-cl",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\tools\\scripts\\cmake_preset.ps1",
+        "-Preset",
+        "win-clang-rel",
+        "-Action",
+        "build"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "KZ_LLVM_BIN": "${input:llvmBin}"
+        }
+      },
+      "dependsOrder": "sequence",
+      "dependsOn": "Killzone: Configure clang-cl",
+      "problemMatcher": "$msCompile"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "llvmBin",
+      "type": "promptString",
+      "description": "LLVM bin directory",
+      "default": "C:\\Program Files\\LLVM\\bin"
+    }
+  ]
+}

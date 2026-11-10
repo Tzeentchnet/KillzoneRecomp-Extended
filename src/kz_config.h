@@ -5,6 +5,9 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
+
+inline constexpr char KzDefaultProfileName[] = "Shooterman";
 
 enum class KzWindowMode
 {
@@ -25,9 +28,15 @@ enum class KzAspect
     Widescreen16x9, // game's native widescreen mode (FOV + HUD handled by the engine)
     Classic4x3,
     Stretch,
-    UltrawideAuto,  // 3D view as wide as the window (more at the sides), HUD in the middle 16:9, menus and movies pillarboxed; docs/findings.md "Ultrawide"
+    UltrawideAuto,
     Ultrawide21x9,
     Ultrawide32x9,
+};
+
+enum class KzMipmapMode
+{
+    PS2,
+    HighestDetail,
 };
 
 struct KzConfig
@@ -36,18 +45,17 @@ struct KzConfig
     KzWindowMode windowMode = KzWindowMode::Borderless;
     int width = 0;  // 0 = desktop resolution
     int height = 0;
-    bool vsync = false;
-    bool showFps = false; // frame-rate counter in the corner of the game window (issue #24)
+    bool vsync = true;
     int fpsLimit = 0; // 0 = unlimited (display refresh with vsync); otherwise a cap, e.g. 120, 144, 240
-    // VIF1/VU1/GIF on a worker thread (runtime env PS2X_VIF1_THREAD). Faster, but it has a race that corrupts graphics/memory
-    // in some runs, so it is off by default. An explicitly set PS2X_VIF1_THREAD wins over this.
-    int threadedGraphics = -1; // VIF1 worker thread: -1 auto (on for the US disc, off for the European disc), 0 off, 1 on
+    bool showFps = false;
+    int threadedGraphics = -1; // -1 = auto (US on, PAL off), 0 = off, 1 = on
 
     // Graphics
     KzRenderer renderer = KzRenderer::D3D11;
-    int upscale = 0; // internal resolution multiplier over 640x448; 0 = auto (match window height)
+    int upscale = 0; // integer GS render multiplier; 0 = auto from physical output height
     KzAspect aspect = KzAspect::Widescreen16x9;
     int anisotropy = 16;     // 0/2/4/8/16
+    KzMipmapMode mipmapMode = KzMipmapMode::PS2;
     bool fxaa = false;       // post-process blur AA; off by default (supersampling via Upscale is the sharp AA)
     bool smaa = true;        // SMAA 1x post-process (Direct3D 11 renderer only; measured: no frame-rate cost)
     float smaaThreshold = 0.2f; // SMAA edge threshold 0.05..0.5: 0.1 = SMAA HIGH preset (smooths more, softens textures: 73 % of the 8x-supersampled detail at 4x), higher keeps texture detail
@@ -61,12 +69,10 @@ struct KzConfig
     bool glow = false;       // blurred additive glow of emissive surfaces
     bool lensBlur = false;   // blur + overlay while the camera has a lens texture (rain)
     // View distance (docs/findings.md "Draw distance and LOD"). 1 = original.
-    float renderDistance = 1.0f; // multiplies each render zone's far plane and fog start/end
-    float lodScale = 1.0f;       // multiplies the LOD detail scale (higher = detailed meshes farther away)
-    // Field of view (src/kz_widescreen.cpp "Field of view"), horizontal degrees measured at 16:9; 0 = the game's own.
-    // Native: world 87.1 (56.25 vertical), first-person weapon 72.7 (45 vertical). Zoom keeps its magnification.
-    float fov = 0.0f;       // 0 or 60..130
-    float weaponFov = 0.0f; // 0 or 50..120; higher shows more of the gun and arms (the model looks smaller)
+    float renderDistance = 1.0f; // 1..2; farther views expose spawns and low-detail background geometry
+    float lodScale = 1.0f;       // forced to 1: elevated values hang Escape in interactive gameplay
+    float fov = 0.0f;            // 0 = native; otherwise horizontal degrees at 16:9
+    float weaponFov = 0.0f;      // 0 = native; otherwise first-person weapon horizontal degrees
 
     // Input
     float mouseSensitivity = 1.0f;
@@ -74,27 +80,37 @@ struct KzConfig
     bool rawMouse = true;
     bool holdAim = true;     // hold the zoom key to aim (the game's own zoom is a toggle)
     bool toggleSprint = false; // press sprint once to keep sprinting (the original is hold-to-sprint)
-    bool buttonPrompts = true; // on-screen button pictures show the bound keys and mouse buttons while the keyboard/mouse is used (src/kz_prompts.cpp)
     float stickDeadzone = 0.15f;
-    float stickRange = 1.33f; // stick scale before clamping each axis: modern pads report a circle, a DualShock 2 reaches
-                              // (almost) full on both axes in the corners; 1.33 is PCSX2's recommendation for modern pads
+    float stickRange = 1.33f; // expands a modern circular stick toward the DualShock 2's square-ish range
+    bool buttonPrompts = true; // show keyboard/mouse prompts when the known game atlas is active
 
     // Audio
     int masterVolume = 100; // 0..100
 
     // Game
-    bool skipIntro = false; // skip the boot intro movie (story cutscenes still play)
-    bool skipLogos = false; // run the boot logo screens through in a fraction of a second (issue #24)
+    bool skipLongIntro = false; // skip the long boot intro after the Sony and Guerrilla logos
+    bool skipLogos = false;     // shorten the Sony and Guerrilla logo screens
 
     // Paths
     std::string isoPath; // user's Killzone (USA) disc image
 
+    // Testing (docs/findings.md "Testing options"). All off by default; off = the original game.
+    bool unlockAllLevels = false; // every campaign level, difficulty and animatic selectable; saves are not changed
+    bool skipIntro = false;       // boot past the logos and the intro cinematic, straight to the front end
+    int startLevel = 0;           // 0 = front end as usual; 1..11 = drive the menus into that campaign chapter
+    int startDifficulty = 0;      // with startLevel: 0 Easy, 1 Normal, 2 Hard
+    bool testMemoryCard = false;  // use the memory card folder "testcard" next to killzone.ini instead of the real one
+    std::string defaultProfile = KzDefaultProfileName; // empty isolated-card profile created by the test autopilot
+
     bool showLauncher = true; // show the options launcher before booting
 };
 
+bool kzIsValidProfileName(std::string_view name);
 std::filesystem::path kzConfigPath();
 KzConfig kzLoadConfig(const std::filesystem::path &path);
 bool kzSaveConfig(const std::filesystem::path &path, const KzConfig &cfg);
+int kzConfigSelfTest();
 
 // Process-wide settings (loaded once in main; the launcher may replace them before boot).
 KzConfig &kzConfig();
+bool kzRendererSupportsSmaa(KzRenderer renderer);

@@ -1,6 +1,7 @@
 #include "kz_ipu.h"
 #include "kz_addrs.h"
 
+#include "kz_hook_addresses.h"
 #include "kzipu.h"
 
 #include "ps2_runtime.h"

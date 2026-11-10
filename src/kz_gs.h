@@ -7,14 +7,20 @@
 // image uploads, VRAM reads), but its software rasterizer is skipped.
 
 #include "kz_config.h"
+#include "kz_host/core.h"
 
 #include <string>
 
 class PS2Runtime;
 
-// hwnd = Win32 window to render into, or nullptr for an offscreen (headless) device. windowHeight drives the
-// automatic internal resolution.
-bool kzGsAttach(PS2Runtime &runtime, void *hwnd, int windowHeight, const KzConfig &cfg, std::string *error, int windowWidth = 0);
+// An empty native window selects an offscreen device. The physical output size drives the automatic internal scale.
+bool kzGsAttach(
+    PS2Runtime &runtime,
+    const kz::host::NativeWindow &window,
+    int windowWidth,
+    int windowHeight,
+    const KzConfig &cfg,
+    std::string *error);
 void kzGsDetach();
 
 // Main-thread notifications; applied on the game thread at the next vblank.
@@ -24,6 +30,16 @@ void kzGsApplyConfig(const KzConfig &cfg);
 // Automated screenshots: when `dir` is non-empty, the output frame is saved as <dir>/gs_<n>_t<sec>s.png every
 // `intervalSeconds` of wall time (checked at vblank).
 void kzGsSetScreenshotSchedule(const std::string &dir, int intervalSeconds);
+void kzGsSetGameplayCaptureOrigin(uint64_t guestVsync);
+uint64_t kzGsGameplayOffsetVsync();
+uint64_t kzGsGameplayFrameCount();
 
 // Frames presented so far (vblanks forwarded to kzgs).
 uint64_t kzGsFrameCount();
+
+// TEST-01 measurement event: value read by the guest for its default fire action (button id 9/R1).
+// No-op unless KZ_SHOT_DIR enabled the versioned capture metadata stream.
+void kzGsRecordFireButtonValue(float value);
+
+// Pure render/output contract checks used by the product self-test.
+int kzGsSelfTest();

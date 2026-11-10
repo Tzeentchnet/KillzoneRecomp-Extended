@@ -1,12 +1,15 @@
 #include "kz_input.h"
 
 #include "kz_config.h"
+#include "kz_gs.h"
+#include "kz_timing.h"
 
 #include <SDL3/SDL.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -137,20 +140,32 @@ namespace
 
     // KZ_INPUT_SCRIPT="t:button[:dur];..." for automated runs: presses `button` (a pad button name, or
     // lx/ly/rx/ry with =value e.g. ly=-1) at t seconds after the first pad read, for dur seconds (default 0.15).
-    // mx/my=counts inject one raw mouse motion (after sensitivity) at t, e.g. "70:mx=400".
+    // Prefix t with `g` to count from the first gameplay frame or `v` to count from the first text-entry Enter.
+    // mx/my=counts inject one raw mouse motion (after sensitivity) at t, e.g. "g0.5:mx=400".
     struct ScriptEvent
     {
-        double t, dur; // t: seconds; "v<t>" items count from the first text-entry Enter instead (see g_textEnteredAt)
+        double t, dur;
         uint16_t mask;
         int axis; // 0 none, 1 lx, 2 ly, 3 rx, 4 ry, 5 mouse x, 6 mouse y, 7 text
         float value;
         bool fired = false;
         std::string text; // axis 7: keys queued as text entry
         bool afterText = false;
+        bool afterGameplay = false;
         bool beforeText = false; // "b<t>": absolute time, dropped once the text entry Enter was handed over
     };
 
     double g_textEnteredAt = -1.0; // script clock when the first queued Enter was handed to the game
+    double g_gameplayStartedAt = -1.0;
+
+    void markGameplayStarted()
+    {
+        if (g_gameplayStartedAt >= 0.0)
+            return;
+        g_gameplayStartedAt = g_scriptClock ? g_scriptClock() : SDL_GetTicks() / 1000.0;
+        kzGsSetGameplayCaptureOrigin(
+            static_cast<uint64_t>(std::llround(g_gameplayStartedAt * kzTimingRate())));
+    }
 
     std::vector<ScriptEvent> &script()
     {
@@ -170,9 +185,17 @@ namespace
                 if (c1 == std::string::npos)
                     continue;
                 const bool afterText = item[0] == 'v' || item[0] == 'V';
+                const bool afterGameplay = item[0] == 'g' || item[0] == 'G';
                 const bool beforeText = item[0] == 'b' || item[0] == 'B';
-                ScriptEvent ev{std::atof(item.c_str() + (afterText || beforeText ? 1 : 0)), 0.15, 0, 0, 0.0f};
+                ScriptEvent ev{
+                    std::atof(item.c_str() + (afterText || afterGameplay || beforeText ? 1 : 0)),
+                    0.15,
+                    0,
+                    0,
+                    0.0f,
+                };
                 ev.afterText = afterText;
+                ev.afterGameplay = afterGameplay;
                 ev.beforeText = beforeText;
                 std::string what = item.substr(c1 + 1);
                 if (const size_t c2 = what.find(':'); c2 != std::string::npos)
@@ -217,6 +240,15 @@ namespace
         return events;
     }
 
+    double scriptEventStart(const ScriptEvent &event)
+    {
+        if (event.afterText)
+            return g_textEnteredAt < 0.0 ? 1e30 : g_textEnteredAt + event.t;
+        if (event.afterGameplay)
+            return g_gameplayStartedAt < 0.0 ? 1e30 : g_gameplayStartedAt + event.t;
+        return event.t;
+    }
+
     void applyScript(uint16_t &pressed, float &lx, float &ly, float &rx, float &ry)
     {
         auto &events = script();
@@ -225,7 +257,7 @@ namespace
         const double t = g_scriptClock ? g_scriptClock() : SDL_GetTicks() / 1000.0;
         for (const ScriptEvent &e : events)
         {
-            const double start = e.afterText ? (g_textEnteredAt < 0.0 ? 1e30 : g_textEnteredAt + e.t) : e.t;
+            const double start = scriptEventStart(e);
             if (t < start || t >= start + e.dur || e.axis > 4 || (e.beforeText && g_textEnteredAt >= 0.0))
                 continue;
             pressed |= e.mask;
@@ -499,15 +531,14 @@ namespace
             pressed |= menuPad;
         if (now < s.pulseUntil)
             pressed |= s.pulseMask;
-        const float dz = kzConfig().stickDeadzone;
-        const float range = kzConfig().stickRange;
-        float plx, ply, prx, pry;
-        stickToPs2(s.lx, s.ly, dz, range, plx, ply);
-        stickToPs2(s.rx, s.ry, dz, range, prx, pry);
-        lx += plx;
-        ly += ply;
-        float rx = prx + mx;
-        float ry = pry + my;
+        const KzConfig &config = kzConfig();
+        float gamepadLx = 0.0f, gamepadLy = 0.0f, gamepadRx = 0.0f, gamepadRy = 0.0f;
+        stickToPs2(s.lx, s.ly, config.stickDeadzone, config.stickRange, gamepadLx, gamepadLy);
+        stickToPs2(s.rx, s.ry, config.stickDeadzone, config.stickRange, gamepadRx, gamepadRy);
+        lx += gamepadLx;
+        ly += gamepadLy;
+        float rx = gamepadRx + mx;
+        float ry = gamepadRy + my;
         if (!s.aimPatchActive)
         {
             // Fallback until the engine aim patch is active: mouse counts per pad read -> right stick deflection.
@@ -517,30 +548,33 @@ namespace
         }
         s.stickMouseDx = s.stickMouseDy = 0.0f;
         applyScript(pressed, lx, ly, rx, ry);
-        // Toggle sprint (optional; the original sprints only while L3 is held, measured against PCSX2): a press of the sprint
-        // button latches it, the next press or 0.3 s without movement releases it. Gameplay only; menus see the raw button.
-        if (kzConfig().toggleSprint && s.aimPatchActive && now < s.gameplayUntil)
+        // Toggle sprint is gameplay-only; menus continue to see the raw L3 button.
+        if (config.toggleSprint && s.aimPatchActive && now < s.gameplayUntil)
         {
             const bool down = (pressed & KZ_PAD_L3) != 0;
             if (down && !s.sprintWasDown)
                 s.sprintLatched = !s.sprintLatched;
             s.sprintWasDown = down;
-            const bool moving = std::fabs(lx) > 0.5f || std::fabs(ly) > 0.5f;
-            if (moving)
+            if (std::fabs(lx) > 0.5f || std::fabs(ly) > 0.5f)
                 s.sprintIdleSince = 0;
             else if (s.sprintIdleSince == 0)
                 s.sprintIdleSince = now;
             if (s.sprintLatched && s.sprintIdleSince != 0 && now - s.sprintIdleSince > 300)
                 s.sprintLatched = false;
-            pressed = s.sprintLatched ? static_cast<uint16_t>(pressed | KZ_PAD_L3) : static_cast<uint16_t>(pressed & ~KZ_PAD_L3);
+            if (s.sprintLatched)
+                pressed |= KZ_PAD_L3;
+            else
+                pressed &= static_cast<uint16_t>(~KZ_PAD_L3);
         }
         else
         {
             s.sprintLatched = false;
             s.sprintWasDown = false;
+            s.sprintIdleSince = 0;
         }
         if (s.r2 > 0.5f) pressed |= KZ_PAD_R2;
         if (s.l2 > 0.5f) pressed |= KZ_PAD_L2;
+        kzGsRecordFireButtonValue((pressed & KZ_PAD_R1) != 0u ? 1.0f : 0.0f);
 
         std::memset(data, 0, 32);
         data[0] = 0x00;
@@ -568,6 +602,11 @@ void kzInputInit(const std::filesystem::path &bindingsIni)
     State &s = state();
     std::lock_guard<std::mutex> lock(s.mutex);
     s.bindings = loadBindings(bindingsIni);
+    s.sprintLatched = false;
+    s.sprintWasDown = false;
+    s.sprintIdleSince = 0;
+    if (std::getenv("KZ_INPUT_SCRIPT"))
+        std::printf("[kz-input] loaded %zu scripted event(s)\n", script().size());
 }
 
 void kzInputShutdown()
@@ -606,6 +645,21 @@ void kzInputSetTextEntryActive()
     s.textEntryUntil = now + 250;
 }
 
+bool kzInputTextEntryOpen()
+{
+    State &s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    return SDL_GetTicks() < s.textEntryUntil;
+}
+
+void kzInputQueueText(const std::string &text)
+{
+    State &s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    for (char c : text)
+        s.textQueue.push_back(static_cast<uint8_t>(c));
+}
+
 bool kzInputTakeTextKey(uint16_t &key)
 {
     State &s = state();
@@ -614,7 +668,7 @@ bool kzInputTakeTextKey(uint16_t &key)
     {
         const double t = g_scriptClock ? g_scriptClock() : SDL_GetTicks() / 1000.0;
         for (ScriptEvent &e : script())
-            if (e.axis == 7 && !e.fired && t >= e.t)
+            if (e.axis == 7 && !e.fired && t >= scriptEventStart(e))
             {
                 e.fired = true;
                 for (char c : e.text)
@@ -636,7 +690,17 @@ void kzInputSetAimPatchActive(bool active)
     std::lock_guard<std::mutex> lock(s.mutex);
     s.aimPatchActive = active;
     if (active)
+    {
+        markGameplayStarted();
         s.gameplayUntil = SDL_GetTicks() + 250; // called every gameplay frame by the aim patch
+    }
+}
+
+void kzInputMarkGameplayStarted()
+{
+    State &s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    markGameplayStarted();
 }
 
 bool kzInputZoomHeld()
@@ -653,8 +717,11 @@ bool kzInputZoomHeld()
     {
         const double t = g_scriptClock ? g_scriptClock() : SDL_GetTicks() / 1000.0;
         for (const ScriptEvent &e : script())
-            if (e.axis == 8 && t >= e.t && t < e.t + e.dur)
+        {
+            const double start = scriptEventStart(e);
+            if (e.axis == 8 && t >= start && t < start + e.dur)
                 return true;
+        }
     }
     return false;
 }
@@ -843,7 +910,7 @@ KzMouseDelta kzInputTakeMouseDelta()
         const KzConfig &cfg = kzConfig();
         const double t = g_scriptClock ? g_scriptClock() : SDL_GetTicks() / 1000.0;
         for (ScriptEvent &e : script())
-            if ((e.axis == 5 || e.axis == 6) && !e.fired && t >= e.t)
+            if ((e.axis == 5 || e.axis == 6) && !e.fired && t >= scriptEventStart(e))
             {
                 e.fired = true;
                 (e.axis == 5 ? d.dx : d.dy) += e.value * cfg.mouseSensitivity * (e.axis == 6 && cfg.invertY ? -1.0f : 1.0f);
@@ -865,6 +932,26 @@ int kzInputSelfTest()
     State &s = state();
     std::lock_guard<std::mutex> lock(s.mutex);
     const auto saved = s.bindings;
+    KzConfig &config = kzConfig();
+    const bool savedToggleSprint = config.toggleSprint;
+    const float savedStickDeadzone = config.stickDeadzone;
+    const float savedStickRange = config.stickRange;
+    config.toggleSprint = false;
+    config.stickDeadzone = 0.15f;
+    config.stickRange = 1.33f;
+    float stickX = 0.0f, stickY = 0.0f;
+    stickToPs2(0.0f, 0.0f, 0.15f, 1.33f, stickX, stickY);
+    check(stickX == 0.0f && stickY == 0.0f, "stick range: center");
+    stickToPs2(0.15f, 0.0f, 0.15f, 1.33f, stickX, stickY);
+    check(stickX == 0.0f && stickY == 0.0f, "stick range: dead-zone boundary");
+    stickToPs2(1.0f, 0.0f, 0.15f, 1.33f, stickX, stickY);
+    check(stickX == 1.0f && stickY == 0.0f, "stick range: cardinal");
+    constexpr float kDiagonal = 0.70710678f;
+    stickToPs2(kDiagonal, kDiagonal, 0.15f, 1.33f, stickX, stickY);
+    check(std::fabs(stickX - 0.94045f) < 0.001f && std::fabs(stickY - 0.94045f) < 0.001f,
+          "stick range: circular diagonal expansion");
+    stickToPs2(1.0f, 1.0f, 0.15f, 1.5f, stickX, stickY);
+    check(stickX == 1.0f && stickY == 1.0f, "stick range: per-axis clamp");
     s.bindings.clear();
     for (const auto &[k, v] : kDefaultBindings)
     {
@@ -909,9 +996,79 @@ int kzInputSelfTest()
     s.consumed[SDL_SCANCODE_UP] = true;
     compose(s, d, 300);
     check((static_cast<uint16_t>(~(d[2] | (d[3] << 8))) & KZ_PAD_UP) == 0, "key consumed by text entry is not a pad button");
+    const double savedGameplayStartedAt = g_gameplayStartedAt;
+    g_gameplayStartedAt = 12.0;
+    ScriptEvent gameplayEvent{2.5, 0.15, KZ_PAD_START, 0, 0.0f};
+    gameplayEvent.afterGameplay = true;
+    check(scriptEventStart(gameplayEvent) == 14.5, "gameplay-relative script event");
+    g_gameplayStartedAt = savedGameplayStartedAt;
     s.consumed.fill(false);
     s.keys.fill(false);
     s.wheelUpUntil = 0;
+
+    config.toggleSprint = true;
+    s.aimPatchActive = true;
+    s.gameplayUntil = 2000;
+    s.sprintLatched = false;
+    s.sprintWasDown = false;
+    s.sprintIdleSince = 0;
+    s.padButtons = KZ_PAD_L3;
+    s.lx = 0.0f;
+    s.ly = -1.0f;
+    compose(s, d, 100);
+    check((static_cast<uint16_t>(~(d[2] | (d[3] << 8))) & KZ_PAD_L3) != 0,
+          "toggle sprint: first press latches");
+    s.padButtons = 0;
+    compose(s, d, 120);
+    check((static_cast<uint16_t>(~(d[2] | (d[3] << 8))) & KZ_PAD_L3) != 0,
+          "toggle sprint: release stays latched");
+    s.padButtons = KZ_PAD_L3;
+    compose(s, d, 140);
+    check((static_cast<uint16_t>(~(d[2] | (d[3] << 8))) & KZ_PAD_L3) == 0,
+          "toggle sprint: second press releases");
+    s.padButtons = 0;
+    compose(s, d, 160);
+    s.padButtons = KZ_PAD_L3;
+    compose(s, d, 200);
+    s.padButtons = 0;
+    compose(s, d, 210);
+    s.lx = s.ly = 0.0f;
+    compose(s, d, 220);
+    compose(s, d, 521);
+    check((static_cast<uint16_t>(~(d[2] | (d[3] << 8))) & KZ_PAD_L3) == 0,
+          "toggle sprint: idle release");
+
+    s.sprintLatched = true;
+    s.sprintWasDown = true;
+    s.sprintIdleSince = 42;
+    s.aimPatchActive = false;
+    s.padButtons = KZ_PAD_L3;
+    compose(s, d, 600);
+    check((static_cast<uint16_t>(~(d[2] | (d[3] << 8))) & KZ_PAD_L3) != 0
+              && !s.sprintLatched && !s.sprintWasDown && s.sprintIdleSince == 0,
+          "toggle sprint: menus use raw button and reset state");
+
+    config.toggleSprint = false;
+    s.aimPatchActive = true;
+    s.gameplayUntil = 1000;
+    s.padButtons = KZ_PAD_L3;
+    compose(s, d, 700);
+    const bool disabledDown =
+        (static_cast<uint16_t>(~(d[2] | (d[3] << 8))) & KZ_PAD_L3) != 0;
+    s.padButtons = 0;
+    compose(s, d, 710);
+    const bool disabledUp =
+        (static_cast<uint16_t>(~(d[2] | (d[3] << 8))) & KZ_PAD_L3) == 0;
+    check(disabledDown && disabledUp, "toggle sprint: disabled preserves hold behavior");
+
+    config.toggleSprint = savedToggleSprint;
+    config.stickDeadzone = savedStickDeadzone;
+    config.stickRange = savedStickRange;
+    s.padButtons = 0;
+    s.lx = s.ly = s.rx = s.ry = 0.0f;
+    s.sprintLatched = false;
+    s.sprintWasDown = false;
+    s.sprintIdleSince = 0;
     s.bindings = saved;
     return failures;
 }

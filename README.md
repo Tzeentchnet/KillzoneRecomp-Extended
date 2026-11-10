@@ -1,55 +1,371 @@
-# Killzone for Windows (native PC port)
+# KillzoneRecomp
 
-A native Windows port of Killzone (PlayStation 2, 2004) by [drakolordx7](https://github.com/drakolordx7). The game's code is recompiled to C++ with [PS2Recomp](https://github.com/ran-j/PS2Recomp), so it runs as a PC program with mouse and keyboard aim, high frame rates, higher resolutions and ultrawide support.
+A native Windows PC port of **Killzone** (PlayStation 2, 2004), made by statically recompiling the game's PS2 code to
+C++ with [PS2Recomp](https://github.com/ran-j/PS2Recomp). PCSX2's hardware renderer, microVU, IPU and SPU2 are linked in
+as libraries.
 
-> **This project is abandoned.** It is no longer maintained and the repository is archived, so issues and pull requests are closed. The code is free to fork and continue under the license below.
+**No game code or data is in this repository.** You need your own disc image of Killzone NTSC-U (SCUS-97402) or
+the European release (SCES-52893, English/Russian/Greek).
 
-[Download the last build (v0.1.7)](https://github.com/drakolordx7/KillzoneRecomp/releases/latest)
+This is **KillzoneRecomp-Extended**, a fork of [drakolordx7/KillzoneRecomp](https://github.com/drakolordx7/KillzoneRecomp)
+focused on Windows graphical improvements and configurable gameplay tuning. Earlier Apple Silicon portability work is
+retained but deferred; new mod support is also deferred, and Blender tooling is developed in a separate project.
+The original upstream was archived after its final November 2026 release; this continuing fork incorporates that
+release while retaining its own validated runtime and tooling work. Developed with AI assistance.
 
-No game files are included; you need your own disc image of Killzone: the US version (SCUS-97402) or, from v0.1.6, the European version (SCES-52893, English/Russian/Greek). The game detects which one you have. Not affiliated with Sony or Guerrilla Games.
+## Project documents
 
-## Requirements
+| Document | Use it for |
+|---|---|
+| [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) | Work packages, dependencies, acceptance commands, stop conditions, milestones |
+| [`TODO.md`](TODO.md) | The open queue for the current milestone and the next command for each task |
+| [`WORKDONE.md`](WORKDONE.md) | Verified completions and the evidence behind them |
+| [`HANDOFF.md`](HANDOFF.md) | Session protocol: startup, parallel-work rules, regression set, privacy rules |
+| [`docs/findings.md`](docs/findings.md) | Reverse-engineering notes and measurements, cited from source comments |
+| [`docs/multiplayer/README.md`](docs/multiplayer/README.md) | Archived Killzone Online bring-up findings and exact stopping point |
+| [`docs/upstream_comparison.md`](docs/upstream_comparison.md) | Audited upstream comparison and the bounded changes selected for this fork |
+| [`LEARNINGS.md`](LEARNINGS.md) | Short process lessons: checks that catch mistakes, fastest tools, gate usage |
+| [`docs/assetforms.md`](docs/assetforms.md) | Verified DAT, Core/CoreStream, texture swizzle, model and level format evidence |
+| [`patches/README.md`](patches/README.md) | Rationale and measurements for each PS2Recomp runtime patch |
+| [`perf_fresh_ideas.md`](docs/archive/upstream/perf_fresh_ideas.md) and [`perf_research.md`](docs/archive/upstream/perf_research.md) | Archived baseline performance research; historical context, not the active queue |
+| [`docs/archive/upstream/`](docs/archive/upstream/) | Superseded upstream design and performance notes |
 
-- Windows 10 or 11, 64-bit
-- CPU with SSE4.1: Intel Core 2 (45 nm, Penryn), AMD FX (Bulldozer) or newer. Newer CPUs get the faster AVX and AVX2 code automatically
-- GPU with Direct3D 11, Direct3D 12 or Vulkan
+## Status
 
-## Usage
+Test build. The active queue is M2 (safe graphics and weapon controls); see [`TODO.md`](TODO.md). The graphics lane is
+complete through GFX-05. WPN-01 and AUDIO-01 are the remaining Windows investigation lanes.
 
-1. Unzip the build into a folder and run `killzone.exe`.
-2. In the launcher, browse to your Killzone `.iso`.
-3. Pick your settings and press Play.
+- **Verified baseline (2026-10-20):** boot, host memory cards, opening/menu/attract movies at their 29.97 fps source
+  cadence, normal profile selection, first-mission gameplay, Quit to menu, Continue/load, game timing, mouse aim,
+  controller input and clean window-close shutdown all passed on this fork.
+- **Renderer verification (2026-10-20):** D3D11 and D3D12 render on an NVIDIA RTX 5070 (driver `32.0.16.1742`).
+  The repeated 90-second D3D11 black-output defect is no longer reproducible on the pinned renderer stack.
+- **Runtime and input hardening (2026-10-24):** forced-yield SIF initialization, module and memory-card calls now
+  return to the guest exactly once; host stdout/stderr share one durable unbuffered log stream; controller aim remains
+  a native toggle; scope mouse ordering is yield-safe; and the MSVC ISO-free suite passes 14/14.
+- **Frame rate (upstream measurement):** runs at the monitor's refresh rate; about 117-120 fps at 120 Hz and about
+  130-140 fps at 144 Hz in gameplay. The game's clock runs at real time at 120 Hz (the frame timer is rescaled, not
+  sped up).
+- **Mouse and keyboard:** mouse aim is an engine patch (raw counts go into the game's own look rate: no stick
+  acceleration or dead zone), with fully rebindable keys. Controllers work through SDL3 with the original PS2 layout,
+  a radial dead zone, and an adjustable PS2-style stick range.
+- **Graphics:** internal resolution up to 8x (supersampling), native 16:9, sharp scaling, anisotropic filtering,
+  optional FXAA, and view distance up to the supported 2x maximum; D3D11, D3D12 or Vulkan. SMAA is D3D11-only and is
+  explicitly shown as unavailable on other renderers. The Graphics tab's **Validated enhancements** preset applies
+  the measured stock-game test setup: D3D12, VSync on, automatic internal scale, 16x anisotropy, highest mip detail,
+  clean PS2 effects, replacement textures off, 2x view distance and 30% sharpening.
+  Native 4:3 and 16:9 are supported, along with automatic, 21:9 and 32:9 ultrawide modes that widen the world view
+  while keeping the HUD in the central 16:9 area. The optional Stretch mode fills the display by distortion.
+- **Launcher:** display, graphics, controls, audio and testing settings; checks the disc image is the supported version.
+- **Testing options (launcher Testing tab, all off by default):** unlock all campaign levels without changing saves,
+  skip the logos and intro movie, start directly in a chosen chapter and difficulty, and use a separate test memory
+  card. On an empty isolated card, Start in creates the configured profile through the game's front end; the default
+  is exact `Shooterman`. The supported all-map workflow is to create/select exact `Shooterman` and use the native
+  campaign menu. Direct chapter selection is retained for diagnostics but is not a release-qualification path.
+  Automation equivalents:
+  `KZ_UNLOCK_ALL=1`, `KZ_SKIP_INTRO=1`, `KZ_START_LEVEL=1..11`, `KZ_START_DIFFICULTY=0..2`,
+  `KZ_DEFAULT_PROFILE=<name>`, `KZ_FRONTEND_LOG=1`.
+  When testing native `Shooterman` behavior, explicit `KZ_UNLOCK_ALL=0` keeps Start in from installing the convenience
+  unlock hooks.
+- **Known issue:** AUDIO-01 still tracks intermittent effects/dialogue truncation during action-heavy combat. The
+  current host-buffer mitigation reduces the cuts but has not met the zero-loss combat acceptance gate.
+- **Not included in `master`:** Killzone Online (LOADER.ELF and the network modules). The archived prototype and its
+  exact stopping point are documented in [`docs/multiplayer/README.md`](docs/multiplayer/README.md); DNAS, native
+  sockets, local-service login, lobby, match join and gameplay were not implemented. Temporal
+  upscalers such as DLSS/FSR/XeSS are also not supported: the PS2 GS path does not expose stable gameplay depth,
+  camera/object motion vectors or a separate HUD/reactive mask. HDR output is not claimed because the current
+  renderer exposes composed, untagged `R8G8B8A8_UNORM` SDR rather than scene-linear color.
 
-Settings are in `killzone.ini` and saves in `disc\mc0` (US) or `disc_pal\mc0` (Europe), all next to `killzone.exe`. Unzipping a build over an older one keeps settings and saves.
+## Default controls
 
-Mouse and keyboard work out of the box, and so do controllers with the original PS2 layout. The launcher's Controls tab lists the keys; change them in `killzone.ini` under `[Bindings]`. Ultrawide, intro skip, toggle sprint and the graphics options are in the launcher too; `README.txt` in the zip lists the controls.
+| | |
+|---|---|
+| Mouse | aim |
+| Left / right / middle mouse | fire / hold to aim / secondary fire |
+| W A S D | move (menus: navigate) |
+| Left Shift / C or Left Ctrl | sprint / crouch |
+| R / G / Q or wheel | reload / grenade / switch weapon |
+| E or F / X or Mouse4 | use / special item |
+| Escape / Tab | pause / objectives |
+| Arrow keys, Enter | menus |
 
-## Reporting problems
+The profile name can be typed directly on the game's on-screen keyboard. Bindings live in `killzone.ini` under
+`[Bindings]`. The Controls tab can switch mouse aim between hold/toggle, enable opt-in toggle sprint, and adjust the
+controller dead zone/range. Toggle sprint releases on a second press or after 300 ms without movement; hold remains
+the default. The Display tab can skip only the long boot intro after the Sony and Guerrilla logos; story cutscenes,
+menu backgrounds, and attract movies are unchanged.
 
-The project is archived, so new issues can't be opened. The [closed and open issues](https://github.com/drakolordx7/KillzoneRecomp/issues?q=is%3Aissue) list the known problems. `killzone.log` in the game folder (and `killzone.prev.log` for the run before) shows what happened in a run.
+The corresponding settings are `[Input] SprintMode=Hold|Toggle`, `[Input] StickRange=1.0..1.5`, and
+`[Game] SkipIntro=0|1`. `KZ_SKIP_LONG_INTRO=0|1` overrides the saved intro setting for one run, and `KZ_MOVIE_LOG=1`
+logs every movie name handled by the optional hook.
 
-## Contributing
+## Configuration compatibility
 
-- The repository is archived and takes no pull requests. Fork it to continue the work; `master` is what the releases were built from.
-- `ext/PS2Recomp` is the `killzone` branch of [drakolordx7/PS2Recomp](https://github.com/drakolordx7/PS2Recomp). General runtime fixes belong upstream in PS2Recomp.
-- Building needs Windows x64, Visual Studio 2022 or later, CMake, Ninja and Python 3:
-  1. `git clone --recursive https://github.com/drakolordx7/KillzoneRecomp`
-  2. Put the PCSX2 source in `ext/pcsx2` (commit `646df006a4`), the [PCSX2 Windows dependencies](https://github.com/PCSX2/pcsx2-windows-dependencies/releases/tag/latest-windows-dependencies) in `ext/kzgs/deps` and the SDL3 VC development package in `ext/sdl3`.
-  3. Copy `SCUS_974.02` from your disc into `game/`. For European disc support, also put `SCES_528.93` in `work/pal/elf/` (optional; without it the build is US only).
-  4. `tools\scripts\build_ps2recomp.bat`, then `python tools\scripts\regen.py` (writes about 20,000 C++ files to `generated/`; `regen.py --pal` writes the European set to `generated_pal/`), then `tools\scripts\build.bat RelWithDebInfo`.
-  5. `tools\scripts\make_release.ps1 -Version x.y.z -From build\RelWithDebInfo` makes the release zip.
-- Reverse-engineering notes and measurements are in [`docs/findings.md`](docs/findings.md); runtime changes are described in [`patches/README.md`](patches/README.md).
+Launcher-managed `killzone.ini` files use a file schema version independent of the bindings version:
 
-## Credits
+```ini
+[Config]
+Version=3
+```
 
-Port by [drakolordx7](https://github.com/drakolordx7). Built on [PS2Recomp](https://github.com/ran-j/PS2Recomp) by ran-j and contributors, and on [PCSX2](https://github.com/PCSX2/pcsx2)'s GS renderer, microVU, IPU and SPU2, linked in as libraries.
+Files without `[Config] Version` are treated as legacy version 0 and migrate deterministically on the next launcher
+save. Older supported versions migrate on save; version 1 files default `Mipmapping` to `ps2`. Booleans, integers, floats
+and enums are parsed strictly; rejected values, range clamps, duplicate keys and
+unknown settings are reported in `killzone.log` with their section and key. The last duplicate value is effective.
+Unknown settings are preserved, and launcher saves retain the disc path and all `[Bindings]` entries. A build refuses
+to overwrite a file whose schema version is newer than it supports.
 
-Code contributions: Ash01Live (field of view settings).
+`[Graphics] Mipmapping=ps2` preserves authored mip transitions. `Mipmapping=highest` disables mip selection and
+always samples the base level. The latter only changes draws that actually enable GS mipmapping; many Killzone scenes
+use `MXL=0` and are therefore identical in both modes.
 
-Testing and reports: mcdermott87, Ash01Live, Lockefinder1, VGEsoterica, Mister-Mannered and everyone who sent logs.
+`[Graphics] RenderDistance=1..2` scales the authored far plane and fog together. 2x is the supported maximum: pushing
+farther exposes enemy spawns and low-polygon background geometry that the original fog was designed to hide. Higher
+configuration or `KZ_RENDER_DISTANCE` values are reported and clamped to 2x.
 
-Third-party: PCSX2, SDL3, Dear ImGui, FFmpeg, PCSX2's Windows dependencies and Kenney Input Prompts (CC0) for the keyboard and mouse button pictures.
+`[Testing] DefaultProfile=Shooterman` controls only the profile typed by Start in when the selected testing card is
+isolated and empty. It never renames an existing profile and is ignored for the normal memory card. Automation may
+override it with `KZ_DEFAULT_PROFILE`; supported names are 1-32 characters using letters, digits, spaces, `-`, `_`
+and `.`. Exact `Shooterman` unlocks all maps through the game's native profile queries; use the native campaign menu
+for supported qualification. Prebuilt saves or memory-card images are not distributed.
+
+## Building
+
+Windows x64, Visual Studio Code, Visual Studio Build Tools 2022 or later with the **Desktop development with C++**
+workload, CMake 3.24+, Ninja 1.13.2, Python 3.11+, and an x64 CPU with SSE4.1. AVX and AVX2 paths are selected at
+runtime when available. The full Visual Studio IDE is not required.
+
+1. Clone with submodules: `git clone --recursive https://github.com/Tzeentchnet/KillzoneRecomp-Extended`.
+   `ext/PS2Recomp` is the `killzone` branch of
+   [Tzeentchnet/PS2Recomp](https://github.com/Tzeentchnet/PS2Recomp). The checkout can live at any path.
+2. Provision the exact dependencies recorded in `config/dependencies.lock.json`:
+   - PCSX2 source in `ext/pcsx2` at the locked commit, unmodified.
+   - The locked `pcsx2-windows-dependencies.7z` retained in `ext/kzgs/deps/` and extracted there.
+   - The locked SDL3 VC development archive retained in `ext/sdl3/` and extracted there.
+   - For macOS, the locked SDL3 source archive retained in `ext/sdl3/` and extracted as
+     `ext/sdl3/SDL3-3.4.16-source`.
+   - Run `python tools\scripts\verify_deps.py --strict` before configuring. The verifier is offline and checks the
+     submodule gitlink, PS2Recomp patch reconstruction, CMake declarations, revisions, archive sizes and SHA-256 hashes.
+3. Extract `SCUS_974.02` from your own disc image to a private path and set `KZ_GAME_ELF` to that file.
+4. Build the recompiler: `tools\scripts\build_ps2recomp.bat` (-> `build\ps2recomp`; takes a few minutes).
+5. Provision the locked Ghidra and JDK tools: `tools\scripts\provision_analysis_tools.ps1`, and the locked Ninja:
+   `tools\scripts\provision_ninja.ps1`.
+6. Recompile the game: `python tools\scripts\regen.py --elf "$env:KZ_GAME_ELF"` (writes `generated/`, about 32k C++
+   files; only changed files are rewritten).
+7. Build: `tools\scripts\cmake_preset.ps1 -Preset win-msvc-rel`, then
+   `tools\scripts\cmake_preset.ps1 -Preset win-msvc-rel -Action build` -> `build\win-msvc-rel\killzone.exe`
+   (see [Checked CMake presets](#checked-cmake-presets); `win-clang-rel` builds with clang-cl). The older
+   `tools\scripts\build.bat RelWithDebInfo` still works and writes `build\RelWithDebInfo\killzone.exe`.
+8. Run `launch_launcher.bat` to open the MSVC release launcher with inherited `KZ_*` and `PS2X_*` automation
+   variables cleared.
+9. Optional: `tools\scripts\package.ps1` makes a player folder in `dist\Killzone`.
+
+`killzone.exe --selftest` runs the unit checks. `tools\scripts\run_headless.ps1` runs the game without a window, with
+scripted input (`KZ_INPUT_SCRIPT`) and periodic screenshots, which is how everything here was verified.
+
+When `KZ_SHOT_DIR` is set, captures also include `capture.jsonl` schema 1 with effective renderer/testing settings,
+the render-scale mode and exact render/output resolutions, post-process order, guest-vsync frame IDs, capture points
+and default fire-action transitions. Validate a run or align two runs without using filenames or wall time:
+
+```powershell
+python .\tools\scripts\verify_capture_metadata.py .\work\run1 --require-fire
+python .\tools\scripts\verify_capture_metadata.py .\work\run1 --compare .\work\run2 `
+  --require-fire --summary .\work\comparison-summary.json
+```
+
+The summary is protected-content-safe: configuration, frame/event counts, dimensions and image hashes only.
+
+For deterministic graphics arms, set `KZ_SHOT_GUEST_INTERVAL=<vblanks>` (and optionally
+`KZ_SHOT_GUEST_FROM=<first-vblank>`) to schedule captures on the guest clock instead of wall time. Prefix the start
+with `g` (for example `KZ_SHOT_GUEST_FROM=g60`) to count from the first gameplay frame instead of boot. Scripted input
+uses the same gameplay-relative prefix (for example `KZ_INPUT_SCRIPT=g0.5:Start`). Compare arms whose filenames differ
+by pairing their metadata; frame records include `gameplay_offset_vsync`, and the comparison tool prefers it when
+both arms provide it:
+
+```powershell
+python .\tools\scripts\image_compare.py .\work\baseline .\work\variant --glob "gs_*.png" --align-metadata
+```
+
+Each headless run also writes `process.json` with sampled peak working-set, paged-memory and virtual-memory values.
+For GFX-03 campaign qualification, run fresh-card baseline/render-distance pairs with:
+
+```powershell
+tools\scripts\gfx03_campaign_gate.ps1 -Chapters 1,5,10 -Card .\work\<test-card> -Seconds 90 `
+  -ExeDir .\build\win-msvc-rel -Iso <image> -Elf .\game\SCUS_974.02
+```
+
+The gate requires the chapter to load, stable frame dimensions, no guest/host exception, the original baseline path,
+measured far/fog transformations in the 2x arm, and by default 30 seconds of actually presented gameplay frames.
+Its protected-content-safe summary contains only chapter, arm, frame counts/dimensions and process-memory peaks.
+
+For AUDIO-01, start with the schema-1 callback ledger only so producer-side file I/O cannot perturb the first
+continuity measurement:
+
+```powershell
+$env:KZ_AUDIO_DIAG = "$PWD\work\audio01-escape-callback.csv"
+& .\build\win-msvc-rel\killzone.exe --launcher
+python .\tools\scripts\summarize_audio_diag.py .\work\audio01-escape-callback.csv `
+  --summary .\work\audio01-escape-summary.json
+```
+
+The ledger maps host time to the raw WAV frame, SPU2 ring depth/drops/skips/reads, deliberate startup priming,
+underrun silence, SDL input/output queue depth, callback gaps and failed stream submissions. Around a heard cutout,
+rerun the summarizer with `--from-seconds` and `--to-seconds`. For a targeted producer-side comparison, repeat with
+`KZ_AUDIO_WAV=<path>`; if the event is truncated in that raw WAV, loss precedes the host callback. Otherwise any
+ledger loss counter localizes it to the host path. An intact WAV with no host loss counter leaves SDL
+conversion/backend or the output device. The product reserve/high-water defaults are 120/320 ms; diagnostics may
+override them with `KZ_AUDIO_BUFFER_MS=10..400` and `KZ_AUDIO_HIGH_MS=<reserve+10>..480`. Captures under `work/`
+remain local and ignored.
+
+Build scripts discover the repository from their own location. `KZ_ROOT` and `KZ_BUILD_ROOT` override the source and
+build roots; `KZ_VCVARS64` can point to `vcvars64.bat`, `KZ_CMAKE` can point to `cmake.exe`, `KZ_NINJA` can point to
+Ninja 1.13.2, and `KZ_LLVM_BIN` selects an LLVM `bin` directory. Scripts that read user-supplied content never search
+for it: pass `-Iso` / `-Elf` to PowerShell scripts or set `KZ_ISO` / `KZ_GAME_ELF`; Python tools expose matching
+`--iso` / `--elf` arguments.
+
+### Visual Studio Code
+
+From this repository root, open the folder directly in VS Code:
+
+```powershell
+code .
+```
+
+Install the recommended CMake Tools, C/C++, and PowerShell extensions when prompted. Use **Terminal > Run Build Task**
+for the default MSVC build, or run one of the `Killzone: Configure ...` / `Killzone: Build ...` tasks. These tasks call
+`tools\scripts\cmake_preset.ps1`, which locates CMake, loads the headless MSVC Build Tools environment, and invokes the
+checked preset. They first run `tools\scripts\provision_ninja.ps1`, which downloads only the version and checksum in
+the dependency lock. The clang-cl task prompts for the LLVM `bin` directory. `Killzone: Build host core (clang-cl)`
+runs the renderer-free portability gate without building the game or renderer backends.
+
+### Checked CMake presets
+
+Install CMake 3.24 or newer, provision the locked inputs above, and generate private game-derived sources with
+`regen.py`. Run `tools\scripts\provision_ninja.ps1` to install the locked Ninja 1.13.2 locally. The VS Code tasks are
+the primary workflow. From an x64 Build Tools shell, the equivalent commands are:
+
+```powershell
+cmake --preset win-msvc-rel
+cmake --build --preset win-msvc-rel
+
+$env:KZ_LLVM_BIN = 'C:\Program Files\LLVM\bin'
+cmake --preset win-clang-rel
+cmake --build --preset win-clang-rel
+```
+
+The configure preflight runs the strict offline dependency verifier, validates the selected compiler and Ninja
+version, and checks `KZ_GENERATED_DIR` (default `generated\`) before dependency population begins. Outside a Build
+Tools shell, `tools\scripts\cmake_preset.ps1 -Preset win-msvc-rel` loads the latest available x64 environment; set
+`KZ_VCVARS64` when the Build Tools installation cannot be discovered automatically.
+
+For the edit-build-test loop:
+
+- Configure once with `-DKZ_DEV_LINK=ON` (for example `cmake --preset win-msvc-rel -DKZ_DEV_LINK=ON`). It turns off
+  identical-COMDAT folding, which takes most of the `killzone.exe` link time. Compile flags don't change, so switching
+  it on or off only relinks. Leave it off for builds you package.
+- Editing `src/` recompiles only `kz_port` and relinks. Changing a header the generated code includes (`ps2_runtime.h`,
+  `ps2_runtime_macros.h`, `ps2_cg*.h`), or a regen that adds or removes functions, rebuilds all ~250 unity batches.
+  That takes about 2 minutes with MSVC; `win-clang-rel` does it in about half the time.
+
+### Host platform boundary
+
+`kz_host_core` is independent of SDL, game code, and renderer libraries. Its typed API owns executable-relative paths,
+page mapping/protection and instruction-cache invalidation, monotonic timing and synchronization, native-window
+metadata, diagnostics, environment mutation, CPU feature detection, and guest floating-point setup. Unsupported host
+operations raise `kz::host::Error`; they never return Win32-shaped placeholder values.
+
+From a Build Tools shell, the PORT-01 build gate is:
+
+```powershell
+cmake --build --preset win-clang-rel --target kz_host_core
+```
+
+From a normal VS Code terminal, use the task above or its checked wrapper:
+
+```powershell
+tools\scripts\cmake_preset.ps1 -Preset win-clang-rel -Action build -Target kz_host_core
+```
+
+The `kz_host_core_component` ISO-free test exercises executable-path resolution, UTF-8 path conversion, environment
+updates, monotonic sleep, a manual-reset event, CPU/SIMD detection, thread naming, and a writable-to-executable page
+transition followed by instruction-cache invalidation and execution. `kz_host_window_smoke` adds SDL window creation,
+native-handle extraction, drawable metrics, event delivery, and teardown; `kz_host_audio_smoke` opens, starts, pauses,
+and closes an SDL playback stream after observing its callback. Windows automation uses SDL's dummy audio driver;
+the macOS acceptance run uses the default CoreAudio device.
+
+### Deferred macOS (Apple Silicon) Phase 0 preset
+
+The checked `macos-arm64` preset is an isolated Phase 0 configuration. It builds the locked SDL 3.4.16 source, the
+renderer-free host smokes, and the portable VU interpreter, and excludes game-derived code, renderers, PCSX2 microVU,
+and the x86 emitter. It does not build the game and does not block the active Windows milestones. On an Apple Silicon
+Mac:
+
+```sh
+cmake --preset macos-arm64
+cmake --build --preset macos-arm64
+ctest --preset macos-arm64 --output-on-failure -R '^kzvu_interpreter_'
+ctest --preset macos-arm64 --output-on-failure -R '^kz_host_(window|audio)_smoke$'
+```
+
+The portable VU corpus and all three host tests pass under MSVC and clang-cl on Windows, but that is not a substitute
+for the native AppleClang ARM64 run. The native runs (VU-01, MAC-01), the ARM64 guest-code gate (ARM-01, whose
+`macos-arm64-guest-smoke` workflow preset does not exist yet), and the work that depends on them are paused under the
+superseded portability roadmap in [`TODO.md`](TODO.md).
+
+### Tests
+
+Build and run the hermetic suite without granting disc access:
+
+```powershell
+tools\scripts\cmake_preset.ps1 -Preset win-msvc-rel
+tools\scripts\cmake_preset.ps1 -Preset win-msvc-tests -Action build
+tools\scripts\cmake_preset.ps1 -Preset win-msvc-rel -Action test -Label iso-free
+```
+
+CTest supplies an isolated missing configuration through `KZ_CONFIG` and sets `KZ_ISO_FREE=1`; disc checks fail
+before opening any path. The `kz_ipu_byod` test is labeled `byod` and remains disabled unless CMake is configured
+with `-DKZ_BYOD_ISO=<authorized-disc-path>` (or `KZ_ISO` is set before the first configure).
+
+### Generated-code provenance
+
+Generated game code and the source executable remain private and ignored. The committed
+`config\generated-manifest.json` contains only provenance hashes, named counts, table bounds, instruction-patch
+assertions, and unique hashes for the fixed guest addresses in `src\kz_hook_addresses.h`.
+
+```powershell
+python .\tools\scripts\verify_resume_table.py .\generated
+python .\tools\scripts\inventory_generated.py --check
+```
+
+The current lock distinguishes 16,045 Ghidra functions, 19,307 Ghidra code labels, 31,996 generated translation
+units, 31,995 generated functions, 132,656 dispatch entries, 101,715 resumable entries reported by PS2Recomp, and
+100,661 globally dispatchable resume cases. Regeneration merges every locked hook address into the configured
+entry-point set so a hard-coded hook cannot remain silently unreachable. The inventory gate also proves that all 58
+fixed guest hook and lookup addresses are executable, dispatchable, signature-matched, and uniquely resolvable in the
+supported executable.
+
+## Layout
+
+- `src/` - the port: game overrides and patches, input, mouse aim, timing, launcher, config, GS/VU/IPU/SPU2 glue.
+- `ext/kzgs`, `ext/kzvu`, `ext/kzipu`, `ext/kzspu2` - PCSX2's GS, microVU, IPU and SPU2 built as static libraries.
+- `ext/PS2Recomp` - recompiler and runtime (fork, `killzone` branch).
+- `patches/` - the runtime changes as patches, with a description and measurements for each.
+- `config/killzone.toml` - PS2Recomp configuration for SCUS-97402.
+- `host/` - `kz_host_core`, the renderer-free platform boundary (Windows and Darwin), and its smoke tests.
+- `tools/` - build, test, profiling and Ghidra helper scripts.
+- `docs/` - `findings.md` (evidence log), `multiplayer/` (archived online-client research), and
+  `archive/upstream/` (superseded upstream design notes).
+- `IMPLEMENTATION_PLAN.md`, `TODO.md`, `WORKDONE.md`, `HANDOFF.md` - plan, open queue, verified completions, session
+  protocol.
 
 ## License
 
-This repository's own code is MIT, see [LICENSE](LICENSE). The PCSX2 glue in `ext/kz*`, the PS2Recomp submodule, Ash01Live's field of view code and every released build stay GPL-3.0 ([LICENSE-GPL-3.0](LICENSE-GPL-3.0)), because the builds link PCSX2 (GPL-3.0-or-later) and PS2Recomp (GPL-3.0). Killzone is a trademark of Sony Interactive Entertainment.
+This repository's own code and documentation are MIT under [`LICENSE`](LICENSE), except for the components listed
+there that remain GPL-3.0. In particular, the PCSX2-derived `ext/kz*` libraries, the PS2Recomp submodule, the field
+of view contribution, and every compiled build are GPL-3.0; see [`LICENSE-GPL-3.0`](LICENSE-GPL-3.0).
+Killzone is a trademark of Sony Interactive Entertainment; this project is not affiliated with Sony or Guerrilla Games.
+
+The owner-approved distribution disposition is recorded under LEGAL-01 in [`WORKDONE.md`](WORKDONE.md). Retail and
+generated game-derived content remain BYOD-only, unresolved third-party components and proprietary SDKs are excluded
+from release artifacts, and every release candidate still requires notices, corresponding-source review, an SBOM,
+secret and protected-content scans, and a package-allowlist audit.

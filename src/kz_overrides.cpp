@@ -6,12 +6,16 @@
 // Use this for library functions the ps2_analyzer signature DB misses. Evidence for each binding: docs/findings.md.
 
 #include "game_overrides.h"
+#include "Stubs/MemoryCard.h"
+#include "Syscalls/RPC.h"
+#include "kz_hook_addresses.h"
 #include "kz_sif_modules.h"
 #include "kz_ipu.h"
 #include "kz_devtools.h"
 #include "kz_addrs.h"
 #include "kz_region.h"
 #include "ps2_runtime.h"
+#include "ps2_stubs.h"
 #include "runtime/ee_scheduler.h"
 #include "runtime/ps2_timeline.h"
 
@@ -22,6 +26,16 @@
 
 namespace
 {
+    // A scheduler resume can enter an address replacement directly, so replacements for HLE handlers must complete
+    // the guest return themselves.
+    template <void (*Handler)(uint8_t *, R5900Context *, PS2Runtime *)>
+    void returningBinding(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        const uint32_t returnPc = getRegU32(ctx, 31);
+        Handler(rdram, ctx, runtime);
+        ctx->pc = returnPc;
+    }
+
     struct Binding
     {
         uint32_t address;
@@ -50,6 +64,18 @@ namespace
         setReturnS32(ctx, 0);
     }
 
+    void kzSceMpegGetPicture(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        ctx->pc = getRegU32(ctx, 31);
+        ps2_stubs::sceMpegGetPicture(rdram, ctx, runtime);
+    }
+
+    void kzSceMpegClearRefBuff(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        ctx->pc = getRegU32(ctx, 31);
+        ps2_stubs::sceMpegClearRefBuff(rdram, ctx, runtime);
+    }
+
     // Each PAL function matches the US one apart from relocations (kz_addrs.cpp).
     struct CustomBindings
     {
@@ -66,6 +92,16 @@ namespace
             {a.sifStopModule, &kzSifStopModuleAt, "sceSifStopModule"},
         }};
     }
+
+    // These hand-mapped functions have not been verified in SCES_528.93, so install them only for the US executable.
+    constexpr CustomBinding kUsOnlyBindings[] = {
+        {kz_hook::SifInitRpc, &returningBinding<&ps2_syscalls::SifInitRpc>, "sceSifInitRpc"},
+        {kz_hook::McInit, &returningBinding<&ps2_stubs::sceMcInit>, "sceMcInit"},
+        {kz_hook::McGetInfo, &returningBinding<&ps2_stubs::sceMcGetInfo>, "sceMcGetInfo"},
+        {kz_hook::McFormat, &returningBinding<&ps2_stubs::sceMcFormat>, "sceMcFormat"},
+        {kz_hook::MpegGetPicture, &kzSceMpegGetPicture, "sceMpegGetPicture"},
+        {kz_hook::MpegClearRefBuff, &kzSceMpegClearRefBuff, "sceMpegClearRefBuff"},
+    };
 
     // KZ_TIMELINE: wrappers that log entry/exit of the frame pipeline's guest functions (patch 0025). The wrapper takes the
     // function's table slot (a call, or a scheduler dispatch, enters it), logs, and calls the original. A resume at an inner
@@ -140,6 +176,14 @@ namespace
         {
             if (!runtime.replaceFunction(c.address, c.fn))
                 std::cerr << "[kz] failed to bind " << c.name << " @0x" << std::hex << c.address << std::dec << std::endl;
+        }
+        if (!kzIsPal())
+        {
+            for (const CustomBinding &c : kUsOnlyBindings)
+            {
+                if (!runtime.replaceFunction(c.address, c.fn))
+                    std::cerr << "[kz] failed to bind " << c.name << " @0x" << std::hex << c.address << std::dec << std::endl;
+            }
         }
     }
 

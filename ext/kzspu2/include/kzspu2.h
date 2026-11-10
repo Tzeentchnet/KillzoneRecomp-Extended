@@ -70,6 +70,7 @@ uint32_t kzspu2DmaMadr(int core);    // MADR as the SPU2 advances it (TADR once 
 uint32_t kzspu2ReadSamples(int16_t* stereo, uint32_t frames); // interleaved L/R; returns frames copied (<= frames)
 uint32_t kzspu2AvailableFrames();
 uint32_t kzspu2SkipFrames(uint32_t frames);                   // consumer-side discard; returns frames skipped
+uint64_t kzspu2DroppedFrames();                               // producer-side ring overflow, safe on the audio thread
 
 // ---- inspection ------------------------------------------------------------------------------------------------------------
 KzSpu2Status kzspu2GetStatus(bool resetPeak = false);

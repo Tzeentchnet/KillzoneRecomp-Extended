@@ -87,6 +87,7 @@ bool kzspu2DmaBusy(int core);   uint32_t kzspu2DmaMadr(int core);
 
 uint32_t kzspu2ReadSamples(int16_t* stereo, uint32_t frames);   // audio thread
 uint32_t kzspu2AvailableFrames();  uint32_t kzspu2SkipFrames(uint32_t frames);
+uint64_t kzspu2DroppedFrames();    // thread-safe producer-side ring overflow count
 KzSpu2Status kzspu2GetStatus(bool resetPeak = false);          // frames mixed/dropped, IRQ/DMA counts, voices, peak
 const uint16_t* kzspu2Memory();                                // 2 MB SPU2 RAM
 ```
