@@ -145,21 +145,20 @@ namespace
 		const kzgs::Fsr1Report report = s.report;
 		const bool enabled = s.enabled;
 		const int sharpening = s.sharpening;
+		// A non-loss idle failure does not prove that any referenced child is safe to destroy.
+		// Leave GPU children and their texture wrappers for device teardown rather than freeing in-flight work.
+		[[maybe_unused]] GSTexture* const abandonedOutput = s.output.release();
+		[[maybe_unused]] GSTexture* const abandonedIntermediate = s.intermediate.release();
 #ifdef KZGS_FSR1_TESTING
 		++s_lifetime.abandoned;
 		if (s_captureRetainedForTest)
 		{
 			s_retainedForTest = std::make_unique<State>(std::move(s));
+			s_retainedForTest->output.reset(abandonedOutput);
+			s_retainedForTest->intermediate.reset(abandonedIntermediate);
 			s_retainedReference = s_referenceEasu;
 		}
-		else
 #endif
-		{
-			// A non-loss idle failure does not prove that any referenced child is safe to destroy.
-			// Leave GPU children and their texture wrappers for device teardown rather than freeing in-flight work.
-			s.output.release();
-			s.intermediate.release();
-		}
 		s = {};
 		s.device = device;
 		s.report = report;
