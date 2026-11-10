@@ -24,7 +24,7 @@ Drobot (float-approximation concepts); retain that notice as well. Review the co
 separately. No proprietary upscaler SDK is bundled.
 
 The renderer also builds the [Tzeentchnet/pcsx2](https://github.com/Tzeentchnet/pcsx2) companion at
-`61570a47840d2f14e802456eb4524ae5b0a597c7`, pinned in
+`1fb920189c12766af55bdc9178619c0c66eb1a5e`, pinned in
 [`config/dependencies.lock.json`](../config/dependencies.lock.json). It is GPL-3.0-or-later; provide the
 corresponding source and notices for the exact distributed build, not just a link to unmodified upstream PCSX2.
 As of 2026-11-10 this companion revision is unpublished, so clean acquisition and corresponding-source availability

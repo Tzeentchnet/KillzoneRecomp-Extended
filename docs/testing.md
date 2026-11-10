@@ -189,9 +189,9 @@ or current-frame snapshot. Negative-size Vulkan bursts are labeled `presentation
 `swapchain_backbuffer`, and their replay files use the `recomposed_` prefix. Do not treat them as evidence of a
 successful present or compare them with literal backbuffer captures. Internal-resolution captures and native
 presentation retain their existing behavior. Captures built with the reviewed companion API use pipeline contract 2:
-sharp prescale appears only on the fallback path. The older locked companion emits contract 1 instead, and the
-validator warns that active-upscaler pipeline order was not verified. The API capability check is supplemented by
-the SharpScaling integration regression.
+sharp prescale appears only on the fallback path. Builds using the previously locked companion emit contract 1
+instead, and the validator warns that active-upscaler pipeline order was not verified. The API capability check is
+supplemented by the SharpScaling integration regression.
 
 For an ISO-free, synthetic replay using the targets built above:
 
