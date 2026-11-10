@@ -1,25 +1,29 @@
-# Builds the player-facing folder dist\Killzone from build\RelWithDebInfo.
-# Contains no game code or data: the player points the launcher at their own Killzone (USA) disc image; the small boot
-# files are extracted from it on first run into disc\.
-# Usage: package.ps1 [-Config RelWithDebInfo] [-WithPdb]
-param([string]$Config = "RelWithDebInfo", [switch]$WithPdb, [string]$Root = $env:KZ_ROOT, [string]$Destination)
+# Builds a clean player-facing staging folder from an audited input inventory.
+# Usage: package.ps1 [-Config win-msvc-rel] [-Destination path] [-DryRun] [-WithPdb]
+param(
+    [string]$Config = 'RelWithDebInfo',
+    [switch]$WithPdb,
+    [string]$Root = $env:KZ_ROOT,
+    [string]$Destination,
+    [string]$BuildDirectory,
+    [switch]$DryRun
+)
 . "$PSScriptRoot\kz_paths.ps1"
+. "$PSScriptRoot\package_manifest.ps1"
 $ErrorActionPreference = 'Stop'
 $root = Resolve-KzRoot $Root
-$src = "$root\build\$Config"
+$src = if ($BuildDirectory) { [IO.Path]::GetFullPath($BuildDirectory) } else { Join-Path $root "build\$Config" }
 $dst = if ($Destination) { [IO.Path]::GetFullPath($Destination) } else { "$root\dist\Killzone" }
 
-if (-not (Test-Path "$src\killzone.exe")) { throw "build first: $src\killzone.exe missing" }
-# Update in place: replace the program files only. The player's data in the folder stays: killzone.ini (settings),
-# mc0/mc1 (memory cards: profiles and saves), disc (files extracted from their .iso) and cache (shader cache).
-New-Item -ItemType Directory -Force $dst | Out-Null
-Get-ChildItem $dst -File | Where-Object { $_.Extension -in '.exe', '.dll', '.pdb', '.txt' } | Remove-Item -Force
-if (Test-Path "$dst\resources") { Remove-Item -Recurse -Force "$dst\resources" }
-
-Copy-Item "$src\killzone.exe" $dst
-Get-ChildItem "$src\*.dll" | Copy-Item -Destination $dst
-Copy-Item -Recurse "$src\resources" "$dst\resources"
-if ($WithPdb -and (Test-Path "$src\killzone.pdb")) { Copy-Item "$src\killzone.pdb" $dst }   # symbols for crash reports (1.8 GB)
+$plan = @(Get-KzPackagePlan -Root $root -InputDirectory $src -WithPdb:$WithPdb)
+Assert-KzFreshDirectory $dst
+if ($DryRun) {
+    foreach ($entry in $plan) { "INCLUDE $($entry.Relative)" }
+    'INCLUDE README.txt'
+    "DRY RUN: $($plan.Count + 1) files -> $dst; vendor SDKs, caches and unlisted files excluded"
+    return
+}
+Copy-KzPackagePlan -Plan $plan -Destination $dst
 
 @"
 KILLZONE - PC port (static recompilation of the PS2 game)
@@ -59,7 +63,8 @@ Status (test build)
 - The virtual memory card (profiles, saves) is kept in disc\mc0 next to killzone.exe; updates keep it.
 - If something goes wrong, run with the launcher and check the Display tab, or delete killzone.ini to reset.
 
-This package contains no Sony or Guerrilla code or assets.
+No disc image or retail assets are intentionally staged. Distribution requires separate rights, protected-content,
+license, and corresponding-source review.
 "@ | Set-Content -Encoding UTF8 "$dst\README.txt"
 
 $size = (Get-ChildItem -Recurse $dst | Measure-Object -Sum Length).Sum / 1MB

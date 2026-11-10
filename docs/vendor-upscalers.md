@@ -87,6 +87,9 @@ These mappings and synchronization assumptions still need real SDK, driver, GPU,
 ## Exact reference provenance and license fields
 
 These are the public references consulted for implementation, **not claims that either SDK was installed or built**:
+The optional records in [`config/dependencies.lock.json`](../config/dependencies.lock.json) repeat these references
+and license links with unknown local artifact hashes and license acceptance. They are not strict/default dependencies
+and never cause local SDK discovery or downloads.
 
 | Field | NVIDIA DLSS / NGX | Intel XeSS-SR |
 |---|---|---|

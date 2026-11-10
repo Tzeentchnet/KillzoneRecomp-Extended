@@ -35,6 +35,41 @@ Only non-content provenance may be committed:
 Scripts that consume retail inputs require explicit paths. BYOD tests remain disabled by default and must not search
 parent directories, user profiles, the registry, or old build trees.
 
+## Package inventory and dry-runs
+
+[`config/package-allowlist.json`](../config/package-allowlist.json) pins exact SHA-256 hashes for the audited x64
+SDL, FFmpeg and PCSX2-bundle runtime DLLs and the six Visual C++ release-runtime DLLs. The allowlist includes the
+audited import closure; it is not permission to redistribute any component. The executable must be an x64 PE
+executable, not a renamed DLL. Resources are selected only from the known prompt and shader source directories:
+their complete inventory digest is pinned, and each staged file must match its source. Unlisted files and
+directories are never copied. The package includes the repository MIT and GPL license texts and the FSR1 notice.
+
+Dry-run both stages without creating a destination:
+
+```powershell
+.\tools\scripts\package.ps1 -Config win-msvc-rel -Destination .\work\package-preview -DryRun
+.\tools\scripts\make_release.ps1 -Version 0.1.0 -From .\build\win-msvc-rel `
+  -OutputDirectory .\work\release-preview -DryRun
+.\tools\scripts\package_selftest.ps1 -BuildDirectory .\build\win-msvc-rel
+```
+
+An actual package requires a **new or empty** destination. The script refuses to update a nonempty player folder
+and never deletes saves, settings, or caches; use a fresh staging directory, then back up player data before any
+manual update. `-WithPdb` explicitly adds only `killzone.pdb` to a private staging folder; it is absent by default
+and never included by the release ZIP script. Local SDK roots, import libraries, provider/vendor DLLs, symbols,
+shader caches, and unlisted files are excluded even when present in the input tree. Release archiving uses the same
+file plan rather than recursively zipping the stage.
+
+The release script locates an x64 Visual C++ redistributable or accepts `-CrtDirectory`; its files must match the
+pinned version. If a DLL, source resource, or CRT version changes, inspect its provenance, transitive imports,
+licenses, notices, and corresponding-source obligations before deliberately updating the allowlist. Do not copy a
+local vendor SDK into the package or update its hashes to make the check pass.
+
+These are **inventory and integrity checks, not release approval**. They do not prove the executable or a separate
+source distribution is free of protected content, provide corresponding source, establish redistribution rights,
+or replace the scans and human reviews below. Never include protected generated game source to satisfy a source
+request; resolve the legal and distribution requirements separately before publication.
+
 ## Release checklist
 
 Every release candidate requires:

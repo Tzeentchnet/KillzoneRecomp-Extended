@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "description": "Audited Windows x64 runtime inputs; changing a binary or resource inventory requires renewed provenance, dependency and license review.",
+  "resource_count": 167,
+  "resource_inventory_sha256": "657620f234397514a7df12e6be34811e76c5131d8e930b1f05d79ec627948ad8",
+  "runtime_dlls": [
+    { "name": "SDL3.dll", "sha256": "1f98969319302a100931f4385e5918a0bd53ab07773040682d22e7edb54858c0", "dependency": "sdl3-vc" },
+    { "name": "avcodec-61.dll", "sha256": "b8acfed8d1103fa0ca02208978471526251d41fa9874517751ab30a52601f3a7", "dependency": "ffmpeg-msvc" },
+    { "name": "avformat-61.dll", "sha256": "aa8b5921966070236da75bef4ef6c49b0b607951e1f00a59a6b0d42fb93626d5", "dependency": "ffmpeg-msvc" },
+    { "name": "avutil-59.dll", "sha256": "e2d999efc3fe848ae2944aa7f2983c36336fab3a3565d3e05c47a35b3e51a448", "dependency": "ffmpeg-msvc" },
+    { "name": "swresample-5.dll", "sha256": "5bbfe1435877ad21bd78fdfc7749c417505b5cf32cb21566570a5938d926a2ae", "dependency": "ffmpeg-msvc" },
+    { "name": "swscale-8.dll", "sha256": "fb5761990f7d0fd69f34e8d3838336618a44298aaa707a233c0d09569f5eb67b", "dependency": "ffmpeg-msvc" },
+    { "name": "zlib1.dll", "sha256": "4c69bd559e636b9ddf7710c4b869ee239ab6fd9d789f6726a7abc228e6c4cbab", "dependency": "ffmpeg-msvc" },
+    { "name": "libwebpmux.dll", "sha256": "c3e3102481939a606afe4f7cf21556f90721e9341cb2c3184f75cd64901a44b5", "dependency": "ffmpeg-msvc" },
+    { "name": "jxl.dll", "sha256": "30ca8b2bd211f5602702c37c1443971e9ef23921f9bd750e547b9078e9abe730", "dependency": "ffmpeg-msvc" },
+    { "name": "jxl_threads.dll", "sha256": "b1c3bddeedc3b4a0e741e8f8712bf24bb6f1c60e21589be86e18b444f951890b", "dependency": "ffmpeg-msvc" },
+    { "name": "jxl_cms.dll", "sha256": "39f04faf9e753bb325402a3504a95bcd1fb669da037eefb67b68b2a13ef027dd", "dependency": "ffmpeg-msvc" },
+    { "name": "brotlicommon.dll", "sha256": "f0e8adfa650100adeaa0ab87e400b9b9129bc2dd5f8dbbf5cf35c262b41b90cf", "dependency": "ffmpeg-msvc" },
+    { "name": "brotlidec.dll", "sha256": "725574a176cebd7ca6c67402d57b85cdb4ed92e53392314bb3c7ff8e9a5a219e", "dependency": "ffmpeg-msvc" },
+    { "name": "brotlienc.dll", "sha256": "17461073f27ca26133e0fda9ec3808fef77258c113eb9be6dbfccd58ff0a0d41", "dependency": "ffmpeg-msvc" },
+    { "name": "zstd.dll", "sha256": "52e85512c9e96a4e0efc5f2a1bda5526d1a6450275e2c4f54a6fec4e168a20dd", "dependency": "pcsx2-windows-dependencies" },
+    { "name": "libpng16.dll", "sha256": "9851524ef58cd8382382a82db2b93c42470586ce38404e13e52138a812118136", "dependency": "pcsx2-windows-dependencies" },
+    { "name": "z.dll", "sha256": "2ed19a3633fc520f5735f75d6d218e6054af1358484470f69a61897ac58273f0", "dependency": "pcsx2-windows-dependencies" },
+    { "name": "libwebp.dll", "sha256": "0d9683d7a5b04ec42f25b15fe3d3933527df4aa91ce6db5b14abe2783f0a5509", "dependency": "pcsx2-windows-dependencies" },
+    { "name": "libsharpyuv.dll", "sha256": "9eda7639116af8cf1d63969f68d4bfdd1b33683b3cc3f8caaa11a6db002ddad0", "dependency": "pcsx2-windows-dependencies" },
+    { "name": "jpeg62.dll", "sha256": "6825a35c60e3b429ea98d27718aa9204bdd0ae47f055134266bb2bbb056c91d3", "dependency": "pcsx2-windows-dependencies" },
+    { "name": "dxcompiler.dll", "sha256": "0689e2fee0a1c9df8662a59680469f24e2a3ad7ce6bbbcc9284f7a83172bfc59", "dependency": "pcsx2-windows-dependencies" },
+    { "name": "shaderc_shared.dll", "sha256": "c77706098424005b782986e06473800fe20a083201ee05faa39b8eb8663d42c2", "dependency": "pcsx2-windows-dependencies" }
+  ],
+  "msvc_runtime_source": "Microsoft Visual C++ x64 redistributable 14.44.35112, signed Microsoft binaries",
+  "msvc_runtime_dlls": [
+    { "name": "msvcp140.dll", "sha256": "0f885b509a685d2bbfa652fed26b5fb31d88fbdab0a978c641d1c7b8aa460aa9" },
+    { "name": "msvcp140_1.dll", "sha256": "bfad5aef4c63a669e3c140655cdfdf395b6c979b400a447bd5dcb65ed8826c3d" },
+    { "name": "msvcp140_2.dll", "sha256": "3ea06f0ee098b4823cb79599df3780e7f23cce52c19aac31d2a0d47efe33a5e9" },
+    { "name": "msvcp140_atomic_wait.dll", "sha256": "640b2aefced484d0368eea5bdd06addd0658a3a70a49256e560d6923b404a479" },
+    { "name": "vcruntime140.dll", "sha256": "d5e4d9a3e835fa679450145d6a7d94e36573a509317111904d9b3712c30d9066" },
+    { "name": "vcruntime140_1.dll", "sha256": "1f2d41c4aa5db0bc33ebf7b66d72943a817d7ce6cbe880502a9403823633093f" }
+  ]
+}

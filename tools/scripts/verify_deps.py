@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import copy
 import hashlib
+import io
 import json
 import os
 import re
@@ -156,9 +159,63 @@ def verify_lock_schema(lock: dict[str, Any], report: Report) -> None:
                 report.failed(f"{dependency_id}: archive sha256 is not 64 lowercase hex digits")
             if not isinstance(dependency.get("size"), int) or dependency["size"] <= 0:
                 report.failed(f"{dependency_id}: archive size must be a positive integer")
+        if kind == "optional-sdk-reference":
+            for field, expected in (
+                ("optional", True),
+                ("default_dependency", False),
+                ("required_in_strict", False),
+                ("bundled", False),
+                ("qualified", False),
+            ):
+                if dependency.get(field) is not expected:
+                    report.failed(f"{dependency_id}: {field} must be {expected}")
+            if "local" in dependency:
+                report.failed(f"{dependency_id}: reference records must not probe a local SDK")
+            for field in ("reference_release", "header_license", "license_url", "runtime_filename"):
+                if not isinstance(dependency.get(field), str) or not dependency[field]:
+                    report.failed(f"{dependency_id}: missing {field}")
+            if not HEX40.fullmatch(revision):
+                report.failed(f"{dependency_id}: reference revision is not a full 40-digit commit")
+            provenance = dependency.get("provenance")
+            if not isinstance(provenance, dict) or provenance.get("reference_only") is not True:
+                report.failed(f"{dependency_id}: provenance must identify a reference only")
+            elif any(
+                field not in provenance or provenance[field] is not None
+                for field in ("local_release", "sdk_archive_sha256", "runtime_sha256", "license_acceptance")
+            ):
+                report.failed(f"{dependency_id}: local SDK provenance must not be asserted in the lock")
 
     if report.failures == 0:
         report.passed(f"lock schema and {len(dependencies)} dependency records")
+
+
+def self_test_optional_sdk_schema(lock: dict[str, Any]) -> None:
+    optional = [item for item in lock["dependencies"] if item.get("kind") == "optional-sdk-reference"]
+    if {item.get("id") for item in optional} != {"nvidia-dlss-sdk-reference", "intel-xess-sdk-reference"}:
+        raise VerificationError("expected both optional SDK reference records")
+
+    def rejected(records: list[dict[str, Any]]) -> bool:
+        report = Report(strict=True)
+        with contextlib.redirect_stdout(io.StringIO()):
+            verify_lock_schema({"schema_version": 1, "dependencies": records}, report)
+        return report.failures != 0
+
+    if rejected(copy.deepcopy(optional)):
+        raise VerificationError("valid optional reference records were rejected")
+    for field, value in (
+        ("bundled", True),
+        ("default_dependency", True),
+        ("required_in_strict", True),
+        ("local", {"path": "private-sdk", "required_in_strict": True}),
+    ):
+        modified = copy.deepcopy(optional)
+        modified[0][field] = value
+        if not rejected(modified):
+            raise VerificationError(f"optional SDK schema accepted {field}")
+    modified = copy.deepcopy(optional)
+    modified[0]["provenance"]["runtime_sha256"] = "0" * 64
+    if not rejected(modified):
+        raise VerificationError("optional SDK schema accepted unverified local provenance")
 
 
 def verify_project_baseline(lock: dict[str, Any], report: Report) -> None:
@@ -500,6 +557,11 @@ def parse_arguments() -> argparse.Namespace:
         default=DEFAULT_LOCK,
         help=f"Dependency lock path (default: {DEFAULT_LOCK})",
     )
+    parser.add_argument(
+        "--selftest",
+        action="store_true",
+        help="Exercise optional SDK reference schema without probing SDK paths.",
+    )
     return parser.parse_args()
 
 
@@ -510,6 +572,15 @@ def main() -> int:
         lock = load_lock(arguments.lock.resolve())
     except VerificationError as error:
         report.failed(str(error))
+        return report.finish()
+
+    if arguments.selftest:
+        try:
+            self_test_optional_sdk_schema(lock)
+        except (KeyError, TypeError, VerificationError) as error:
+            report.failed(f"optional SDK schema self-test: {error}")
+            return report.finish()
+        report.passed("optional SDK provenance and default-exclusion schema self-test")
         return report.finish()
 
     verify_lock_schema(lock, report)

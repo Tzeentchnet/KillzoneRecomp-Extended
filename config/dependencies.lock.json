@@ -407,6 +407,56 @@
         "file": "ext/PS2Recomp/ps2xRecomp/CMakeLists.txt",
         "name": "rabbitizer"
       }
+    },
+    {
+      "id": "nvidia-dlss-sdk-reference",
+      "kind": "optional-sdk-reference",
+      "source_url": "https://github.com/NVIDIA/DLSS",
+      "reference_release": "v310.9.16",
+      "revision": "9981c6350dc58c0ce21f024fd65e31e851c31689",
+      "license": "LicenseRef-NVIDIA-RTX-SDK",
+      "header_license": "LicenseRef-NvidiaProprietary",
+      "license_url": "https://github.com/NVIDIA/DLSS/blob/v310.9.16/LICENSE.txt",
+      "redistribution": "Not approved; separate vendor, GPL, notice and distribution review required.",
+      "acquisition": "Optional manual acquisition outside the repository; no SDK download, discovery or staging.",
+      "runtime_filename": "nvngx_dlss.dll",
+      "optional": true,
+      "default_dependency": false,
+      "required_in_strict": false,
+      "bundled": false,
+      "qualified": false,
+      "provenance": {
+        "reference_only": true,
+        "local_release": null,
+        "sdk_archive_sha256": null,
+        "runtime_sha256": null,
+        "license_acceptance": null
+      }
+    },
+    {
+      "id": "intel-xess-sdk-reference",
+      "kind": "optional-sdk-reference",
+      "source_url": "https://github.com/intel/xess",
+      "reference_release": "v3.0.2",
+      "revision": "8fe81bdbbaf00b3c1b733fd0d830c333dc84e6f0",
+      "license": "LicenseRef-Intel-Simplified-Software-License-October-2022",
+      "header_license": "Intel copyright and license-authorization notice; separate review required",
+      "license_url": "https://github.com/intel/xess/blob/v3.0.2/LICENSE.txt",
+      "redistribution": "Not approved; separate vendor, GPL, notice and distribution review required.",
+      "acquisition": "Optional manual acquisition outside the repository; no SDK download, discovery or staging.",
+      "runtime_filename": "libxess.dll",
+      "optional": true,
+      "default_dependency": false,
+      "required_in_strict": false,
+      "bundled": false,
+      "qualified": false,
+      "provenance": {
+        "reference_only": true,
+        "local_release": null,
+        "sdk_archive_sha256": null,
+        "runtime_sha256": null,
+        "license_acceptance": null
+      }
     }
   ],
   "cmake_fetchcontent_scan": [

@@ -125,6 +125,25 @@ targets, missing lifecycle symbols, independent vendor targets, exclusion from d
 DLL targets. The successful fake-SDK build does not constitute a real SDK build or runtime qualification.
 The current host does not provide the initialization scope; see [vendor SDK adapters](vendor-upscalers.md).
 
+Packaging checks use real audited dependency hashes and synthetic decoys, with work confined to a fresh directory
+under `work`:
+
+```powershell
+python .\tools\scripts\verify_deps.py --selftest
+python .\tools\scripts\verify_deps.py --strict
+python .\tools\scripts\verify_capture_metadata.py --selftest
+.\tools\scripts\package_selftest.ps1 -BuildDirectory .\build\win-msvc-rel
+.\tools\scripts\package.ps1 -Config win-msvc-rel -Destination .\work\package-preview -DryRun
+.\tools\scripts\make_release.ps1 -Version 0.1.0 -From .\build\win-msvc-rel `
+  -OutputDirectory .\work\release-preview -DryRun
+```
+
+The self-test contaminates fixture inputs with vendor/provider DLLs, SDK headers and import libraries, PDBs,
+caches, and protected-content-shaped decoys. It checks both dry-runs, the actual staging directory and ZIP contents,
+the staged executable's ISO-free self-test, required license files, a substituted DLL/CRT hash, a DLL disguised as
+the executable, and preservation of an occupied destination. The source and legal reviews in
+[release and distribution](release.md) remain mandatory.
+
 The CPU vectors check AMD constants and dispatch planning. The GPU-vector test enables synchronization validation,
 compares EASU with an independently compiled AMD native-gather reference and odd cropped rectangles with tightly
 packed inputs, checks edge/partial-tile writes and RCAS, and exercises failure cleanup and retry. The presentation
