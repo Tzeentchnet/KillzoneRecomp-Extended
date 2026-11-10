@@ -68,6 +68,22 @@ Focused FSR1 checks (the Vulkan tests require a Vulkan GPU and `VK_LAYER_KHRONOS
 ctest --test-dir .\build\win-msvc-rel -R 'kzgs_fsr1_reference|kzgs_fsr1_vulkan_validation|kzgs_vulkan_fsr1|kzgs_fsr1_replay' --output-on-failure
 ```
 
+The SDK-free provider ABI and Vulkan lifecycle test is built and run with:
+
+```powershell
+.\tools\scripts\cmake_preset.ps1 -Preset win-msvc-tests -Action build -Target kzgs_provider_test
+.\tools\scripts\cmake_preset.ps1 -Preset win-msvc-tests -Action build -Target kzgs_test
+ctest --test-dir .\build\win-msvc-rel -R '^kzgs_provider_(vulkan|present|idle_error)_validation$' --output-on-failure
+```
+
+Its test-only C DLL checks sized API buffers, version and extension/feature negotiation, absent providers, missing
+temporal inputs, create/reset/dispatch failures, real Vulkan blits, redraws, resize, failed presents, device loss,
+actual fence retirement, and DLL unloading. The direct Vulkan-vector test enables synchronization validation; the
+synthetic GS presentation test uses standard validation, and checks real renderer dispatch, idle VSync/redraw,
+fallback, capture, resize, reset, and device recreation. A separate process tests retention and fail-closed behavior
+when device idle cannot prove completion. The DLL does not implement a vendor upscaler and is not staged with production
+binaries.
+
 The CPU vectors check AMD constants and dispatch planning. The GPU-vector test enables synchronization validation,
 compares EASU with an independently compiled AMD native-gather reference and odd cropped rectangles with tightly
 packed inputs, checks edge/partial-tile writes and RCAS, and exercises failure cleanup and retry. The presentation
@@ -79,9 +95,10 @@ synthetic-scene index upload produces a
 therefore isolated to the direct FSR-vector test, while the full presentation test uses standard validation.
 PCSX2 also emits the informational deprecated-device-layer VUID on this validation-layer version.
 
-For active Vulkan FSR1, presented-size readback and negative-size bursts recomposite the completed post-FSR/post-CAS
-texture into the requested output rectangle; they do not rerun FSR1. This is not a literal swapchain-image readback.
-Internal-resolution captures and non-FSR presentation retain their existing behavior.
+For active Vulkan FSR1 or an external provider, presented-size readback and negative-size bursts recomposite the
+completed post-upscaler/post-CAS texture into the requested output rectangle; they do not rerun the upscaler. This
+is not a literal swapchain-image readback. Internal-resolution captures and native presentation retain their existing
+behavior.
 
 For deterministic scheduling, use `KZ_SHOT_GUEST_INTERVAL=<vblanks>` and optionally
 `KZ_SHOT_GUEST_FROM=<first-vblank>`. Prefix a start with `g`, such as `g60`, to count from the first gameplay frame.

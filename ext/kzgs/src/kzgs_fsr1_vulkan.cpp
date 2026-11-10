@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0+
 #include "kzgs_fsr1.h"
 #include "kzgs_fsr1_runtime.h"
+#include "kzgs_provider_runtime.h"
 
 #include "Config.h"
 #include "GS/Renderers/Common/GSDevice.h"
@@ -410,13 +411,15 @@ namespace
 			Report(succeeded ? KzgsUpscalerReason::Active : KzgsUpscalerReason::PresentFailed, succeeded);
 	}
 
-	void DeviceCreated(void*, GSDeviceVK& device, bool, bool)
+	void DeviceCreated(void*, GSDeviceVK& device, bool instanceExtensions, bool deviceExtensions, bool features)
 	{
 		s.device = &device;
+		kzgs::ProviderDeviceCreated(device, instanceExtensions, deviceExtensions, features);
 	}
 
-	void DeviceDestroying(void*, GSDeviceVK& device)
+	void DeviceDestroying(void*, GSDeviceVK& device, VkResult idleResult)
 	{
+		kzgs::ProviderDeviceDestroying(device, idleResult);
 		if (s.device != &device)
 			return;
 		DestroyResources();
@@ -430,6 +433,12 @@ namespace kzgs
 	{
 		s.report = report;
 		GSDeviceVK::IntegrationHooks hooks;
+		if (ProviderHasNegotiation())
+		{
+			hooks.instance_extensions = ProviderInstanceExtensions;
+			hooks.device_extensions = ProviderDeviceExtensions;
+			hooks.device_features = ProviderDeviceFeatures;
+		}
 		hooks.device_created = DeviceCreated;
 		hooks.device_destroying = DeviceDestroying;
 		GSDeviceVK::SetIntegrationHooks(hooks);
@@ -466,9 +475,14 @@ namespace kzgs
 		s.captureValid = false;
 	}
 
+	void Fsr1CachePresentedFrame(const GSPresentationUpscaleFrame& frame)
+	{
+		PresentedFrame(nullptr, frame);
+	}
+
 	bool Fsr1CanCapture()
 	{
-		return s.enabled && s.device && s.device->HasSurface();
+		return (s.enabled || ProviderCanCapture()) && s.device && s.device->HasSurface();
 	}
 
 	Fsr1ReadbackResult Fsr1ReadPresented(std::vector<uint32_t>& pixels, uint32_t& width, uint32_t& height,
@@ -510,6 +524,7 @@ namespace kzgs
 		}
 		s.device->StretchRect(s.capture.texture, s.capture.source_uv, target.get(), draw,
 			ShaderConvert::COPY, s.captureBilinear ? Biln : Nearest);
+		ProviderCaptureUse(s.capture.texture);
 		const GSVector4i rect(0, 0, static_cast<int>(requestedWidth), static_cast<int>(requestedHeight));
 		download->CopyFromTexture(rect, target.get(), rect, 0);
 		download->Flush();
@@ -554,7 +569,7 @@ namespace kzgs
 		const GSVector4i rect(left, top, right, bottom);
 		const GSPresentationUpscaleFrame frame{s.device, source, rect,
 			GSVector4(rect) / GSVector4(source->GetSize()).xyxy(),
-			GSVector4(0.0f, 0.0f, static_cast<float>(outputWidth), static_cast<float>(outputHeight)), 0, false};
+			GSVector4(0.0f, 0.0f, static_cast<float>(outputWidth), static_cast<float>(outputHeight)), 0, false, false};
 		GSPresentationUpscaleOutput result;
 		const bool ok = Upscale(nullptr, frame, result);
 		s.sharpening = savedSharpening;

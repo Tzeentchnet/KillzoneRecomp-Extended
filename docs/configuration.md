@@ -73,6 +73,15 @@ Vulkan, unavailable DLSS/XeSS, and initialization/dispatch failures also fall ba
 requested/effective provider and reason. Off preserves the existing path. No proprietary SDK is included or required.
 The vendored AMD FSR 1 source is MIT licensed; see [`ext/kzgs/third_party/fsr1`](../ext/kzgs/third_party/fsr1).
 
+Optional Vulkan providers may be placed in `<exe>/upscalers/kzgs_upscaler_dlss.dll` or
+`<exe>/upscalers/kzgs_upscaler_xess.dll`. No DLSS or XeSS implementation is bundled. A provider must be selected
+before the Vulkan device is created so its required extensions and features can be negotiated; selecting a different
+provider on an already-open device reports `device_recreation_required` and falls back until KzGS is reopened
+(normally by restarting the game or replay).
+The current renderer exposes color only, with an unknown color encoding. Providers requiring matched depth, motion,
+jitter, masks, camera data, or a known encoding are rejected rather than given fabricated inputs. See the
+[provider ABI](upscaler-provider-abi.md) for the contract and limitations.
+
 For a single run, use `KZ_UPSCALER` and `KZ_UPSCALER_SHARPENING`, or pass e.g.
 `--upscaler fsr1 --upscaler-sharpening 35` (`--option=value` also works). Each CLI setting takes precedence over
 its environment variable, which takes precedence over the INI setting. The launcher never saves these overrides.

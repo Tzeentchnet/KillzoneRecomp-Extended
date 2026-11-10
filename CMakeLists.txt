@@ -377,6 +377,28 @@ if(BUILD_TESTING)
         --renderer d3d11 --warp --frames 2 --stress-uploads 64
         --out "${KZ_TEST_STATE_DIR}/kzgs/component")
     kz_add_iso_free_test(kzgs_fsr1_reference kzgs_fsr1_test)
+    kz_add_iso_free_test(kzgs_provider_vulkan_validation kzgs_provider_test "$<TARGET_FILE:kzgs_mock_provider>")
+    set_tests_properties(kzgs_provider_vulkan_validation PROPERTIES
+        LABELS "iso-free;renderer;vulkan-validation"
+        RESOURCE_LOCK kzgs_gpu
+        FAIL_REGULAR_EXPRESSION "Validation Error;SYNC-HAZARD")
+    set_property(TEST kzgs_provider_vulkan_validation APPEND PROPERTY ENVIRONMENT
+        "VK_LAYER_VALIDATE_SYNC=1")
+    kz_add_iso_free_test(kzgs_provider_idle_error_validation kzgs_provider_test
+        "$<TARGET_FILE:kzgs_mock_provider>" --uncertain-idle)
+    set_tests_properties(kzgs_provider_idle_error_validation PROPERTIES
+        LABELS "iso-free;renderer;vulkan-validation"
+        RESOURCE_LOCK kzgs_gpu
+        FAIL_REGULAR_EXPRESSION "Validation Error;SYNC-HAZARD")
+    kz_add_iso_free_test(kzgs_provider_present_validation kzgs_test
+        --provider-validation "$<TARGET_FILE:kzgs_mock_provider>"
+        --out "${KZ_TEST_STATE_DIR}/kzgs/provider")
+    set_tests_properties(kzgs_provider_present_validation PROPERTIES
+        LABELS "iso-free;renderer;vulkan-validation"
+        RESOURCE_LOCK kzgs_gpu
+        FAIL_REGULAR_EXPRESSION "Validation Error;SYNC-HAZARD")
+    set_property(TEST kzgs_provider_present_validation APPEND PROPERTY ENVIRONMENT
+        "VK_LAYER_VALIDATE_SYNC=0")
     kz_add_iso_free_test(kzgs_fsr1_vulkan_validation kzgs_fsr1_gpu_test)
     set_tests_properties(kzgs_fsr1_vulkan_validation PROPERTIES
         LABELS "iso-free;renderer;vulkan-validation"

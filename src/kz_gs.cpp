@@ -348,8 +348,10 @@ namespace
         s.reportedUpscaler = upscaler;
         s.hasReportedUpscaler = upscalerReported;
         const char *upscalerPipeline =
-            upscaler.effective != KzgsUpscaler::FSR1 ? "" :
-            upscaler.effectiveSharpening > 0 ? "\"fsr1_easu\",\"fsr1_rcas\"," : "\"fsr1_easu\",";
+            upscaler.effective == KzgsUpscaler::FSR1 ?
+                (upscaler.effectiveSharpening > 0 ? "\"fsr1_easu\",\"fsr1_rcas\"," : "\"fsr1_easu\",") :
+            upscaler.effective == KzgsUpscaler::DLSS ? "\"provider_dlss\"," :
+            upscaler.effective == KzgsUpscaler::XeSS ? "\"provider_xess\"," : "";
         const std::string adapter = jsonEscape(k.adapter);
         const auto envBool = [](const char *name, bool fallback)
         {
@@ -378,7 +380,8 @@ namespace
             "\"render_scale\":{\"mode\":\"%s\",\"configured\":%d,\"effective\":%d,"
             "\"native_height\":%d,\"target_height\":%d},"
             "\"presentation_upscaler\":{\"reported\":%s,\"requested\":\"%s\",\"effective\":\"%s\","
-            "\"reason\":\"%s\",\"sharpening_requested\":%d,\"sharpening_effective\":%d},"
+            "\"reason\":\"%s\",\"sharpening_requested\":%d,\"sharpening_effective\":%d,"
+            "\"provider_result\":%u,\"provider_reason\":%u,\"provider_native_code\":%d},"
             "\"output_resolution\":{\"width\":%d,\"height\":%d},"
             "\"pipeline\":[\"gs_merge\",\"aa\",\"sharp_prescale_if_upscaling\","
             "\"crop_aspect\",%s\"cas\",\"present_filter\"],"
@@ -399,6 +402,7 @@ namespace
             upscalerReported ? "true" : "false", kzgsUpscalerName(upscaler.requested),
             kzgsUpscalerName(upscaler.effective), kzgsUpscalerReasonName(upscaler.reason),
             upscaler.requestedSharpening, upscaler.effectiveSharpening,
+            upscaler.providerResult, upscaler.providerReason, upscaler.providerNativeCode,
             s.windowWidth, s.windowHeight, upscalerPipeline, aspectName(k.aspect),
             k.anisotropy, k.mipmapMode == KzgsMipmapMode::BaseOnly ? "base_only" : "ps2",
             detail.renderDistance, detail.lodScale,
@@ -423,7 +427,9 @@ namespace
         const KzgsUpscalerStatus &previous = s.reportedUpscaler;
         if (s.hasReportedUpscaler && current.requested == previous.requested &&
             current.effective == previous.effective && current.requestedSharpening == previous.requestedSharpening &&
-            current.effectiveSharpening == previous.effectiveSharpening && current.reason == previous.reason)
+            current.effectiveSharpening == previous.effectiveSharpening && current.reason == previous.reason &&
+            current.providerResult == previous.providerResult && current.providerReason == previous.providerReason &&
+            current.providerNativeCode == previous.providerNativeCode)
             return;
         s.reportedUpscaler = current;
         s.hasReportedUpscaler = true;

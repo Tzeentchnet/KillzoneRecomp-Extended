@@ -329,6 +329,7 @@ target_precompile_headers(kzgs_gs PRIVATE "${P2SRC}/PrecompiledHeader.h")
 add_library(kzgs STATIC
 	"${KZGS_ROOT}/src/kzgs.cpp"
 	"${KZGS_ROOT}/src/kzgs_upscaler.cpp"
+	"${KZGS_ROOT}/src/kzgs_provider_vulkan.cpp"
 	"${KZGS_ROOT}/src/kzgs_fsr1_math.cpp"
 	"${KZGS_ROOT}/src/kzgs_fsr1_vulkan.cpp"
 	"${KZGS_ROOT}/src/kz_smaa11.cpp"
@@ -337,6 +338,7 @@ add_library(kzgs STATIC
 	"${KZGS_ROOT}/src/kz_present12.cpp"
 	"${KZGS_ROOT}/src/kz_inspect.cpp"
 	"${KZGS_ROOT}/include/kzgs.h"
+	"${KZGS_ROOT}/include/kzgs_upscaler_provider.h"
 	$<TARGET_OBJECTS:kzgs_3rdparty>
 	$<TARGET_OBJECTS:kzgs_common>
 	$<TARGET_OBJECTS:kzgs_gs>
@@ -435,7 +437,21 @@ function(kzgs_stage_resources target)
 endfunction()
 
 if(KZGS_BUILD_TEST)
-	target_compile_definitions(kzgs PRIVATE KZGS_FSR1_TESTING)
+	target_compile_definitions(kzgs PRIVATE KZGS_FSR1_TESTING KZGS_PROVIDER_TESTING)
+	add_library(kzgs_mock_provider MODULE "${KZGS_ROOT}/test/kzgs_mock_provider.c")
+	set_target_properties(kzgs_mock_provider PROPERTIES PREFIX "")
+	target_include_directories(kzgs_mock_provider PRIVATE
+		"${KZGS_ROOT}/include" "${KZGS_ROOT}/test" "${P3}/vulkan/include")
+	target_compile_features(kzgs_mock_provider PRIVATE c_std_11)
+
+	add_executable(kzgs_provider_test "${KZGS_ROOT}/test/kzgs_provider_test.cpp")
+	target_include_directories(kzgs_provider_test PRIVATE "${KZGS_ROOT}/src" "${KZGS_ROOT}/test")
+	target_compile_definitions(kzgs_provider_test PRIVATE KZGS_PROVIDER_TESTING)
+	target_link_libraries(kzgs_provider_test PRIVATE "${_kzgs_component_link}" kzgs_flags)
+	target_precompile_headers(kzgs_provider_test PRIVATE "${P2SRC}/PrecompiledHeader.h")
+	add_dependencies(kzgs_provider_test kzgs_mock_provider)
+	kzgs_stage_resources(kzgs_provider_test)
+
 	add_executable(kzgs_fsr1_test "${KZGS_ROOT}/test/kzgs_fsr1_test.cpp" "${KZGS_ROOT}/src/kzgs_fsr1_math.cpp")
 	target_include_directories(kzgs_fsr1_test PRIVATE "${KZGS_ROOT}/src")
 	target_link_libraries(kzgs_fsr1_test PRIVATE kzgs_flags)
@@ -448,11 +464,12 @@ if(KZGS_BUILD_TEST)
 	kzgs_stage_resources(kzgs_fsr1_gpu_test)
 
 	add_executable(kzgs_test "${KZGS_ROOT}/test/kzgs_test.cpp")
-	target_include_directories(kzgs_test PRIVATE "${KZGS_ROOT}/src")
-	target_compile_definitions(kzgs_test PRIVATE KZGS_FSR1_TESTING)
+	target_include_directories(kzgs_test PRIVATE "${KZGS_ROOT}/src" "${KZGS_ROOT}/shim/include" "${P3}/vulkan/include")
+	target_compile_definitions(kzgs_test PRIVATE KZGS_FSR1_TESTING KZGS_PROVIDER_TESTING)
 	target_link_libraries(kzgs_test PRIVATE "${_kzgs_component_link}")
 	target_compile_features(kzgs_test PRIVATE cxx_std_20)
 	target_compile_definitions(kzgs_test PRIVATE KZGS_TEST_OUT_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-output")
+	add_dependencies(kzgs_test kzgs_mock_provider)
 	kzgs_stage_resources(kzgs_test)
 
 	add_executable(kzgs_palette_test "${KZGS_ROOT}/test/kzgs_palette_test.cpp")

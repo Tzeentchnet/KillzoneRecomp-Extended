@@ -84,11 +84,16 @@ def validate_upscaler_pipeline(effective_config: dict[str, Any]) -> None:
                 raise ValueError(f"presentation_upscaler.{key} must be an integer from 0 to 100")
         if upscaler["reported"] and upscaler["effective"] == "off" and upscaler["sharpening_effective"] != 0:
             raise ValueError("a disabled presentation upscaler cannot apply provider sharpening")
+        for key in ("provider_result", "provider_reason", "provider_native_code"):
+            if key in upscaler and (isinstance(upscaler[key], bool) or not isinstance(upscaler[key], int)):
+                raise ValueError(f"presentation_upscaler.{key} must be an integer")
         if upscaler["effective"] == "fsr1":
             passes = ["fsr1_easu"]
             if upscaler["sharpening_effective"]:
                 passes.append("fsr1_rcas")
             expected_pipeline[4:4] = passes
+        elif upscaler["effective"] in {"dlss", "xess"}:
+            expected_pipeline[4:4] = [f"provider_{upscaler['effective']}"]
     if (
         "pipeline" in effective_config
         or "render_scale" in effective_config
@@ -376,6 +381,17 @@ def test_upscaler_pipeline() -> None:
         pass
     else:
         raise ValueError("self-test accepted an active FSR1 status without its pipeline")
+    for provider in ("dlss", "xess"):
+        status.update(requested=provider, effective=provider, sharpening_effective=0)
+        config["pipeline"] = PIPELINE_ORDER[:4] + [f"provider_{provider}"] + PIPELINE_ORDER[4:]
+        validate_upscaler_pipeline(config)
+    status["provider_result"] = "invalid"
+    try:
+        validate_upscaler_pipeline(config)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("self-test accepted a non-integer provider result")
 
 
 def self_test() -> None:

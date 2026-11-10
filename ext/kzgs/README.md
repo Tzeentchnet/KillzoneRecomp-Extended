@@ -96,7 +96,8 @@ bool kzgsBurstTake(std::vector<KzgsBurstFrame>& out);
 - `renderer`: D3D11, D3D12, Vulkan, or Software (PCSX2's software rasterizer, useful as a reference when debugging)
 - `upscale`: 1 to 8
 - `upscaler` and `upscalerSharpening`: experimental presentation request, default Off/0; independent of integer
-  `upscale` and `casSharpness`. FSR1 is implemented on Vulkan; DLSS/XeSS and non-Vulkan requests fall back.
+  `upscale` and `casSharpness`. FSR1 is implemented on Vulkan. DLSS/XeSS require an optional external Vulkan provider;
+  no vendor adapter is bundled, and non-Vulkan requests fall back.
 - `textureFiltering`: PCSX2 `BiFiltering`
 - `anisotropy`
 - `fxaa`
@@ -124,6 +125,11 @@ FSR1 sharpening 0 skips RCAS; 1..100 maps linearly from 2 to 0 attenuation stops
 Presented-size readbacks and Vulkan negative-size bursts recomposite the completed post-FSR/post-CAS texture without
 redispatching the upscaler; they are not literal swapchain-image readbacks. Surfaceless Vulkan retains the existing
 readback behavior and reports `no_surface`.
+
+The [provider ABI](../../docs/upscaler-provider-abi.md) negotiates optional Vulkan extensions/features before device
+creation, records into a borrowed command buffer, and retires provider contexts only after actual GPU completion.
+Current frames supply color only and identify its encoding as unknown; providers requiring temporal inputs or a known
+encoding fall back. The in-tree provider is a test-only blit, not a DLSS or XeSS implementation.
 
 The EASU and RCAS pipelines use independently compiled entry points, not Vulkan specialization constants. AMD's
 unmodified MIT-licensed FSR 1 headers, source commit, hashes, and notice are in `third_party/fsr1`; resource staging

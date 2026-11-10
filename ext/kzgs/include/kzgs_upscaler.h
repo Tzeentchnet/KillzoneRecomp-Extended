@@ -3,6 +3,7 @@
 #pragma once
 
 #include <iosfwd>
+#include <cstdint>
 #include <optional>
 #include <string_view>
 
@@ -32,6 +33,18 @@ enum class KzgsUpscalerReason
 	InitializationFailed,
 	DispatchFailed,
 	PresentFailed,
+	ProviderMissing,
+	ProviderVersionMismatch,
+	ProviderInvalid,
+	InstanceExtensionUnavailable,
+	DeviceExtensionUnavailable,
+	DeviceFeatureUnavailable,
+	RequiredInputUnavailable,
+	UnsupportedColorEncoding,
+	DeviceRecreationRequired,
+	DuplicatePresent,
+	ResetFailed,
+	DeviceLost,
 };
 
 struct KzgsUpscalerStatus
@@ -41,6 +54,10 @@ struct KzgsUpscalerStatus
 	int requestedSharpening = 0;
 	int effectiveSharpening = 0;
 	KzgsUpscalerReason reason = KzgsUpscalerReason::Disabled;
+	uint32_t providerResult = 0;
+	uint32_t providerReason = 0;
+	int32_t providerNativeCode = 0;
+	char providerMessage[192]{};
 };
 
 const char* kzgsUpscalerName(KzgsUpscaler provider);

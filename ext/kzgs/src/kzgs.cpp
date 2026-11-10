@@ -4,6 +4,7 @@
 #include "kzgs.h"
 #include "kzgs_fsr1_runtime.h"
 #include "kzgs_internal.h"
+#include "kzgs_provider_runtime.h"
 
 #include "GS/GS.h"
 #include "GS/GSRegs.h"
@@ -176,10 +177,23 @@ namespace
 			cfg.renderer == KzgsRenderer::Vulkan;
 		const bool fsr1 = requestedFsr1Vulkan && g_gs_device &&
 			g_gs_device->GetRenderAPI() == RenderAPI::Vulkan && GSIsHardwareRenderer();
+		const bool vulkan = cfg.renderer == KzgsRenderer::Vulkan && g_gs_device &&
+			g_gs_device->GetRenderAPI() == RenderAPI::Vulkan && GSIsHardwareRenderer();
 		status.reason = cfg.upscaler == KzgsUpscaler::Off ? KzgsUpscalerReason::Disabled :
 			fsr1 ? (g_gs_device->HasSurface() ? KzgsUpscalerReason::WaitingForFrame :
 				KzgsUpscalerReason::NoSurface) : requestedFsr1Vulkan ? KzgsUpscalerReason::InitializationFailed :
 				KzgsUpscalerReason::NotImplemented;
+		kzgs::ProviderStop();
+		kzgs::Fsr1Configure(fsr1, cfg.upscalerSharpening);
+		if (cfg.upscaler == KzgsUpscaler::DLSS || cfg.upscaler == KzgsUpscaler::XeSS)
+		{
+			const kzgs::ProviderStatus provider = kzgs::ProviderConfigure(cfg.upscaler, vulkan, cfg.upscalerSharpening);
+			status.reason = provider.reason;
+			status.providerResult = provider.result;
+			status.providerReason = provider.providerReason;
+			status.providerNativeCode = provider.nativeCode;
+			std::memcpy(status.providerMessage, provider.message, sizeof(status.providerMessage));
+		}
 		bool changed;
 		{
 			std::lock_guard lock(s_upscaler_mutex);
@@ -187,12 +201,22 @@ namespace
 				status.requestedSharpening != s_upscaler_status.requestedSharpening;
 			s_upscaler_status = status;
 		}
-		kzgs::Fsr1Configure(fsr1, cfg.upscalerSharpening);
 		if (changed && status.reason == KzgsUpscalerReason::NotImplemented)
 		{
 			const std::string message = std::string("experimental presentation upscaler ") +
 				kzgsUpscalerName(status.requested) +
 				" is not implemented; using existing presentation (provider sharpening inactive)";
+			if (s_log_fn)
+				s_log_fn(1, message.c_str());
+			else
+				std::fprintf(stderr, "[kzgs] %s\n", message.c_str());
+		}
+		else if (changed && status.requested != KzgsUpscaler::Off && status.reason != KzgsUpscalerReason::WaitingForFrame &&
+			status.reason != KzgsUpscalerReason::NoSurface && !fsr1)
+		{
+			const std::string message = std::string("Vulkan provider fallback: ") +
+				kzgsUpscalerReasonName(status.reason) +
+				(status.providerMessage[0] ? std::string(" (") + status.providerMessage + ")" : "");
 			if (s_log_fn)
 				s_log_fn(1, message.c_str());
 			else
@@ -218,6 +242,43 @@ namespace
 		if (changed)
 		{
 			const std::string message = std::string("Vulkan FSR1: ") + kzgsUpscalerReasonName(reason);
+			if (s_log_fn)
+				s_log_fn(applied ? 2 : 1, message.c_str());
+			else
+				std::fprintf(stderr, "[kzgs] %s\n", message.c_str());
+		}
+	}
+
+	static void ReportProvider(const kzgs::ProviderStatus& provider, bool applied)
+	{
+		bool changed = false;
+		KzgsUpscaler requested = KzgsUpscaler::Off;
+		{
+			std::lock_guard lock(s_upscaler_mutex);
+			requested = s_upscaler_status.requested;
+			if (requested != KzgsUpscaler::DLSS && requested != KzgsUpscaler::XeSS)
+				return;
+			const KzgsUpscaler effective = applied ? requested : KzgsUpscaler::Off;
+			const int sharpening = applied ? s_upscaler_status.requestedSharpening : 0;
+			changed = s_upscaler_status.reason != provider.reason || s_upscaler_status.effective != effective ||
+				s_upscaler_status.effectiveSharpening != sharpening ||
+				s_upscaler_status.providerResult != provider.result ||
+				s_upscaler_status.providerReason != provider.providerReason ||
+				s_upscaler_status.providerNativeCode != provider.nativeCode ||
+				std::strncmp(s_upscaler_status.providerMessage, provider.message, sizeof(provider.message)) != 0;
+			s_upscaler_status.reason = provider.reason;
+			s_upscaler_status.effective = effective;
+			s_upscaler_status.effectiveSharpening = sharpening;
+			s_upscaler_status.providerResult = provider.result;
+			s_upscaler_status.providerReason = provider.providerReason;
+			s_upscaler_status.providerNativeCode = provider.nativeCode;
+			std::memcpy(s_upscaler_status.providerMessage, provider.message, sizeof(provider.message));
+		}
+		if (changed)
+		{
+			const std::string message = std::string("Vulkan ") + kzgsUpscalerName(requested) + " provider: " +
+				kzgsUpscalerReasonName(provider.reason) +
+				(provider.message[0] ? std::string(" (") + provider.message + ")" : "");
 			if (s_log_fn)
 				s_log_fn(applied ? 2 : 1, message.c_str());
 			else
@@ -773,7 +834,9 @@ namespace
 					if (s_present_log_path) QueryPerformanceCounter(&t0);
 					s_cur_field = static_cast<int>(hdr.a);
 					ApplyFrameAspect((hdr.b & 2u) != 0);
+					kzgs::ProviderBeginVsync();
 					GSvsync(hdr.a, (hdr.b & 1u) != 0);
+					kzgs::ProviderEndVsync();
 					PublishResolutionInfo();
 					if (s_present_log_path)
 					{
@@ -821,11 +884,13 @@ namespace
 
 				case Cmd::Reset:
 					kzgs::Fsr1InvalidateCapture();
+					kzgs::ProviderReset(KZGS_PROVIDER_RESET_GAME);
 					GSreset(true);
 					break;
 
 				case Cmd::Resize:
 					kzgs::Fsr1InvalidateCapture();
+					kzgs::ProviderReset(KZGS_PROVIDER_RESET_RESIZE);
 					if (GSHasDisplayWindow())
 						GSResizeDisplayWindow(hdr.a, hdr.b, g_gs_device->GetWindowScale());
 					break;
@@ -835,6 +900,7 @@ namespace
 					u64 p;
 					std::memcpy(&p, payload, sizeof(p));
 					std::unique_ptr<KzgsConfig> cfg(reinterpret_cast<KzgsConfig*>(p));
+					kzgs::ProviderStop();
 					kzgs::Fsr1Configure(false, 0);
 					const Pcsx2Config::GSOptions opts = MakeOptions(*cfg);
 					const bool vsync_changed = (opts.VsyncEnable != GSConfig.VsyncEnable);
@@ -916,11 +982,13 @@ namespace
 		}
 
 		kzgs::ClearLastError();
+		kzgs::ProviderPrepare(cfg.upscaler, cfg.renderer == KzgsRenderer::Vulkan, &ReportProvider);
 		kzgs::Fsr1InstallDeviceHooks(&ReportFsr1);
 		const bool ok = GSopen(opts, opts.Renderer, s_gs_regs, opts.VsyncEnable ? GSVSyncMode::FIFO : GSVSyncMode::Disabled, false);
 		if (!ok)
 		{
 			kzgs::Fsr1RemoveDeviceHooks();
+			kzgs::ProviderRemove();
 			result->error = kzgs::GetLastError();
 			if (result->error.empty())
 				result->error = "GSopen failed";
@@ -939,6 +1007,7 @@ namespace
 		kzgs::PresentCapture(nullptr);
 		GSclose();
 		kzgs::Fsr1RemoveDeviceHooks();
+		kzgs::ProviderRemove();
 	}
 } // namespace
 

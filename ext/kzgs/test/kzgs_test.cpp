@@ -11,6 +11,10 @@
 
 #include "kzgs.h"
 #include "kzgs_fsr1_runtime.h"
+#include "kzgs_internal.h"
+#include "kzgs_mock_control.h"
+#include "kzgs_provider_test_hooks.h"
+#include "kzgs_upscaler_provider.h"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -757,6 +761,175 @@ static void CheckFsr1Vulkan(HWND hwnd, KzgsConfig& cfg, const std::vector<uint8_
 	kzgsSync();
 }
 
+static void CheckProviderVulkan(HWND hwnd, const std::string& path, const std::vector<uint8_t>& scene)
+{
+	std::printf("== Vulkan provider renderer integration\n");
+	const std::wstring dllPath = std::filesystem::absolute(path).wstring();
+	HMODULE module = LoadLibraryExW(dllPath.c_str(), nullptr,
+		LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+	const auto setMode = module ? reinterpret_cast<KzgsMockSetMode>(GetProcAddress(module, "kzgs_mock_set_mode")) : nullptr;
+	const auto getStats = module ? reinterpret_cast<KzgsMockGetStats>(GetProcAddress(module, "kzgs_mock_get_stats")) : nullptr;
+	if (!module || !setMode || !getStats)
+	{
+		std::printf("  FAIL mock provider could not be loaded\n");
+		++g_failures;
+		if (module)
+			FreeLibrary(module);
+		return;
+	}
+	const auto stats = [&]() {
+		KzgsMockStats value{};
+		getStats(&value);
+		return value;
+	};
+	const auto check = [](bool condition, const char* message) {
+		std::printf("  %s %s\n", condition ? "ok  " : "FAIL", message);
+		if (!condition)
+			++g_failures;
+	};
+
+	setMode(0);
+	kzgs::ProviderTestSetPath(dllPath.c_str());
+	ResizeTestWindowUnconstrained(hwnd, 1003, 757);
+	KzgsConfig cfg;
+	cfg.renderer = KzgsRenderer::Vulkan;
+	cfg.upscaler = KzgsUpscaler::DLSS;
+	cfg.debugDevice = true;
+	cfg.vsync = false;
+	cfg.bilinearPresent = true;
+	std::string error;
+	if (!kzgsOpen(kz::host::NativeWindow::win32(hwnd), cfg, g_regs, &error))
+	{
+		std::printf("  FAIL Vulkan provider open: %s\n", error.c_str());
+		++g_failures;
+		kzgs::ProviderTestSetPath(nullptr);
+		FreeLibrary(module);
+		return;
+	}
+	CheckUpscalerStatus(KzgsUpscaler::DLSS, 0, KzgsUpscalerReason::WaitingForFrame);
+	PresentFrames(scene, 2, 3);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::DLSS, 0, KzgsUpscalerReason::Active, KzgsUpscaler::DLSS);
+	KzgsMockStats previous = stats();
+	check(previous.creates > 0 && previous.evaluates > 0, "renderer dispatched provider and presented");
+	std::vector<uint8_t> providerCapture, repeatedCapture;
+	if (ReadPresented(providerCapture, 1003, 757) && ReadPresented(repeatedCapture, 1003, 757))
+		check(providerCapture == repeatedCapture && stats().evaluates == previous.evaluates,
+			"presented readback retains provider output without redispatch");
+	kzgsBurstArm(1, -1, -1);
+	PresentFrames(scene, 1, 3);
+	kzgsSync();
+	std::vector<KzgsBurstFrame> captured;
+	std::vector<uint8_t> completedCapture;
+	if (kzgsBurstTake(captured) && captured.size() == 1 && ReadPresented(completedCapture, 1003, 757))
+		check(captured[0].rgba == completedCapture, "provider burst captures completed presented output");
+	else
+		check(false, "provider burst captures completed presented output");
+	previous = stats();
+
+	kzgsVsync(0, false);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::DLSS, 0, KzgsUpscalerReason::DuplicatePresent);
+	check(stats().evaluates == previous.evaluates, "idle VSync does not dispatch a possible duplicate");
+	PresentFrames(scene, 1, 3);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::DLSS, 0, KzgsUpscalerReason::Active, KzgsUpscaler::DLSS);
+	check(stats().last_reset_reason == KZGS_PROVIDER_RESET_DISCONTINUITY, "idle VSync resets temporal history");
+
+	previous = stats();
+	kzgs::RunOnGSThread([] { kzgs::ProviderTestRedraw(); });
+	CheckUpscalerStatus(KzgsUpscaler::DLSS, 0, KzgsUpscalerReason::DuplicatePresent);
+	check(stats().evaluates == previous.evaluates, "renderer redraw does not dispatch twice");
+	std::vector<uint8_t> redrawCapture;
+	ReadPresented(redrawCapture, 1003, 757);
+	PresentFrames(scene, 1, 3);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::DLSS, 0, KzgsUpscalerReason::Active, KzgsUpscaler::DLSS);
+
+	cfg.upscaler = KzgsUpscaler::Off;
+	kzgsUpdateConfig(cfg);
+	kzgsSync();
+	previous = stats();
+	bool reopenedWhileOff = false;
+	kzgs::RunOnGSThread([&] { reopenedWhileOff = kzgs::ProviderTestReopenDevice(); });
+	check(reopenedWhileOff, "device can be recreated while the provider is off");
+	PresentFrames(scene, 1, 3);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::Off, 0, KzgsUpscalerReason::Disabled);
+	check(stats().evaluates == previous.evaluates, "device recreation does not reactivate a disabled provider");
+	std::vector<uint8_t> baseline, fallback;
+	ReadPresented(baseline, 1003, 757);
+	check(!providerCapture.empty() && providerCapture != baseline,
+		"presented provider capture differs from the native fallback");
+	cfg.upscaler = KzgsUpscaler::DLSS;
+	kzgsUpdateConfig(cfg);
+	kzgsSync();
+	setMode(MOCK_EVALUATE_FAILURE);
+	PresentFrames(scene, 1, 3);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::DLSS, 0, KzgsUpscalerReason::DispatchFailed);
+	if (ReadPresented(fallback, 1003, 757))
+		check(!baseline.empty() && fallback == baseline, "dispatch failure preserves native presentation");
+	setMode(0);
+	PresentFrames(scene, 1, 3);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::DLSS, 0, KzgsUpscalerReason::Active, KzgsUpscaler::DLSS);
+
+	previous = stats();
+	ResizeTestWindowUnconstrained(hwnd, 1101, 801);
+	kzgsResize(1101, 801);
+	PresentFrames(scene, 1, 3);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::DLSS, 0, KzgsUpscalerReason::Active, KzgsUpscaler::DLSS);
+	const KzgsMockStats resized = stats();
+	check(resized.last_reset_reason == KZGS_PROVIDER_RESET_RESIZE &&
+		(resized.last_output_width != previous.last_output_width ||
+			resized.last_output_height != previous.last_output_height), "resize recreates provider output");
+
+	kzgsReset();
+	PresentFrames(scene, 2, 3);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::DLSS, 0, KzgsUpscalerReason::Active, KzgsUpscaler::DLSS);
+	check(stats().last_reset_reason == KZGS_PROVIDER_RESET_GAME, "GS reset recreates temporal history");
+
+	setMode(MOCK_DEVICE_LOST);
+	PresentFrames(scene, 1, 3);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::DLSS, 0, KzgsUpscalerReason::DeviceLost);
+	previous = stats();
+	setMode(0);
+	PresentFrames(scene, 1, 3);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::DLSS, 0, KzgsUpscalerReason::DeviceLost);
+	check(stats().evaluates == previous.evaluates, "lost device is not retried");
+	cfg.upscalerSharpening = 1;
+	kzgsUpdateConfig(cfg);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::DLSS, 1, KzgsUpscalerReason::DeviceLost);
+	bool reopened = false;
+	kzgs::RunOnGSThread([&] { reopened = kzgs::ProviderTestReopenDevice(); });
+	check(reopened, "PCSX2 recreated the Vulkan device");
+	if (reopened)
+	{
+		PresentFrames(scene, 2, 3);
+		kzgsSync();
+		CheckUpscalerStatus(KzgsUpscaler::DLSS, 1, KzgsUpscalerReason::Active, KzgsUpscaler::DLSS);
+		check(stats().evaluates > previous.evaluates && stats().last_sharpening == 1,
+			"provider resumes with updated settings on the recreated device");
+	}
+
+	kzgsClose();
+	CheckUpscalerClosed();
+	const KzgsMockStats closed = stats();
+	check(closed.unsafe_destroys == 0 && closed.destroys == closed.creates,
+		"all provider contexts retire after GPU completion");
+	check(g_vulkan_validation_seen.load() && !g_vulkan_validation_unavailable.load() &&
+		g_vulkan_validation_errors.load() == 0, "standard Vulkan validation is clean");
+	kzgs::ProviderTestSetPath(nullptr);
+	FreeLibrary(module);
+	check(GetModuleHandleW(dllPath.c_str()) == nullptr, "provider DLL unloaded after close");
+}
+
 int main(int argc, char** argv)
 {
 	KzgsConfig cfg;
@@ -765,6 +938,7 @@ int main(int argc, char** argv)
 	bool golden_only = false;
 	bool fsr1_validation = false;
 	std::string synthetic_trace;
+	std::string provider_validation;
 	int frames = 4;
 	int stress_uploads = 2600; // x 16 KB = ~41 MB of GIF data, more than the 32 MB ring
 	for (int i = 1; i < argc; i++)
@@ -782,6 +956,8 @@ int main(int argc, char** argv)
 			golden_only = g_check_golden = true;
 		else if (a == "--fsr1-validation")
 			fsr1_validation = true;
+		else if (a == "--provider-validation" && i + 1 < argc)
+			provider_validation = argv[++i];
 		else if (a == "--write-synthetic-trace" && i + 1 < argc)
 			synthetic_trace = argv[++i];
 		else if (a == "--out" && i + 1 < argc)
@@ -838,6 +1014,13 @@ int main(int argc, char** argv)
 
 	kzgsSetLogCallback(&Log);
 	SetupNTSC640x448();
+	if (!provider_validation.empty())
+	{
+		CheckProviderVulkan(hwnd, provider_validation, BuildScene());
+		DestroyWindow(hwnd);
+		std::printf("%s: provider renderer integration\n", g_failures ? "FAIL" : "PASS");
+		return g_failures ? 1 : 0;
+	}
 	cfg.vsync = vsync;
 	cfg.upscale = 1;
 	cfg.bilinearPresent = false;
@@ -915,7 +1098,9 @@ int main(int argc, char** argv)
 		kzgsSync();
 		CheckUpscalerStatus(provider, 100,
 			provider == KzgsUpscaler::FSR1 && cfg.renderer == KzgsRenderer::Vulkan ?
-				KzgsUpscalerReason::WaitingForFrame : KzgsUpscalerReason::NotImplemented);
+				KzgsUpscalerReason::WaitingForFrame :
+			cfg.renderer == KzgsRenderer::Vulkan && provider != KzgsUpscaler::FSR1 ?
+				KzgsUpscalerReason::DeviceRecreationRequired : KzgsUpscalerReason::NotImplemented);
 		if (golden_only && provider == KzgsUpscaler::FSR1 && cfg.renderer != KzgsRenderer::Vulkan)
 		{
 			std::vector<uint8_t> fallback_backbuffer;
@@ -930,7 +1115,8 @@ int main(int argc, char** argv)
 	invalid.upscalerSharpening = -1;
 	kzgsUpdateConfig(invalid);
 	kzgsSync();
-	CheckUpscalerStatus(KzgsUpscaler::XeSS, 100, KzgsUpscalerReason::NotImplemented);
+	CheckUpscalerStatus(KzgsUpscaler::XeSS, 100, cfg.renderer == KzgsRenderer::Vulkan ?
+		KzgsUpscalerReason::DeviceRecreationRequired : KzgsUpscalerReason::NotImplemented);
 	cfg.upscaler = KzgsUpscaler::Off;
 	cfg.upscalerSharpening = 75;
 	kzgsUpdateConfig(cfg);

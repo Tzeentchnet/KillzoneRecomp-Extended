@@ -7,6 +7,7 @@
 #include <vector>
 
 class GSTexture;
+struct GSPresentationUpscaleFrame;
 
 namespace kzgs
 {
@@ -16,6 +17,7 @@ namespace kzgs
 	void Fsr1RemoveDeviceHooks();
 	void Fsr1Configure(bool enabled, int sharpening);
 	void Fsr1InvalidateCapture();
+	void Fsr1CachePresentedFrame(const GSPresentationUpscaleFrame& frame);
 	bool Fsr1CanCapture();
 
 	enum class Fsr1ReadbackResult { Unavailable, Success, Failed };

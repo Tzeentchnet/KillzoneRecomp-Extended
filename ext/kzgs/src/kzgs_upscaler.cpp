@@ -65,6 +65,18 @@ const char* kzgsUpscalerReasonName(KzgsUpscalerReason reason)
 		case KzgsUpscalerReason::InitializationFailed: return "initialization_failed";
 		case KzgsUpscalerReason::DispatchFailed: return "dispatch_failed";
 		case KzgsUpscalerReason::PresentFailed: return "present_failed";
+		case KzgsUpscalerReason::ProviderMissing: return "provider_missing";
+		case KzgsUpscalerReason::ProviderVersionMismatch: return "provider_version_mismatch";
+		case KzgsUpscalerReason::ProviderInvalid: return "provider_invalid";
+		case KzgsUpscalerReason::InstanceExtensionUnavailable: return "instance_extension_unavailable";
+		case KzgsUpscalerReason::DeviceExtensionUnavailable: return "device_extension_unavailable";
+		case KzgsUpscalerReason::DeviceFeatureUnavailable: return "device_feature_unavailable";
+		case KzgsUpscalerReason::RequiredInputUnavailable: return "required_input_unavailable";
+		case KzgsUpscalerReason::UnsupportedColorEncoding: return "unsupported_color_encoding";
+		case KzgsUpscalerReason::DeviceRecreationRequired: return "device_recreation_required";
+		case KzgsUpscalerReason::DuplicatePresent: return "duplicate_present";
+		case KzgsUpscalerReason::ResetFailed: return "reset_failed";
+		case KzgsUpscalerReason::DeviceLost: return "device_lost";
 	}
 	return "unknown";
 }
