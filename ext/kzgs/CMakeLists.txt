@@ -334,6 +334,8 @@ target_precompile_headers(kzgs_gs PRIVATE "${P2SRC}/PrecompiledHeader.h")
 add_library(kzgs STATIC
 	"${KZGS_ROOT}/src/kzgs.cpp"
 	"${KZGS_ROOT}/src/kzgs_upscaler.cpp"
+	"${KZGS_ROOT}/src/kzgs_temporal_contract.cpp"
+	"${KZGS_ROOT}/src/kzgs_temporal_runtime.cpp"
 	"${KZGS_ROOT}/src/kzgs_provider_vulkan.cpp"
 	"${KZGS_ROOT}/src/kzgs_fsr1_math.cpp"
 	"${KZGS_ROOT}/src/kzgs_fsr1_vulkan.cpp"
@@ -343,6 +345,7 @@ add_library(kzgs STATIC
 	"${KZGS_ROOT}/src/kz_present12.cpp"
 	"${KZGS_ROOT}/src/kz_inspect.cpp"
 	"${KZGS_ROOT}/include/kzgs.h"
+	"${KZGS_ROOT}/include/kzgs_temporal.h"
 	"${KZGS_ROOT}/include/kzgs_upscaler_provider.h"
 	$<TARGET_OBJECTS:kzgs_3rdparty>
 	$<TARGET_OBJECTS:kzgs_common>
@@ -492,6 +495,11 @@ if(KZGS_BUILD_TEST)
 	add_executable(kzgs_fsr1_test "${KZGS_ROOT}/test/kzgs_fsr1_test.cpp" "${KZGS_ROOT}/src/kzgs_fsr1_math.cpp")
 	target_include_directories(kzgs_fsr1_test PRIVATE "${KZGS_ROOT}/src")
 	target_link_libraries(kzgs_fsr1_test PRIVATE kzgs_flags)
+
+	add_executable(kzgs_temporal_contract_test "${KZGS_ROOT}/test/kzgs_temporal_contract_test.cpp"
+		"${KZGS_ROOT}/src/kzgs_temporal_contract.cpp")
+	target_include_directories(kzgs_temporal_contract_test PRIVATE "${KZGS_ROOT}/src" "${KZGS_ROOT}/include")
+	target_link_libraries(kzgs_temporal_contract_test PRIVATE kzgs_flags)
 
 	add_executable(kzgs_fsr1_gpu_test "${KZGS_ROOT}/test/kzgs_fsr1_gpu_test.cpp")
 	target_include_directories(kzgs_fsr1_gpu_test PRIVATE "${KZGS_ROOT}/src")

@@ -11,6 +11,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <mutex>
+#include <vector>
 
 // Game functions (SCUS-97402; PAL addresses in kz_addrs.cpp), found with Ghidra (docs/findings.md "Ultrawide"):
 //   0x1C1960 renders the 3D world for one view slot (a0 game, a1 render slot, a2 camera object, a3 render camera). The camera
@@ -49,6 +52,12 @@ namespace
     // when the frame's build ends (the frame limiter 0x1BFF10 runs once per main-loop pass) and read when that buffer is kicked.
     bool g_bufWide[2] = {false, false};
     bool g_bufValid[2] = {false, false};
+    bool g_temporalDiagnostics = false;
+    KzgsTemporalGuestObservation g_temporalBuilding{}, g_temporalBuffers[2]{}, g_temporalLatched{};
+    bool g_temporalBufferValid[2] = {false, false};
+    uint64_t g_temporalNextBuild = 0, g_temporalCameraId = 0;
+    uint32_t g_temporalCameraAddress = 0;
+    std::mutex g_temporalLatchMutex;
     bool g_built = false; // something was drawn since the last limiter call
     std::atomic<bool> g_latched{false};
     bool g_inViewmodel = false;
@@ -111,6 +120,71 @@ namespace
     }
     void wrF(uint8_t *rdram, uint32_t a, float v) { std::memcpy(rdram + (a & kRamMask), &v, 4); }
     bool ramPtr(uint32_t a) { return a >= 0x00100000u && a < 0x02000000u; }
+
+    void observeCamera(const uint8_t *rdram, uint32_t cam)
+    {
+        if (!g_temporalDiagnostics)
+            return;
+        g_temporalBuilding.flags |= KZGS_TEMPORAL_GUEST_WORLD;
+        if (!ramPtr(cam) || cam > 0x02000000u - 0x78u)
+        {
+            g_temporalBuilding.flags |= KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA;
+            g_temporalBuilding.flags &= ~KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE;
+            return;
+        }
+        if (cam != g_temporalCameraAddress)
+        {
+            g_temporalCameraAddress = cam;
+            ++g_temporalCameraId;
+        }
+        if (g_temporalBuilding.cameraId && g_temporalBuilding.cameraId != g_temporalCameraId)
+        {
+            g_temporalBuilding.flags |= KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA;
+            g_temporalBuilding.flags &= ~KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE;
+            return;
+        }
+        g_temporalBuilding.cameraId = g_temporalCameraId;
+        const float nearPlane = rdF(rdram, cam + 0x68);
+        const float farPlane = rdF(rdram, cam + 0x6C);
+        const float fov = rdF(rdram, cam + 0x70);
+        const float aspect = rdF(rdram, cam + 0x74);
+        const bool valid = std::isfinite(nearPlane) && std::isfinite(farPlane) && std::isfinite(fov) &&
+            std::isfinite(aspect) && nearPlane > 0.0f && farPlane > nearPlane &&
+            fov > 0.0f && fov < 170.0f && aspect > 0.0f;
+        const bool changed = (g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE) &&
+            (nearPlane != g_temporalBuilding.nearPlane || farPlane != g_temporalBuilding.farPlane ||
+             fov != g_temporalBuilding.verticalFovDegrees || aspect != g_temporalBuilding.aspect);
+        if (!valid || changed)
+        {
+            g_temporalBuilding.flags |= KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA;
+            g_temporalBuilding.flags &= ~KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE;
+        }
+        else if (!(g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA))
+        {
+            g_temporalBuilding.nearPlane = nearPlane;
+            g_temporalBuilding.farPlane = farPlane;
+            g_temporalBuilding.verticalFovDegrees = fov;
+            g_temporalBuilding.aspect = aspect;
+            g_temporalBuilding.flags |= KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE;
+        }
+    }
+
+    void captureTemporalBuild(uint32_t idx)
+    {
+        g_temporalBuilding.buildId = ++g_temporalNextBuild;
+        g_temporalBuffers[idx] = g_temporalBuilding;
+        g_temporalBufferValid[idx] = true;
+        g_temporalBuilding = {};
+    }
+
+    void latchTemporalBuild(uint32_t idx)
+    {
+        if (!g_temporalBufferValid[idx])
+            return;
+        std::lock_guard lock(g_temporalLatchMutex);
+        g_temporalLatched = g_temporalBuffers[idx];
+        g_temporalBufferValid[idx] = false;
+    }
 
     void flushPending(uint8_t *rdram)
     {
@@ -180,6 +254,7 @@ namespace
                     fovChanged = true;
                 }
             }
+            observeCamera(rdram, cam);
         }
         const uint32_t ra = getRegU32(ctx, 31);
         g_origWorld(rdram, ctx, rt);
@@ -220,6 +295,8 @@ namespace
         const bool entry = ctx->pc == kzAddrs().viewmodel;
         if (entry)
         {
+            if (g_temporalDiagnostics)
+                g_temporalBuilding.flags |= KZGS_TEMPORAL_GUEST_VIEWMODEL;
             flushPending(rdram);
             logEv("viewmodel");
             g_vmWide = g_worldWide;
@@ -263,6 +340,8 @@ namespace
     {
         if (ctx->pc == kzAddrs().ortho)
         {
+            if (g_temporalDiagnostics)
+                g_temporalBuilding.flags |= KZGS_TEMPORAL_GUEST_2D;
             flushPending(rdram);
             g_built = true;
             // The render context lives in scratchpad (0x70003A00), so the viewport width is not read: the frame is 512 wide.
@@ -316,6 +395,11 @@ namespace
             flushPending(rdram);
         if (ctx->pc == a.frameLimiter)
             logEv("limiter", (rd32(rdram, a.bufferIndex) & 1u) | (g_built ? 0x10u : 0u) | (g_worldWide ? 0x100u : 0u));
+        if (ctx->pc == a.frameLimiter && g_temporalDiagnostics && (g_built || g_temporalBuilding.flags))
+        {
+            const uint32_t idx = rd32(rdram, a.bufferIndex) & 1u;
+            captureTemporalBuild(idx);
+        }
         if (ctx->pc == a.frameLimiter && g_built)
         {
             g_built = false;
@@ -351,6 +435,8 @@ namespace
                 g_latched.store(g_bufWide[idx], std::memory_order_relaxed);
                 g_bufValid[idx] = false;
             }
+            if (g_temporalDiagnostics && g_temporalBufferValid[idx])
+                latchTemporalBuild(idx);
             logEv("kick", idx, g_latched.load(std::memory_order_relaxed) ? 1.0f : 0.0f);
         }
         g_origKick(rdram, ctx, rt);
@@ -423,6 +509,14 @@ void kzWideSetTargetAspect(float aspect)
 
 bool kzWideTakeFrameFlag() { return g_latched.load(std::memory_order_relaxed); }
 
+KzgsTemporalGuestObservation kzWideTakeTemporalObservation()
+{
+    if (!g_temporalDiagnostics)
+        return {};
+    std::lock_guard lock(g_temporalLatchMutex);
+    return g_temporalLatched;
+}
+
 float kzFovNativeWorld() { return hFrom(56.25f); }
 float kzFovNativeWeapon() { return hFrom(45.0f); }
 
@@ -480,11 +574,75 @@ int kzWideSelfTest()
     check(near(scaleFov(56.25f, 1.0f), 56.25f, 0.00001f) &&
               near(scaleFov(zoomRadians, 1.0f), zoomRadians, 0.00001f),
           "unit FOV scale is a no-op");
+
+    const bool savedDiagnostics = g_temporalDiagnostics;
+    const auto savedBuilding = g_temporalBuilding, savedBuffer0 = g_temporalBuffers[0];
+    const auto savedBuffer1 = g_temporalBuffers[1], savedLatched = g_temporalLatched;
+    const bool savedValid0 = g_temporalBufferValid[0], savedValid1 = g_temporalBufferValid[1];
+    const uint64_t savedBuild = g_temporalNextBuild, savedCamera = g_temporalCameraId;
+    const uint32_t savedAddress = g_temporalCameraAddress;
+    g_temporalDiagnostics = true;
+    g_temporalBuilding = g_temporalBuffers[0] = g_temporalBuffers[1] = g_temporalLatched = {};
+    g_temporalBufferValid[0] = g_temporalBufferValid[1] = false;
+    g_temporalNextBuild = g_temporalCameraId = 0;
+    g_temporalCameraAddress = 0;
+    std::vector<uint8_t> ram(0x00100200);
+    constexpr uint32_t camera1 = 0x00100000, camera2 = 0x00100100;
+    for (uint32_t camera : {camera1, camera2})
+    {
+        wrF(ram.data(), camera + 0x68, 0.1f);
+        wrF(ram.data(), camera + 0x6C, 1000.0f);
+        wrF(ram.data(), camera + 0x70, 60.0f);
+        wrF(ram.data(), camera + 0x74, 1.5f);
+    }
+    observeCamera(ram.data(), camera1);
+    g_temporalBuilding.flags |= KZGS_TEMPORAL_GUEST_2D;
+    captureTemporalBuild(0);
+    observeCamera(ram.data(), camera2);
+    captureTemporalBuild(1);
+    latchTemporalBuild(0);
+    auto observation = kzWideTakeTemporalObservation();
+    check(observation.buildId == 1 && observation.cameraId == 1 &&
+              (observation.flags & (KZGS_TEMPORAL_GUEST_WORLD | KZGS_TEMPORAL_GUEST_2D |
+                  KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE)) ==
+                  (KZGS_TEMPORAL_GUEST_WORLD | KZGS_TEMPORAL_GUEST_2D |
+                  KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE),
+          "temporal guest metadata follows the first kicked build buffer");
+    latchTemporalBuild(1);
+    observation = kzWideTakeTemporalObservation();
+    check(observation.buildId == 2 && observation.cameraId == 2 &&
+              !(observation.flags & KZGS_TEMPORAL_GUEST_2D),
+          "temporal guest buffers preserve their independent camera candidates");
+    latchTemporalBuild(0);
+    check(kzWideTakeTemporalObservation().buildId == 2,
+          "a repeated kick cannot resurrect an already consumed build");
+    observeCamera(ram.data(), camera1);
+    wrF(ram.data(), camera1 + 0x68, std::numeric_limits<float>::quiet_NaN());
+    observeCamera(ram.data(), camera1);
+    check((g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA) &&
+              !(g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE),
+          "non-finite or inconsistent camera candidates fail closed");
+    g_temporalBuilding = {};
+    observeCamera(ram.data(), 0x01fffff0);
+    check((g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA) &&
+              !(g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE),
+          "out-of-bounds camera candidates fail closed");
+    g_temporalBuilding = savedBuilding;
+    g_temporalBuffers[0] = savedBuffer0;
+    g_temporalBuffers[1] = savedBuffer1;
+    g_temporalLatched = savedLatched;
+    g_temporalBufferValid[0] = savedValid0;
+    g_temporalBufferValid[1] = savedValid1;
+    g_temporalNextBuild = savedBuild;
+    g_temporalCameraId = savedCamera;
+    g_temporalCameraAddress = savedAddress;
+    g_temporalDiagnostics = savedDiagnostics;
     return failures;
 }
 
-void kzWideInstall(PS2Runtime &runtime)
+void kzWideInstall(PS2Runtime &runtime, bool temporalDiagnostics)
 {
+    g_temporalDiagnostics = temporalDiagnostics;
     g_log = std::getenv("KZ_WIDE_LOG") != nullptr;
     g_defer = !(std::getenv("KZ_WIDE_DEFER") && std::getenv("KZ_WIDE_DEFER")[0] == '0');
     g_hold = !(std::getenv("KZ_WIDE_HOLD") && std::getenv("KZ_WIDE_HOLD")[0] == '0');

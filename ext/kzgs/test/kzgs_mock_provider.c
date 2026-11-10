@@ -57,7 +57,9 @@ static KzgsProviderResult KZGS_PROVIDER_CALL query_info(KzgsProviderInfo* out, K
 		(uint32_t)offsetof(KzgsProviderInfo, supported_color_encodings) : (uint32_t)sizeof(info);
 	info.kind = (mode & MOCK_KIND_XESS) ? KZGS_PROVIDER_KIND_XESS : KZGS_PROVIDER_KIND_DLSS;
 	info.name = "in-tree mock";
-	info.capabilities = KZGS_PROVIDER_CAP_SPATIAL;
+	info.capabilities = (mode & MOCK_TEMPORAL_COLOR_ONLY) ?
+		(KZGS_PROVIDER_CAP_TEMPORAL | ((mode & MOCK_DUAL_CAPABILITY) ? KZGS_PROVIDER_CAP_SPATIAL : 0)) :
+		KZGS_PROVIDER_CAP_SPATIAL;
 	info.supported_inputs = KZGS_PROVIDER_INPUT_COLOR | KZGS_PROVIDER_INPUT_DEPTH;
 	info.required_inputs = KZGS_PROVIDER_INPUT_COLOR | ((mode & MOCK_REQUIRE_DEPTH) ? KZGS_PROVIDER_INPUT_DEPTH : 0);
 	info.supported_color_encodings = (mode & MOCK_BAD_COLOR_ENCODING) ?

@@ -6,12 +6,13 @@
 // frames without a 3D view (menus, movies) are drawn as before and pillarboxed. docs/findings.md "Ultrawide".
 
 #include "kz_config.h"
+#include "kzgs_temporal.h"
 
 #include <cstdint>
 
 class PS2Runtime;
 
-void kzWideInstall(PS2Runtime &runtime);
+void kzWideInstall(PS2Runtime &runtime, bool temporalDiagnostics = false);
 
 // Target aspect ratio (width / height) of the 3D view; <= 16/9 turns the feature off. Thread-safe.
 void kzWideSetTargetAspect(float aspect);
@@ -22,6 +23,7 @@ void kzWideConfigure(KzAspect aspect, int windowWidth, int windowHeight);
 
 // Called on the guest vblank: true when the frame being presented has a widened 3D view.
 bool kzWideTakeFrameFlag();
+KzgsTemporalGuestObservation kzWideTakeTemporalObservation();
 
 // Field of view of the player's 3D view and of the first-person weapon, as horizontal degrees measured at 16:9 (the
 // vertical field of view follows; ultrawide widens the horizontal one further). 0 = the game's own. Thread-safe.

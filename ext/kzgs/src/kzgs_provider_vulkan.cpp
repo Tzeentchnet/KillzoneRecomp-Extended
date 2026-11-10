@@ -2,6 +2,7 @@
 #include "kzgs_provider_runtime.h"
 #include "kzgs_fsr1.h"
 #include "kzgs_fsr1_runtime.h"
+#include "kzgs_temporal_runtime.h"
 
 #include "GS/Renderers/Common/GSRenderer.h"
 #include "GS/Renderers/Vulkan/GSTextureVK.h"
@@ -451,6 +452,7 @@ namespace
 		const KzgsProviderResult result = s.api.evaluate(s.active->handle, &frame, &status);
 		if (result != KZGS_PROVIDER_OK)
 		{
+			kzgs::TemporalReset(KZGS_TEMPORAL_RESET_DISPATCH_FAILED);
 			if (result == KZGS_PROVIDER_ERROR_DEVICE_LOST)
 			{
 				s.deviceLost = true;
@@ -474,6 +476,7 @@ namespace
 		if (!s.enabled || !s.device || frame.device != s.device || !frame.texture ||
 			frame.texture->GetFormat() != GSTexture::Format::Color)
 		{
+			kzgs::TemporalReset(KZGS_TEMPORAL_RESET_DISPATCH_FAILED);
 			Failure(KzgsUpscalerReason::DispatchFailed, KZGS_PROVIDER_ERROR_ARGUMENT);
 			Report(s.failure.reason);
 			return false;
@@ -481,6 +484,7 @@ namespace
 		Collect();
 		if (frame.is_redraw || frame.source_may_repeat)
 		{
+			kzgs::TemporalReset(KZGS_TEMPORAL_RESET_DUPLICATE);
 			Retire(KZGS_PROVIDER_RESET_DISCONTINUITY);
 			Failure(KzgsUpscalerReason::DuplicatePresent, KZGS_PROVIDER_OK);
 			Report(s.failure.reason);
@@ -526,6 +530,7 @@ namespace
 		if (!s.device->ExecuteExternalCommands(frame.texture, s.active->output.get(), Record,
 				const_cast<RecordData*>(&data)))
 		{
+			kzgs::TemporalReset(KZGS_TEMPORAL_RESET_DISPATCH_FAILED);
 			if (s.failure.reason != KzgsUpscalerReason::DispatchFailed &&
 				s.failure.reason != KzgsUpscalerReason::DeviceLost)
 				Failure(KzgsUpscalerReason::DispatchFailed, KZGS_PROVIDER_ERROR_EVALUATE, nullptr,
@@ -552,6 +557,7 @@ namespace
 		s.lastRecordedFence = std::max(s.lastRecordedFence, s.active->lastFence);
 		if (!succeeded)
 		{
+			kzgs::TemporalReset(KZGS_TEMPORAL_RESET_PRESENT_FAILED);
 			Retire(KZGS_PROVIDER_RESET_PRESENT_FAILED);
 			Failure(KzgsUpscalerReason::PresentFailed, KZGS_PROVIDER_ERROR_EVALUATE);
 			Report(s.failure.reason);
@@ -921,12 +927,15 @@ namespace kzgs
 			s.wantsProvider = true;
 			return {KzgsUpscalerReason::NoSurface};
 		}
-		if (s.info.required_inputs & ~KZGS_PROVIDER_INPUT_COLOR)
+		if ((s.info.capabilities & KZGS_PROVIDER_CAP_TEMPORAL) ||
+			(s.info.required_inputs & ~KZGS_PROVIDER_INPUT_COLOR))
 		{
 			ProviderStop();
 			s.wantsProvider = true;
+			TemporalReset(KZGS_TEMPORAL_RESET_MISSING_INPUT);
 			Failure(KzgsUpscalerReason::RequiredInputUnavailable, KZGS_PROVIDER_ERROR_INPUT, nullptr,
-				"Matched temporal inputs are not available from this renderer.");
+				"Temporal qualification failed: matched world, depth, motion, jitter and masks are unavailable.");
+			s.failure.providerReason = KZGS_PROVIDER_REASON_MISSING_INPUT;
 			return s.failure;
 		}
 		if (!(s.info.supported_color_encodings & KZGS_PROVIDER_COLOR_BIT(KZGS_PROVIDER_COLOR_UNKNOWN)))

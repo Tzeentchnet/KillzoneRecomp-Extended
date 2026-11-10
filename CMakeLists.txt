@@ -377,6 +377,20 @@ if(BUILD_TESTING)
         --renderer d3d11 --warp --frames 2 --stress-uploads 64
         --out "${KZ_TEST_STATE_DIR}/kzgs/component")
     kz_add_iso_free_test(kzgs_fsr1_reference kzgs_fsr1_test)
+    kz_add_iso_free_test(kzgs_temporal_contract kzgs_temporal_contract_test)
+    kz_add_iso_free_test(kzgs_temporal_vulkan_validation kzgs_test --renderer vulkan --temporal-validation
+        --out "${KZ_TEST_STATE_DIR}/kzgs/temporal")
+    set_tests_properties(kzgs_temporal_vulkan_validation PROPERTIES
+        LABELS "iso-free;renderer;vulkan-validation"
+        RESOURCE_LOCK kzgs_gpu
+        FAIL_REGULAR_EXPRESSION "Validation Error;SYNC-HAZARD")
+    set_property(TEST kzgs_temporal_vulkan_validation APPEND PROPERTY ENVIRONMENT
+        "VK_LAYER_VALIDATE_SYNC=0")
+    kz_add_iso_free_test(kzgs_temporal_d3d11 kzgs_test --renderer d3d11 --warp --temporal-validation
+        --out "${KZ_TEST_STATE_DIR}/kzgs/temporal-d3d11")
+    set_tests_properties(kzgs_temporal_d3d11 PROPERTIES
+        LABELS "iso-free;renderer"
+        RESOURCE_LOCK kzgs_gpu)
     kz_add_iso_free_test(kzgs_vendor_shim kzgs_vendor_shim_test)
     kz_add_iso_free_test(kzgs_xess_requirements kzgs_xess_requirements_test)
     kz_add_iso_free_test(kzgs_dlss_adapter kzgs_dlss_adapter_test)
@@ -443,6 +457,7 @@ if(BUILD_TESTING)
         kz_vu0_component
         kz_gs_component
         kzgs_fsr1_reference
+        kzgs_temporal_contract
         kzgs_palette_guard
         PROPERTIES LABELS "iso-free;component")
     set_tests_properties(kz_gs_component PROPERTIES RESOURCE_LOCK kzgs_gpu)

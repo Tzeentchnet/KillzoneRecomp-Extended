@@ -19,14 +19,17 @@
 
 #include "kz_config.h"
 #include "kz_addrs.h"
+#include "kzgs_temporal.h"
 #include "ps2_runtime.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -40,6 +43,9 @@ namespace
     constexpr uint32_t kLogoStepMs = 2000; // 21 s timeline in about 11 frames
     PS2Runtime::RecompiledFunction g_origMenuPageUpdate = nullptr;
     bool g_log = false;
+    bool g_temporalDiagnostics = false;
+    std::atomic<uint64_t> g_temporalEvents{0};
+    std::string g_lastMenuPage;
 
     bool guestOffset(uint32_t address, std::size_t size, uint32_t &offset)
     {
@@ -99,8 +105,10 @@ namespace
     {
         if (ctx->pc == kzAddrs().playMovie)
         {
+            if (g_temporalDiagnostics)
+                g_temporalEvents.fetch_or(KZGS_TEMPORAL_RESET_MOVIE, std::memory_order_relaxed);
             std::string name;
-            const bool validName = guestString(rdram, getRegU32(ctx, 4), name);
+            const bool validName = (g_skipIntro || g_log) && guestString(rdram, getRegU32(ctx, 4), name);
             const bool skip = validName && g_skipIntro && name == kIntroMovie;
             if (g_log || skip)
                 std::printf(
@@ -122,9 +130,15 @@ namespace
         const uint32_t menu = getRegU32(ctx, 4);
         std::string page;
         uint32_t ms = 0;
-        if (ctx->pc == kzAddrs().menuPageUpdate &&
-            menu <= std::numeric_limits<uint32_t>::max() - 0x170u &&
-            guestString(rdram, menu + 8u, page) && page == "Logos" &&
+        const bool entry = ctx->pc == kzAddrs().menuPageUpdate;
+        const bool validPage = entry && menu <= std::numeric_limits<uint32_t>::max() - 0x170u &&
+            guestString(rdram, menu + 8u, page);
+        if (g_temporalDiagnostics && entry && (!validPage || page != g_lastMenuPage))
+        {
+            g_temporalEvents.fetch_or(KZGS_TEMPORAL_RESET_MENU, std::memory_order_relaxed);
+            g_lastMenuPage = validPage ? page : std::string{};
+        }
+        if (g_skipLogos && validPage && page == "Logos" &&
             readGuestU32(rdram, menu + 0x170u, ms))
         {
             static int frames = 0;
@@ -139,8 +153,75 @@ namespace
     }
 }
 
-void kzMoviesInstall(PS2Runtime &runtime)
+uint64_t kzMoviesTakeTemporalEvents()
 {
+    return g_temporalEvents.exchange(0, std::memory_order_relaxed);
+}
+
+int kzMoviesSelfTest()
+{
+    int failures = 0;
+    const auto check = [&](bool condition, const char *label) {
+        if (!condition)
+        {
+            std::fprintf(stderr, "[selftest] FAIL: %s\n", label);
+            ++failures;
+        }
+    };
+    const auto savedMenu = g_origMenuPageUpdate, savedMovie = g_origPlayMovie;
+    const bool savedSkipLogos = g_skipLogos, savedSkipIntro = g_skipIntro;
+    const bool savedLog = g_log, savedLogoLog = g_logoLog, savedDiagnostics = g_temporalDiagnostics;
+    const uint64_t savedEvents = g_temporalEvents.exchange(0, std::memory_order_relaxed);
+    const std::string savedPage = g_lastMenuPage;
+    g_origMenuPageUpdate = g_origPlayMovie = +[](uint8_t *, R5900Context *ctx, PS2Runtime *) { ctx->pc = 0; };
+    g_skipLogos = g_skipIntro = g_log = g_logoLog = false;
+    g_temporalDiagnostics = true;
+    g_lastMenuPage.clear();
+
+    constexpr uint32_t menu = 0x00100000, buffer = 0x00100200;
+    std::vector<uint8_t> ram(0x00100400);
+    std::memcpy(ram.data() + menu + 8, &buffer, sizeof(buffer));
+    std::memcpy(ram.data() + buffer + 0x10, "Logos", 6);
+    uint32_t ms = 1234;
+    std::memcpy(ram.data() + menu + 0x170, &ms, sizeof(ms));
+    R5900Context ctx;
+    ctx.r[4] = _mm_cvtsi32_si128(static_cast<int>(menu));
+    ctx.pc = kzAddrs().menuPageUpdate;
+    menuPageUpdate(ram.data(), &ctx, nullptr);
+    uint32_t after = 0;
+    std::memcpy(&after, ram.data() + menu + 0x170, sizeof(after));
+    check(after == ms && ctx.pc == 0 && kzMoviesTakeTemporalEvents() == KZGS_TEMPORAL_RESET_MENU,
+          "diagnostic-only menu hook forwards without mutating the logo timer");
+    ctx.pc = kzAddrs().menuPageUpdate;
+    menuPageUpdate(ram.data(), &ctx, nullptr);
+    check(kzMoviesTakeTemporalEvents() == 0, "unchanged menu page does not repeat a transition");
+    std::memcpy(ram.data() + buffer + 0x10, "Next", 5);
+    ctx.pc = kzAddrs().menuPageUpdate;
+    menuPageUpdate(ram.data(), &ctx, nullptr);
+    check(kzMoviesTakeTemporalEvents() == KZGS_TEMPORAL_RESET_MENU,
+          "a changed menu page marks a discontinuity");
+    ctx.pc = kzAddrs().playMovie;
+    playMovie(ram.data(), &ctx, nullptr);
+    check(ctx.pc == 0 && kzMoviesTakeTemporalEvents() == KZGS_TEMPORAL_RESET_MOVIE,
+          "diagnostic-only movie entry forwards and marks a discontinuity");
+
+    g_origMenuPageUpdate = savedMenu;
+    g_origPlayMovie = savedMovie;
+    g_skipLogos = savedSkipLogos;
+    g_skipIntro = savedSkipIntro;
+    g_log = savedLog;
+    g_logoLog = savedLogoLog;
+    g_temporalDiagnostics = savedDiagnostics;
+    g_lastMenuPage = savedPage;
+    g_temporalEvents.store(savedEvents, std::memory_order_relaxed);
+    return failures;
+}
+
+void kzMoviesInstall(PS2Runtime &runtime, bool temporalDiagnostics)
+{
+    g_temporalDiagnostics = temporalDiagnostics;
+    g_temporalEvents.store(0, std::memory_order_relaxed);
+    g_lastMenuPage.clear();
     auto applyBoolOverride = [](const char *name, bool &target) {
         if (const char *value = std::getenv(name); value && *value)
         {
@@ -161,14 +242,14 @@ void kzMoviesInstall(PS2Runtime &runtime)
     applyBoolOverride("KZ_SKIP_LOGOS", g_skipLogos);
     const char *logoLog = std::getenv("KZ_LOGO_LOG");
     g_logoLog = logoLog && std::strcmp(logoLog, "0") != 0;
-    if (g_skipLogos)
+    if (g_skipLogos || g_temporalDiagnostics)
     {
         const uint32_t kUpdate = kzAddrs().menuPageUpdate;
         g_origMenuPageUpdate = runtime.hasFunction(kUpdate) ? runtime.lookupFunction(kUpdate) : nullptr;
         if (!g_origMenuPageUpdate || !runtime.replaceFunction(kUpdate, &menuPageUpdate))
             std::printf("[kz] logo skip hook FAILED\n");
     }
-    if (!g_skipIntro && !g_log)
+    if (!g_skipIntro && !g_log && !g_temporalDiagnostics)
         return;
     const uint32_t kPlayMovie = kzAddrs().playMovie;
     g_origPlayMovie = runtime.hasFunction(kPlayMovie) ? runtime.lookupFunction(kPlayMovie) : nullptr;

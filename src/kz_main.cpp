@@ -155,6 +155,7 @@ namespace
     {
         int failures = kzConfigSelfTest();
         failures += kzWideSelfTest();
+        failures += kzMoviesSelfTest();
         failures += kzGsSelfTest();
         failures += kzPostSelfTest();
         kzInputInit(std::filesystem::temp_directory_path() / "kz_missing.ini");
@@ -421,10 +422,14 @@ int main(int argc, char *argv[])
         kzWideSetFov(cfg.fov, cfg.weaponFov);
         const bool wide = cfg.aspect == KzAspect::UltrawideAuto || cfg.aspect == KzAspect::Ultrawide21x9 ||
                           cfg.aspect == KzAspect::Ultrawide32x9 || std::getenv("KZ_WIDE_ASPECT");
-        if (wide || cfg.fov > 0.0f || cfg.weaponFov > 0.0f)
-            kzWideInstall(runtime);
+        const KzgsUpscaler requestedUpscaler = cfg.upscalerOverrides.provider.value_or(cfg.upscaler);
+        const char *temporalEnv = std::getenv("KZGS_TEMPORAL_DIAGNOSTICS");
+        const bool temporalDiagnostics = (temporalEnv && std::strcmp(temporalEnv, "1") == 0) ||
+            requestedUpscaler == KzgsUpscaler::DLSS || requestedUpscaler == KzgsUpscaler::XeSS;
+        if (wide || cfg.fov > 0.0f || cfg.weaponFov > 0.0f || temporalDiagnostics)
+            kzWideInstall(runtime, temporalDiagnostics);
         kzPromptsInstall(runtime); // after kzWideInstall: wraps the same text function
-        kzMoviesInstall(runtime);
+        kzMoviesInstall(runtime, temporalDiagnostics);
         if (kzIsPal())
             std::cout << "[kz] PAL disc (SCES-52893, En/Ru/El): every hook uses its SCES_528.93 address (src/kz_addrs.cpp). "
                       << "On: mouse aim, keyboard text entry, frame-rate fixes, post-process switches, movie fixes, native 16:9; "

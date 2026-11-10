@@ -5,6 +5,7 @@
 #include "kzgs_fsr1_runtime.h"
 #include "kzgs_internal.h"
 #include "kzgs_provider_runtime.h"
+#include "kzgs_temporal_runtime.h"
 
 #include "GS/GS.h"
 #include "GS/GSRegs.h"
@@ -69,8 +70,9 @@ namespace
 		u32 csr;
 		u32 imr;
 		u64 siglblid;
+		KzgsTemporalGuestObservation temporal;
 	};
-	static_assert(sizeof(VsyncPayload) == 0x100);
+	static_assert(sizeof(VsyncPayload) % 16 == 0);
 
 	struct SyncPoint
 	{
@@ -555,6 +557,15 @@ namespace
 		}
 	}
 
+	static u64 FrameAspectIdentity(bool wide)
+	{
+		const float ratio = wide ? s_wide_ratio.load(std::memory_order_relaxed) : 0.0f;
+		u32 bits = 0;
+		std::memcpy(&bits, &ratio, sizeof(bits));
+		return (static_cast<u64>(bits) << 32) |
+			(static_cast<u64>(EmuConfig.GS.AspectRatio) + 1) | (wide ? 0x100u : 0u);
+	}
+
 	static void ApplyVsyncRegs(const VsyncPayload& p)
 	{
 		std::memcpy(s_gs_regs, p.regset1, sizeof(p.regset1));
@@ -834,9 +845,12 @@ namespace
 					if (s_present_log_path) QueryPerformanceCounter(&t0);
 					s_cur_field = static_cast<int>(hdr.a);
 					ApplyFrameAspect((hdr.b & 2u) != 0);
+					kzgs::TemporalBeginVsync(reinterpret_cast<const VsyncPayload*>(payload)->temporal,
+						FrameAspectIdentity((hdr.b & 2u) != 0));
 					kzgs::ProviderBeginVsync();
 					GSvsync(hdr.a, (hdr.b & 1u) != 0);
 					kzgs::ProviderEndVsync();
+					kzgs::TemporalEndVsync();
 					PublishResolutionInfo();
 					if (s_present_log_path)
 					{
@@ -875,21 +889,33 @@ namespace
 				break;
 
 				case Cmd::WriteCSR:
+					if (hdr.a & (1u << 9))
+					{
+						kzgs::TemporalReset(KZGS_TEMPORAL_RESET_GAME);
+						kzgs::ProviderReset(KZGS_PROVIDER_RESET_GAME);
+					}
 					GSwriteCSR(hdr.a);
 					break;
 
 				case Cmd::SoftReset:
+					if (hdr.a)
+					{
+						kzgs::TemporalReset(KZGS_TEMPORAL_RESET_GAME);
+						kzgs::ProviderReset(KZGS_PROVIDER_RESET_GAME);
+					}
 					GSgifSoftReset(hdr.a);
 					break;
 
 				case Cmd::Reset:
 					kzgs::Fsr1InvalidateCapture();
+					kzgs::TemporalReset(KZGS_TEMPORAL_RESET_GAME);
 					kzgs::ProviderReset(KZGS_PROVIDER_RESET_GAME);
 					GSreset(true);
 					break;
 
 				case Cmd::Resize:
 					kzgs::Fsr1InvalidateCapture();
+					kzgs::TemporalReset(KZGS_TEMPORAL_RESET_SIZE);
 					kzgs::ProviderReset(KZGS_PROVIDER_RESET_RESIZE);
 					if (GSHasDisplayWindow())
 						GSResizeDisplayWindow(hdr.a, hdr.b, g_gs_device->GetWindowScale());
@@ -900,14 +926,21 @@ namespace
 					u64 p;
 					std::memcpy(&p, payload, sizeof(p));
 					std::unique_ptr<KzgsConfig> cfg(reinterpret_cast<KzgsConfig*>(p));
+					kzgs::TemporalConfigure(*cfg);
 					kzgs::ProviderStop();
 					kzgs::Fsr1Configure(false, 0);
 					const Pcsx2Config::GSOptions opts = MakeOptions(*cfg);
 					const bool vsync_changed = (opts.VsyncEnable != GSConfig.VsyncEnable);
-					if (!opts.RestartOptionsAreEqual(GSConfig))
+					const bool restart_device = !opts.RestartOptionsAreEqual(GSConfig);
+					if (restart_device)
+					{
+						kzgs::TemporalDeviceDestroying();
 						kzgs::PresentCapture(nullptr);
+					}
 					ApplyGlobals(*cfg, opts);
 					GSUpdateConfig(opts);
+					if (restart_device)
+						kzgs::TemporalDeviceCreated();
 					kzgs::SmaaInstall();
 					if (vsync_changed)
 						GSSetVSyncMode(opts.VsyncEnable ? GSVSyncMode::FIFO : GSVSyncMode::Disabled, false);
@@ -996,6 +1029,7 @@ namespace
 			return;
 		}
 
+		kzgs::TemporalStart(cfg);
 		kzgs::SmaaInstall();
 		PublishUpscalerStatus(cfg);
 		result->ok = true;
@@ -1004,6 +1038,7 @@ namespace
 
 		GSThreadLoop();
 
+		kzgs::TemporalStop();
 		kzgs::PresentCapture(nullptr);
 		GSclose();
 		kzgs::Fsr1RemoveDeviceHooks();
@@ -1103,6 +1138,11 @@ bool kzgsGetUpscalerStatus(KzgsUpscalerStatus& out)
 	return true;
 }
 
+bool kzgsGetTemporalDiagnostics(KzgsTemporalDiagnostics& out)
+{
+	return s_open.load(std::memory_order_acquire) && kzgs::TemporalGetDiagnostics(out);
+}
+
 void kzgsGifTransfer(int path, const uint8_t* data, uint32_t qwords)
 {
 	if (!s_open.load(std::memory_order_relaxed) || !data || qwords == 0)
@@ -1130,16 +1170,18 @@ void kzgsSetShowFps(bool show)
 	g_kzgs_show_fps.store(show, std::memory_order_relaxed);
 }
 
-void kzgsVsync(int field, bool regsWritten, bool wide)
+void kzgsVsync(int field, bool regsWritten, bool wide, const KzgsTemporalGuestObservation* temporal)
 {
 	if (!s_open.load(std::memory_order_relaxed))
 		return;
 
-	VsyncPayload p;
+	VsyncPayload p{};
 	std::memcpy(p.regset1, s_caller_regs, sizeof(p.regset1));
 	std::memcpy(&p.csr, s_caller_regs + 0x1000, sizeof(p.csr));
 	std::memcpy(&p.imr, s_caller_regs + 0x1010, sizeof(p.imr));
 	std::memcpy(&p.siglblid, s_caller_regs + 0x1080, sizeof(p.siglblid));
+	if (temporal)
+		p.temporal = *temporal;
 
 	// Frame pacing: don't let the game run more than N frames ahead of the GPU.
 	s32 queued = s_queued_frames.fetch_add(1, std::memory_order_acq_rel) + 1;
@@ -1165,17 +1207,19 @@ void kzgsVsync(int field, bool regsWritten, bool wide)
 		Trace(6);
 }
 
-bool kzgsVsyncTry(int field, bool regsWritten, bool wide)
+bool kzgsVsyncTry(int field, bool regsWritten, bool wide, const KzgsTemporalGuestObservation* temporal)
 {
 	if (!s_open.load(std::memory_order_relaxed))
 		return true;
 	if (s_queued_frames.load(std::memory_order_acquire) > s_max_queued_frames)
 		return false;
-	VsyncPayload p;
+	VsyncPayload p{};
 	std::memcpy(p.regset1, s_caller_regs, sizeof(p.regset1));
 	std::memcpy(&p.csr, s_caller_regs + 0x1000, sizeof(p.csr));
 	std::memcpy(&p.imr, s_caller_regs + 0x1010, sizeof(p.imr));
 	std::memcpy(&p.siglblid, s_caller_regs + 0x1080, sizeof(p.siglblid));
+	if (temporal)
+		p.temporal = *temporal;
 	const s32 queued = s_queued_frames.fetch_add(1, std::memory_order_acq_rel) + 1;
 	if (s_stats_on)
 	{
@@ -1265,7 +1309,10 @@ bool kzgsDebugInjectDeviceLoss()
 	if (!s_open.load(std::memory_order_relaxed))
 		return false;
 	bool injected = false;
-	kzgs::RunOnGSThread([&injected] { injected = kzgs::InjectD3D12DeviceLoss(); });
+	kzgs::RunOnGSThread([&injected] {
+		kzgs::TemporalReset(KZGS_TEMPORAL_RESET_DEVICE);
+		injected = kzgs::InjectD3D12DeviceLoss();
+	});
 	return injected;
 }
 

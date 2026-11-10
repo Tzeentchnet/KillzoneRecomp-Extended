@@ -73,6 +73,30 @@ rectangle. Currently both images are `VK_FORMAT_R8G8B8A8_UNORM`, enter in `VK_IM
 graphics queue. The color encoding is **unknown**; a provider must explicitly support unknown encoding to run.
 `usage` lists guaranteed usage bits, not necessarily every bit used at image creation.
 
+### Temporal qualification (host-internal; ABI unchanged)
+
+`kzgs_temporal.h` defines a stricter GS-thread observation/qualification contract, not additional ABI 1.0 fields.
+It requires nonzero frame, presentation, scene, device, provider, and resource identities; matching frame/scene IDs,
+pixel grids, and source rectangles for merged/world color, depth, motion, and reactive/composition/UI masks; and
+known image formats. The current synthetic validator accepts Vulkan linear SDR `R8G8B8A8_UNORM` or linear HDR
+`R16G16B16A16_SFLOAT` world color, `D16_UNORM` or `D32_SFLOAT` depth with explicit forward/reversed direction,
+`R16G16_SFLOAT` motion, and `R8_UNORM` masks. Unknown or packed formats fail closed.
+
+Motion is previous-minus-current in **source pixels**, with the previous frame explicitly identified and a
+jitter-inclusion flag. ABI 1.0 requires motion excluding jitter; jitter-inclusive vectors must not be submitted
+without an independently validated conversion. Jitter is current-frame source pixels, positive right/down, and must
+affect world rendering only. Camera data must contain finite, nonsingular current/previous view/projection matrices, valid
+near/far and FOV, matching previous/current frame and scene IDs, and a depth convention consistent with the depth
+image. Frame delta must be finite, positive, and matched to those frames. Extra world-color and UI bits are
+host-internal and are not ABI input bits.
+
+History is speculative until both dispatch and the matching presentation succeed. Missing or unmatched resources,
+unqualified formats, duplicate/out-of-order presentations, discontinuities, and failed dispatch/presentation reset
+history; a duplicate successful presentation ID cannot be reused after a reset. Production currently marks only
+observed composed color, never promotes guest/GS candidates, and reports temporal validity false. All providers
+advertising `KZGS_PROVIDER_CAP_TEMPORAL` are rejected before `create`/`evaluate`, independently of their stated
+required inputs. See [the measured no-go and instrumentation limits](findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10).
+
 The host ends its render pass and supplies a recording graphics command buffer with source and output made available
 by Vulkan barriers. The provider may bind its own Vulkan state and issue work only on that command buffer. It must
 not submit, end, reset, retain, or use the command buffer concurrently; submit to other queues; modify the source; or

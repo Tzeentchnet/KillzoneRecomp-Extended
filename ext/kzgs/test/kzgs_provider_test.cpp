@@ -269,6 +269,9 @@ int main(int argc, char** argv)
 		{MOCK_MISALIGNED_FEATURE_STRIDE, KzgsUpscalerReason::DeviceFeatureUnavailable, "misaligned feature stride"},
 		{MOCK_MISALIGNED_FEATURE_BITS, KzgsUpscalerReason::DeviceFeatureUnavailable, "misaligned feature bits"},
 		{MOCK_REQUIRE_DEPTH, KzgsUpscalerReason::RequiredInputUnavailable, "matched temporal inputs"},
+		{MOCK_TEMPORAL_COLOR_ONLY, KzgsUpscalerReason::RequiredInputUnavailable, "temporal provider advertising color only"},
+		{MOCK_TEMPORAL_COLOR_ONLY | MOCK_DUAL_CAPABILITY, KzgsUpscalerReason::RequiredInputUnavailable,
+			"spatial/temporal provider advertising color only"},
 		{MOCK_BAD_COLOR_ENCODING, KzgsUpscalerReason::UnsupportedColorEncoding, "unknown color encoding"},
 	};
 	for (const auto& test : fallbacks)
@@ -284,6 +287,17 @@ int main(int argc, char** argv)
 			Check(after.creates == before.creates && after.evaluates == before.evaluates,
 				"failed negotiation never creates or dispatches a provider");
 		}
+	}
+
+	mock.set(MOCK_TEMPORAL_COLOR_ONLY | MOCK_DUAL_CAPABILITY | MOCK_KIND_XESS);
+	const KzgsMockStats beforeTemporalXess = mock.Stats();
+	if (Open(window, KzgsUpscalerReason::RequiredInputUnavailable, KzgsUpscaler::XeSS))
+	{
+		kzgsSync();
+		kzgsClose();
+		Check(mock.Stats().creates == beforeTemporalXess.creates &&
+			mock.Stats().evaluates == beforeTemporalXess.evaluates,
+			"XeSS temporal capability cannot bypass qualification with color-only requirements");
 	}
 
 	mock.set(MOCK_VALID_FEATURE);

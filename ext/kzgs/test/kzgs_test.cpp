@@ -213,6 +213,23 @@ static std::vector<uint8_t> BuildScene()
 	return g.Build();
 }
 
+static std::vector<uint8_t> BuildDepthScene(int offset)
+{
+	GifBuilder g;
+	g.AD(REG_PRMODECONT, 1);
+	g.AD(REG_FRAME_1, 10ull << 16);
+	g.AD(REG_ZBUF_1, 140);
+	g.AD(REG_XYOFFSET_1, 0);
+	g.AD(REG_SCISSOR_1, (639ull << 16) | (447ull << 48));
+	g.AD(REG_TEST_1, (1ull << 16) | (2ull << 17)); // Z test: GEQUAL
+	g.AD(REG_PRIM, PRIM_TRIANGLE);
+	g.AD(REG_RGBAQ, RGBAQ(0xe0, 0x80, 0x50));
+	g.AD(REG_XYZ2, XYZ(40 + offset, 40, 0x80000000u));
+	g.AD(REG_XYZ2, XYZ(180 + offset, 60, 0x90000000u));
+	g.AD(REG_XYZ2, XYZ(90 + offset, 180, 0xa0000000u));
+	return g.Build();
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
@@ -930,6 +947,136 @@ static void CheckProviderVulkan(HWND hwnd, const std::string& path, const std::v
 	check(GetModuleHandleW(dllPath.c_str()) == nullptr, "provider DLL unloaded after close");
 }
 
+static void CheckTemporalObservations(HWND hwnd, const std::vector<uint8_t>& scene,
+	KzgsRenderer renderer, bool useWarp)
+{
+	auto check = [](bool ok, const char* message) {
+		std::printf("%s: %s\n", ok ? "PASS" : "FAIL", message);
+		g_failures += !ok;
+	};
+	KzgsConfig cfg;
+	cfg.renderer = renderer;
+	cfg.useWarp = useWarp;
+	cfg.temporalDiagnostics = true;
+	cfg.debugDevice = renderer == KzgsRenderer::Vulkan;
+	std::string error;
+	if (!kzgsOpen(kz::host::NativeWindow::win32(hwnd), cfg, g_regs, &error))
+	{
+		std::printf("FAIL: temporal observer renderer open: %s\n", error.c_str());
+		++g_failures;
+		return;
+	}
+
+	KzgsTemporalGuestObservation guest;
+	guest.guestVsync = 100;
+	guest.buildId = 7;
+	guest.cameraId = 11;
+	guest.flags = KZGS_TEMPORAL_GUEST_WORLD | KZGS_TEMPORAL_GUEST_2D |
+		KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE;
+	guest.nearPlane = 0.1f;
+	guest.farPlane = 1000.0f;
+	guest.verticalFovDegrees = 60.0f;
+	guest.aspect = 1.5f;
+	kzgsGifTransfer(3, scene.data(), static_cast<uint32_t>(scene.size() / 16));
+	const std::vector<uint8_t> depth = BuildDepthScene(0);
+	kzgsGifTransfer(3, depth.data(), static_cast<uint32_t>(depth.size() / 16));
+	kzgsVsync(0, true, false, &guest);
+	guest.guestVsync = guest.buildId = guest.cameraId = 999;
+	guest.flags = 0;
+	kzgsSync();
+	KzgsTemporalDiagnostics first;
+	check(kzgsGetTemporalDiagnostics(first), "GS thread published a temporal snapshot");
+	check(first.guestVsync == 100 && first.guestBuildId == 7 && first.cameraId == 11 &&
+		(first.guestFlags & KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE),
+		"guest metadata is copied into the ordered VSync command");
+	check(first.presentSucceeded && first.presentationId && first.mergedResourceId &&
+		first.nativeFormat && first.width && first.height &&
+		first.sourceRect.right > first.sourceRect.left,
+		"present observes a composed texture identity, format, size, and crop");
+	check(first.drawCount && first.displayTargetId && first.displayResourceId && first.displayedDrawCount,
+		"HW draws correlate with the synthetic display-target lookup");
+	check(first.depthDrawCount && first.depthWriteCount && first.depthTargetId && first.depthResourceId &&
+		first.depthNativeFormat && first.depthDirection == KzgsTemporalDepthDirection::Unknown,
+		"synthetic depth is only a target candidate with unknown direction");
+	check(!first.temporalValid && first.validInputs == KZGS_TEMPORAL_COLOR &&
+		first.missingInputs == (KZGS_TEMPORAL_REQUIRED & ~KZGS_TEMPORAL_COLOR) &&
+		!first.sceneId && !first.worldResourceId && !first.motionResourceId &&
+		!first.reactiveResourceId && !first.compositionResourceId && !first.uiResourceId &&
+		!first.jitterAvailable && !first.matchedFrameTimeAvailable &&
+		!first.cameraParametersAvailable && !first.historyFrameId && !first.committedHistoryFrames,
+		"unmatched synthetic observations never become valid temporal inputs or history");
+
+	guest = {};
+	guest.guestVsync = 101;
+	guest.buildId = 8;
+	guest.cameraId = 12;
+	guest.flags = KZGS_TEMPORAL_GUEST_2D;
+	guest.resetReasons = KZGS_TEMPORAL_RESET_CAMERA_CUT | KZGS_TEMPORAL_RESET_TELEPORT |
+		KZGS_TEMPORAL_RESET_LOAD | KZGS_TEMPORAL_RESET_SAVE | KZGS_TEMPORAL_RESET_SCENE |
+		KZGS_TEMPORAL_RESET_MENU | KZGS_TEMPORAL_RESET_MOVIE;
+	const uint64_t guestResets = guest.resetReasons;
+	kzgsGifTransfer(3, scene.data(), static_cast<uint32_t>(scene.size() / 16));
+	const std::vector<uint8_t> movedDepth = BuildDepthScene(8);
+	kzgsGifTransfer(3, movedDepth.data(), static_cast<uint32_t>(movedDepth.size() / 16));
+	kzgsVsync(1, true, false, &guest);
+	guest.resetReasons = 0;
+	kzgsSync();
+	KzgsTemporalDiagnostics next;
+	check(kzgsGetTemporalDiagnostics(next) && next.guestVsync == 101 &&
+		(next.resetReasons & guestResets) == guestResets &&
+		(next.resetReasons & KZGS_TEMPORAL_RESET_CAMERA_CHANGE) &&
+		(next.resetReasons & KZGS_TEMPORAL_RESET_WORLD_TRANSITION),
+		"ordered discontinuities and detectable guest transitions are retained");
+	check(!next.temporalValid && !next.historyFrameId && !next.committedHistoryFrames,
+		"moving synthetic geometry is not treated as motion-vector evidence");
+
+	kzgsVsync(1, false, false, &guest);
+	kzgsSync();
+	KzgsTemporalDiagnostics duplicate;
+	check(kzgsGetTemporalDiagnostics(duplicate) && (duplicate.resetReasons & KZGS_TEMPORAL_RESET_DUPLICATE) &&
+		!duplicate.historyFrameId && !duplicate.committedHistoryFrames,
+		"duplicate presentation cannot advance temporal history");
+
+	cfg.crop[0] = 1;
+	cfg.aspect = KzgsAspect::Ratio16_9;
+	kzgsUpdateConfig(cfg);
+	kzgsResize(800, 600);
+	kzgsReset();
+	kzgsSync();
+	KzgsTemporalDiagnostics resetSnapshot;
+	check(kzgsGetTemporalDiagnostics(resetSnapshot) &&
+		(resetSnapshot.resetReasons & KZGS_TEMPORAL_RESET_GAME) && !resetSnapshot.historyFrameId,
+		"an ordered reset is visible before another VSync");
+	kzgsGifTransfer(3, scene.data(), static_cast<uint32_t>(scene.size() / 16));
+	kzgsVsync(0, true, false, &guest);
+	kzgsSync();
+	KzgsTemporalDiagnostics changed;
+	const uint64_t expected = KZGS_TEMPORAL_RESET_CROP | KZGS_TEMPORAL_RESET_ASPECT |
+		KZGS_TEMPORAL_RESET_SIZE | KZGS_TEMPORAL_RESET_GAME;
+	check(kzgsGetTemporalDiagnostics(changed) && (changed.resetReasons & expected) == expected &&
+		!changed.temporalValid && !changed.committedHistoryFrames,
+		"crop, aspect, size, and guest reset invalidate history");
+	cfg.vertexShaderExpand = false;
+	kzgsUpdateConfig(cfg);
+	kzgsGifTransfer(3, scene.data(), static_cast<uint32_t>(scene.size() / 16));
+	kzgsVsync(0, true, false, &guest);
+	kzgsSync();
+	KzgsTemporalDiagnostics recreated;
+	check(kzgsGetTemporalDiagnostics(recreated) && recreated.deviceId &&
+		recreated.deviceId != changed.deviceId && (recreated.resetReasons & KZGS_TEMPORAL_RESET_DEVICE) &&
+		!recreated.temporalValid && !recreated.committedHistoryFrames,
+		"same-backend device recreation changes identity and invalidates history");
+	if (renderer == KzgsRenderer::Vulkan)
+	{
+		if (g_vulkan_validation_unavailable.load())
+			std::printf("SKIP: Vulkan validation layers unavailable\n");
+		else
+			check(g_vulkan_validation_seen.load() && g_vulkan_validation_errors.load() == 0,
+				"temporal observer runs without Vulkan validation errors");
+	}
+	kzgsClose();
+}
+
 int main(int argc, char** argv)
 {
 	KzgsConfig cfg;
@@ -937,6 +1084,7 @@ int main(int argc, char** argv)
 	bool vsync = false;
 	bool golden_only = false;
 	bool fsr1_validation = false;
+	bool temporal_validation = false;
 	std::string synthetic_trace;
 	std::string provider_validation;
 	int frames = 4;
@@ -956,6 +1104,8 @@ int main(int argc, char** argv)
 			golden_only = g_check_golden = true;
 		else if (a == "--fsr1-validation")
 			fsr1_validation = true;
+		else if (a == "--temporal-validation")
+			temporal_validation = true;
 		else if (a == "--provider-validation" && i + 1 < argc)
 			provider_validation = argv[++i];
 		else if (a == "--write-synthetic-trace" && i + 1 < argc)
@@ -1014,6 +1164,13 @@ int main(int argc, char** argv)
 
 	kzgsSetLogCallback(&Log);
 	SetupNTSC640x448();
+	if (temporal_validation)
+	{
+		CheckTemporalObservations(hwnd, BuildScene(), cfg.renderer, cfg.useWarp);
+		DestroyWindow(hwnd);
+		std::printf("%s: temporal observer integration\n", g_failures ? "FAIL" : "PASS");
+		return g_failures ? 1 : 0;
+	}
 	if (!provider_validation.empty())
 	{
 		CheckProviderVulkan(hwnd, provider_validation, BuildScene());

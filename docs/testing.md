@@ -84,6 +84,29 @@ fallback, capture, resize, reset, and device recreation. A separate process test
 when device idle cannot prove completion. The DLL does not implement a vendor upscaler and is not staged with production
 binaries.
 
+Temporal qualification and metadata-only GS observation are covered by:
+
+```powershell
+.\tools\scripts\vsenv.bat cmake --build .\build\win-msvc-rel --target killzone kzgs_temporal_contract_test kzgs_test
+ctest --test-dir .\build\win-msvc-rel -R '^kz_product_selftest$|^kzgs_temporal_(contract|d3d11|vulkan_validation)$' --output-on-failure
+```
+
+The pure synthetic contract test rejects missing, mismatched and invalid inputs and checks that history commits only
+after a successful matching dispatch/present. The product self-test covers guest build/kick camera candidates,
+menu/movie forwarding without logo-timer changes, and pending reset delivery. D3D11 WARP and Vulkan render synthetic color/depth triangles, exercise HW draw/display/present
+observations and duplicate/reset paths, and assert that no candidate becomes a valid temporal resource or history.
+Vulkan uses standard validation, not synchronization validation, because of the existing synthetic GS index-upload
+hazard noted below. To print protected-content-safe diagnostics for this synthetic test only:
+
+```powershell
+$env:KZGS_TEMPORAL_DIAGNOSTICS = '1'
+.\build\win-msvc-rel\ext\kzgs\kzgs_test.exe --renderer vulkan --temporal-validation
+Remove-Item Env:\KZGS_TEMPORAL_DIAGNOSTICS
+```
+
+These tests do not qualify real gameplay inputs, camera motion, or any vendor SDK/GPU. The current gate outcome and
+the restrictions on private gameplay captures are recorded in [the qualification findings](findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10).
+
 SDK-free vendor-adapter checks use independently authored test doubles and do not load a vendor SDK or require a GPU:
 
 ```powershell

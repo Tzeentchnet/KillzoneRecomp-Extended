@@ -4,6 +4,7 @@
 #include "kz_patches.h"
 #include "kz_gpu.h"
 #include "kz_widescreen.h"
+#include "kz_movies.h"
 #include "kz_post.h"
 
 #include "kzgs.h"
@@ -107,6 +108,25 @@ namespace
         GSCpuBackend m_cpu;
     };
 
+    struct TemporalDelivery
+    {
+        uint64_t pending = 0;
+
+        void prepare(KzgsTemporalGuestObservation &observation)
+        {
+            pending |= observation.resetReasons;
+            observation.resetReasons = pending;
+        }
+
+        void complete(bool queued, bool changed)
+        {
+            if (queued)
+                pending = 0;
+            else
+                pending |= changed ? KZGS_TEMPORAL_RESET_SKIPPED : KZGS_TEMPORAL_RESET_DUPLICATE;
+        }
+    };
+
     struct GsState
     {
         PS2Runtime *runtime = nullptr;
@@ -145,6 +165,7 @@ namespace
         int burstCapturePoint = 0;
         std::atomic<uint64_t> presentedSeq{0};
         std::atomic<uint64_t> currentGuestVsync{0};
+        TemporalDelivery temporalDelivery; // VIF/GIF worker only
         std::vector<std::array<long long, 12>> vblankLog; // frame, field, presented, presentedSeq, ns, pmode, smode2, dispfb1, display1, dispfb2, display2, guestVsync
 
         std::mutex measurementMutex;
@@ -871,6 +892,7 @@ namespace
         uint64_t guestVsync = 0;
         int field = 0;
         bool wide = false; // frame drawn with a widened 3D view (kz_widescreen.cpp)
+        KzgsTemporalGuestObservation temporal{};
         alignas(16) uint8_t regs[0x2000] = {};
     };
 
@@ -957,14 +979,15 @@ namespace
         static const bool blockingThrottle = std::getenv("KZ_GS_BLOCK") && std::getenv("KZ_GS_BLOCK")[0] == '1';
         const bool newPackets = g_packetsSinceVsync.load(std::memory_order_relaxed) != 0;
         const bool regsChanged = std::memcmp(lastDisplayRegs, s.privRegs, sizeof(lastDisplayRegs)) != 0;
+        s.temporalDelivery.prepare(job->temporal);
         bool didPresent = false;
         if (presentAll || !presentedOnce || newPackets || regsChanged)
         {
             const bool firstPresent = !presentedOnce;
             if (blockingThrottle)
-                kzgsVsync(field, regsChanged || firstPresent, job->wide), didPresent = true;
+                kzgsVsync(field, regsChanged || firstPresent, job->wide, &job->temporal), didPresent = true;
             else
-                didPresent = kzgsVsyncTry(field, regsChanged || firstPresent, job->wide);
+                didPresent = kzgsVsyncTry(field, regsChanged || firstPresent, job->wide, &job->temporal);
             if (didPresent)
             {
                 g_packetsSinceVsync.store(0, std::memory_order_relaxed);
@@ -972,6 +995,7 @@ namespace
                 presentedOnce = true;
             }
         }
+        s.temporalDelivery.complete(didPresent, newPackets || regsChanged || !presentedOnce);
         reportResolution(s);
         reportUpscaler(s);
         if (didPresent)
@@ -1064,6 +1088,9 @@ namespace
         job->guestVsync = guestVsync;
         job->field = field;
         job->wide = kzWideTakeFrameFlag();
+        job->temporal = kzWideTakeTemporalObservation();
+        job->temporal.guestVsync = guestVsync;
+        job->temporal.resetReasons |= kzMoviesTakeTemporalEvents();
         snapshotPrivRegs(s, job->regs);
         ps2RunAfterQueuedGif(&runVsync, job);
     }
@@ -1086,6 +1113,7 @@ bool kzGsAttach(
 {
     GsState &s = gs();
     s.runtime = &runtime;
+    s.temporalDelivery = {};
     kzgsSetLogCallback(&onLog);
     if (const char *tl = std::getenv("KZ_TIMELINE"); tl && *tl) // the hook costs a clock read per GS idle wait: only when recording
         kzgsSetTraceHook(&onKzgsTrace);
@@ -1318,6 +1346,27 @@ int kzGsSelfTest()
     check(renderer.upscaler == KzgsUpscaler::DLSS && renderer.upscalerSharpening == 80 &&
               renderer.upscale == 3 && renderer.casSharpness == 30,
           "presentation request and one-run overrides preserve integer upscale and CAS");
+    TemporalDelivery delivery;
+    KzgsTemporalGuestObservation observation;
+    observation.resetReasons = KZGS_TEMPORAL_RESET_MOVIE;
+    delivery.prepare(observation);
+    delivery.complete(false, true);
+    observation = {};
+    observation.resetReasons = KZGS_TEMPORAL_RESET_MENU;
+    delivery.prepare(observation);
+    check((observation.resetReasons & (KZGS_TEMPORAL_RESET_MOVIE | KZGS_TEMPORAL_RESET_MENU |
+              KZGS_TEMPORAL_RESET_SKIPPED)) ==
+              (KZGS_TEMPORAL_RESET_MOVIE | KZGS_TEMPORAL_RESET_MENU | KZGS_TEMPORAL_RESET_SKIPPED),
+          "dropped VSync retains all ordered temporal discontinuities");
+    delivery.complete(true, true);
+    observation = {};
+    delivery.prepare(observation);
+    check(observation.resetReasons == 0, "accepted VSync consumes pending temporal discontinuities");
+    delivery.complete(false, false);
+    observation = {};
+    delivery.prepare(observation);
+    check(observation.resetReasons == KZGS_TEMPORAL_RESET_DUPLICATE,
+          "suppressed unchanged VSync marks a possible duplicate");
     return failures;
 }
 

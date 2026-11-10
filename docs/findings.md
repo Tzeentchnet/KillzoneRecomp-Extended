@@ -2194,6 +2194,80 @@ condition. DLSS-01 is therefore stopped before SDK or licensing work. The native
 D3D12 path: integer internal scaling, sharp presentation, CAS, anisotropy, measured mip selection and bounded view
 distance. No temporal setting is exposed in the launcher.
 
+## Temporal qualification instrumentation: FAIL / NO-GO (2026-11-10)
+
+This phase executed the temporal-input gate; it did **not** make a temporal provider usable. The earlier GFX-04
+inventory remains the only available gameplay measurement: a depth target existed in 20/20 loading frames but in
+**0/20 gameplay frames**. Its presence during loading does not establish a match to displayed gameplay, complete
+coverage, the depth direction, or suitability for sampling. No explicitly configured authorized `KZ_ISO` or
+protected GS replay was available for a new gameplay run. A local executable alone is not a displayed gameplay
+sequence. No raw gameplay frames, memory, or traces are included in this result.
+
+| Acceptance gate | Evidence and result |
+|---|---|
+| World and merged color | **FAIL.** The composed present texture is observable by process-local ID, native/renderer format, size, and source rectangle. GFX-04 found HUD, weapon, transparency, and game effects already composed; no independently matched world-only image or trustworthy linear color encoding is available. |
+| Matched gameplay depth | **FAIL.** The existing gameplay inventory was 0/20. Display-target/draw/depth IDs can now be correlated as *candidates*, but no displayed gameplay match, coverage, or forward/reversed direction was demonstrated. A GS depth-test code or bound depth image is not a depth convention. |
+| Motion and previous frame | **FAIL.** There is no matched vector image, previous object/camera transform, or object identity. Moving synthetic geometry exercises the observer but does not validate velocity units, sign, jitter inclusion, disocclusion, skinning, or representative moving game objects. Optical-flow guesses, estimated motion, and zero-motion fallbacks are not used. |
+| World-only jitter and masks | **FAIL.** No world-only projection jitter has been applied or demonstrated; a global GS offset would also move UI and effects. The 2D/viewmodel markers are not per-pixel UI, reactive, or composition masks. None is supplied. |
+| Camera, frame time, and scene | **FAIL.** Near/far/FOV/aspect at the world hook are bounded, finite *candidates* associated with a guest build/kick, not proven projection parameters for the displayed frame. Current/previous view/projection matrices, scene identity, and a matched simulation-frame delta are unavailable. The logged GS delivery interval is not a frame delta. |
+| Lifecycle and failure behavior | **PASS, fail-closed only.** Synthetic tests cover missing/unmatched inputs, invalid formats/conventions, first use, duplicate/out-of-order frames, reset causes, failed dispatch/present, and transactional history. No invalid frame advances history. This does not qualify a real temporal image. |
+
+The ISO-free Vulkan observer test rendered two synthetic triangle frames and one duplicate: the first two each
+reported 3 HW draws, 3 display-target-correlated draws, one depth-tested/write draw, and one depth candidate. The
+candidate was Vulkan format 130 (`D32_SFLOAT_S8_UINT`), which is not an allowed sampled depth format in the
+qualification contract, and its direction remained unknown. The duplicate reported no new draws. All three had
+`valid=0x1` (composed color only), `missing=0x3fe`, unknown scene/motion/jitter/masks, `temporal_valid=0`, and zero
+committed temporal history. The same observer checks passed with D3D11 WARP. These are synthetic data, not evidence
+of a gameplay match. The synthetic replay, metadata/image self-tests, provider mocks, and standard Vulkan validation
+also passed. In a separate three-frame synthetic GS replay, each frame had two correlated draws, zero depth
+candidates, `valid=0x1`, `missing=0x3fe`, and zero history; its final upscaler remained off. The existing renderer's
+known index-upload synchronization hazard is why the full GS test uses standard rather than synchronization
+validation; the direct FSR1 Vulkan vectors also passed with synchronization validation.
+
+Strict dependency verification passed (31 checks); the generated resume table passed (132,656 dispatch entries,
+100,661 resume cases), and all 10 US hook entry points used here are registered. PAL generated code was not available
+in this build, so PAL hook execution was not tested. The separate `inventory_generated.py --check` remains **failing
+at the pre-existing baseline**: it reports 35 legacy `kz_hook::` names as unused after the product moved to region
+tables. For example, `GameEntry` and `MoviePlay` were already absent from product `kz_hook::` references at the
+parent commit. This failure is not evidence that the new temporal inputs are qualified.
+
+### Ordered observations and limits
+
+The PCSX2 companion hooks report emitted HW draws, display-target lookups, and present/skip/completion on the GS
+thread. Texture and cache-target IDs are process-local counters, **not guest addresses**; texture reuse is further
+scoped by frame identity. Observations are bounded and set an overflow flag. Some deferred channel-shuffle and HLE
+paths are not comprehensively observed. Two display circuits, merge, interlacing, post-processing, target reuse,
+and partial draw coverage mean equal IDs are not proof that a depth surface belongs to a displayed world frame.
+Raw GS PSM/test values are metadata, not linear depth or a depth-direction claim.
+
+When enabled at startup, the existing Killzone world, 2D, viewmodel, build-limiter, and kick hooks collect guest
+flags and camera candidates per double-buffered build. The current kicked observation and detected menu-page/movie
+events are copied at EE VSync into a job ordered after queued GIF work, then copied with the VSync command to the GS
+thread. Drops and suppressed VSyncs retain pending discontinuities until an accepted command. This ordering is
+necessary but does not prove that the build/camera produced the displayed color. Multiple or invalid camera
+candidates are marked ambiguous. Hooked movie/menu behavior is unchanged unless the existing skip options are set.
+
+First use, source/output size and crop, aspect, provider, device, game/GS reset, explicit guest discontinuities,
+failed dispatch/presentation, missing inputs, skipped frames, and duplicate/out-of-order presentations invalidate
+history. Camera-identity changes, world/non-world build changes, menu-page changes, and movie entry additionally
+produce conservative resets where observed. Camera cuts or teleports using the same camera, save/load, general
+scene identity, and every movie/menu boundary have **no trustworthy complete detector**. Their contract reason bits
+exist for an eventual authoritative source; synthetic injection is not a claim that the game currently emits them.
+
+Set `KZGS_TEMPORAL_DIAGNOSTICS=1` **before launch** for one metadata-only line per delivered VSync; it also enables
+the guest hooks without changing the configured view. The line contains IDs, format codes, dimensions, crop,
+counts, candidate/validity flags, resets, and the delivery interval, not pixels, camera matrices/scalars, guest
+addresses, or menu/movie strings. `camera` and `guest_flags` describe candidates only; `scene=0` and resource ID
+zero mean unknown/unavailable. Do not combine a protected-content run with separate verbose game-specific logging
+such as `KZ_WIDE_LOG`, `KZ_MOVIE_LOG`, or `KZ_LOGO_LOG`. Do not commit any private capture, trace, game content, or unsanitized log.
+Hook installation is decided at startup, so restart after changing the diagnostic setting.
+
+The provider ABI remains 1.0. Any provider advertising `KZGS_PROVIDER_CAP_TEMPORAL` is rejected before context
+creation/evaluation, even if it advertises color-only requirements; spatial-only test doubles retain their existing
+path. DLSS and XeSS stay disabled, and XeSS also retains its independent queue-submission blocker. Reopen this gate
+only with authorized, matched consecutive gameplay evidence covering moving objects, depth correspondence and
+direction, vector units/sign/jitter, world-only jitter, and UI/reactive behavior.
+
 ## GFX-05 display follow-up (2026-10-21)
 
 Killzone aspect handling has two layers. `kzPatchesApply` sets the game object's native widescreen word only for

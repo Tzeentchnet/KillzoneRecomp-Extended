@@ -2,6 +2,7 @@
 #include "kzgs_fsr1.h"
 #include "kzgs_fsr1_runtime.h"
 #include "kzgs_provider_runtime.h"
+#include "kzgs_temporal_runtime.h"
 
 #include "Config.h"
 #include "GS/Renderers/Common/GSDevice.h"
@@ -414,11 +415,13 @@ namespace
 	void DeviceCreated(void*, GSDeviceVK& device, bool instanceExtensions, bool deviceExtensions, bool features)
 	{
 		s.device = &device;
+		kzgs::TemporalDeviceCreated();
 		kzgs::ProviderDeviceCreated(device, instanceExtensions, deviceExtensions, features);
 	}
 
 	void DeviceDestroying(void*, GSDeviceVK& device, VkResult idleResult)
 	{
+		kzgs::TemporalDeviceDestroying();
 		kzgs::ProviderDeviceDestroying(device, idleResult);
 		if (s.device != &device)
 			return;

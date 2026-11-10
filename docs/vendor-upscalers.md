@@ -4,6 +4,8 @@ These are **experimental, default-OFF developer targets**, not release features.
 neither matched temporal inputs nor a known color encoding, so both providers remain unavailable and fall back.
 No actual NVIDIA or Intel SDK was available to validate these adapters; test doubles are not evidence of SDK,
 driver, GPU, image-quality, or redistribution qualification.
+The host rejects **every temporal-capability provider before context creation**, even a provider claiming to require
+only color. The measured gate remains a no-go; see [temporal qualification](findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10).
 In particular, NGX initialization's compliance with the ABI's no-submission rule, real image layouts, and
 motion/jitter behavior have not been independently established; qualify these before any future host supplies
 temporal inputs.

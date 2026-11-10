@@ -22,6 +22,7 @@
 #pragma once
 
 #include "kzgs_upscaler.h"
+#include "kzgs_temporal.h"
 #include "kz_host/core.h"
 
 #include <cstdint>
@@ -109,6 +110,7 @@ struct KzgsConfig
 	// path, where a packet may continue in the next call (PCSX2 MTGS semantics).
 	bool selfContainedGifPackets = true;
 	bool debugDevice = false;                          // D3D/Vulkan validation layer
+	bool temporalDiagnostics = false;                  // metadata-only observation; never enables temporal providers
 };
 
 struct KzgsResolutionInfo
@@ -135,6 +137,9 @@ bool kzgsIsOpen();
 // unsupported backends, and frames which do not need upscaling use the existing presentation path.
 bool kzgsGetUpscalerStatus(KzgsUpscalerStatus& out);
 
+// Most recent GS-thread metadata observation. False when disabled or before a VSync completes.
+bool kzgsGetTemporalDiagnostics(KzgsTemporalDiagnostics& out);
+
 // Queues a GIF packet (sequence of GIFtags + data) for PATH 1, 2 or 3. `qwords` is the size in 16-byte units.
 // The data is copied; the caller may reuse its buffer immediately. PATH1 transfers stop at the first EOP, as on
 // hardware XGKICK.
@@ -147,13 +152,15 @@ void kzgsGifTransfer(int path, const uint8_t* data, uint32_t qwords);
 //
 // `wide`: the frame was drawn for an ultrawide display (3D view widened by the caller). With a wide ratio set by kzgsSetWideRatio such
 // frames are stretched to that aspect ratio, other frames use KzgsConfig::aspect (pillarboxed in a wider window).
-void kzgsVsync(int field, bool regsWritten = true, bool wide = false);
+void kzgsVsync(int field, bool regsWritten = true, bool wide = false,
+	const KzgsTemporalGuestObservation* temporal = nullptr);
 
 // Non-blocking kzgsVsync() for callers that must not stall (the VIF1/GIF worker, which the EE waits for): when the GS thread
 // still has more than maxQueuedFrames frames to finish (slow Present: an external frame limiter, a display slower than the
 // guest vblank rate) nothing is queued and false is returned: the caller keeps its pending state and tries again at the
 // next vblank. At most one thread may call kzgsVsync/kzgsVsyncTry.
-bool kzgsVsyncTry(int field, bool regsWritten = true, bool wide = false);
+bool kzgsVsyncTry(int field, bool regsWritten = true, bool wide = false,
+	const KzgsTemporalGuestObservation* temporal = nullptr);
 
 // Aspect ratio (width / height, e.g. 64.0f / 27.0f) that wide frames are presented at; 0 = off (every frame uses KzgsConfig::aspect).
 void kzgsSetWideRatio(float ratio);
