@@ -53,7 +53,8 @@ audited import closure; it is not permission to redistribute any component. The 
 executable, not a renamed DLL. Resources are selected only from the known prompt and shader source directories:
 their complete inventory digest is pinned. Shader and other ordinary text resources are compared with CRLF normalized
 to LF, so checkout line endings do not alter the inventory; binary files and the unmodified upstream FSR1 headers
-and license remain byte-exact. The staged bytes are still hashed and checked exactly when copied into the package
+and license remain byte-exact. Git attributes disable text conversion for those vendored files. The staged bytes are
+still hashed and checked exactly when copied into the package
 and archive. Unlisted files and directories are never copied. The package includes the repository MIT and GPL
 license texts and the FSR1 notice.
 

@@ -66,6 +66,15 @@ try {
     [void]@(Get-KzPackageResourcePlan -Root $fixtureRoot -InputDirectory $fixtureInput -Manifest $manifest)
     'PASS audited resource inventory is identical for LF and CRLF checkouts and staged text'
 
+    $vendorAttributes = @(& git -C $root check-attr text -- `
+        'ext\kzgs\third_party\fsr1\ffx_a.h' 'ext\kzgs\third_party\fsr1\ffx_fsr1.h' `
+        'ext\kzgs\third_party\fsr1\LICENSE.txt')
+    if ($LASTEXITCODE -ne 0 -or $vendorAttributes.Count -ne 3 -or
+        @($vendorAttributes | Where-Object { $_ -notmatch ': text: unset$' }).Count -ne 0) {
+        throw 'Vendored FSR1 headers and license must disable Git text conversion.'
+    }
+    'PASS vendored FSR1 Git attributes preserve exact upstream bytes across checkouts'
+
     $binary = (Get-ChildItem -LiteralPath (Join-Path $fixtureInput 'resources\prompts') -Filter '*.png' -File | Select-Object -First 1).FullName
     $originalBinary = [IO.File]::ReadAllBytes($binary)
     $changedBinary = [byte[]]::new($originalBinary.Length + 1)

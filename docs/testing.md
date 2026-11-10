@@ -163,9 +163,10 @@ python .\tools\scripts\image_compare.py --selftest
 The packaging self-test uses real audited dependency hashes and a fresh fixture directory under `work`. It
 contaminates fixture inputs with vendor/provider DLLs, SDK headers and import libraries, PDBs,
 caches, and protected-content-shaped decoys. It verifies LF/CRLF source and staging combinations against the same
-resource inventory and rejects altered binary, vendored FSR1, and shader bytes. It checks both dry-runs, the actual staging directory and ZIP contents,
-the staged executable's ISO-free self-test, required license files, a substituted DLL/CRT hash, a DLL disguised as
-the executable, and preservation of an occupied destination. The source and legal reviews in
+resource inventory and rejects altered binary, vendored FSR1, and shader bytes. It also checks that Git attributes
+disable text conversion for the byte-exact vendored headers and license. It checks both dry-runs, the actual staging
+directory and ZIP contents, the staged executable's ISO-free self-test, required license files, a substituted DLL/CRT
+hash, a DLL disguised as the executable, and preservation of an occupied destination. The source and legal reviews in
 [release and distribution](release.md) remain mandatory.
 
 The CPU vectors check AMD constants and dispatch planning. The GPU-vector test enables synchronization validation,
