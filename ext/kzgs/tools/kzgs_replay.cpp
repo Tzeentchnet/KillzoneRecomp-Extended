@@ -286,7 +286,7 @@ int main(int argc, char** argv)
 		else if (a == "--skip-idle") skip_idle = true;
 		else if (a == "--single-circuit") single_circuit = true;
 		else if (a == "--window") use_window = true;
-		else if (a == "--backbuffer") backbuffer = true; // active Vulkan FSR1 uses completed-output recomposition
+		else if (a == "--backbuffer") backbuffer = true; // Vulkan may provide a diagnostic recomposition instead
 		else if (a == "--sharp" && i + 1 < argc) cfg.sharpPresent = std::atoi(argv[++i]) != 0;
 		else if (a == "--bilinear" && i + 1 < argc) cfg.bilinearPresent = std::atoi(argv[++i]) != 0;
 		else if (a == "--cas" && i + 1 < argc) cfg.casSharpness = std::atoi(argv[++i]);
@@ -454,11 +454,15 @@ int main(int argc, char** argv)
 		{
 			kzgsSync();
 			std::vector<KzgsBurstFrame> got;
-			if (kzgsBurstTake(got) && !got.empty())
+			KzgsBurstCapturePoint point = KzgsBurstCapturePoint::Unavailable;
+			if (kzgsBurstTakeEx(got, point) && !got.empty())
 			{
 				char bn[64];
-				std::snprintf(bn, sizeof(bn), "bb_%04llu.png", (unsigned long long)(frame + 1));
+				const char* prefix = point == KzgsBurstCapturePoint::PresentationRecomposition ? "recomposed" : "bb";
+				std::snprintf(bn, sizeof(bn), "%s_%04llu.png", prefix, (unsigned long long)(frame + 1));
 				WritePNG((out / bn).string(), got[0].rgba, got[0].width, got[0].height);
+				std::printf("frame %llu: capture_point=%s\n", (unsigned long long)(frame + 1),
+					kzgsBurstCapturePointName(point));
 			}
 		}
 		frame++;

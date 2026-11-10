@@ -73,6 +73,7 @@ bool ExerciseLegacyClient()
 		void (*vsync)(int, bool, bool) = &kzgsVsync;
 		bool (*tryVsync)(int, bool, bool) = &kzgsVsyncTry;
 		vsync(0, true, false);
+		kzgsSync();
 		ok = tryVsync(1, true, false) && ok;
 		kzgsSync();
 		ok = CheckLegacyStatus() && ok;

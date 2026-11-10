@@ -487,7 +487,9 @@ static bool RenderAndCheckBackbuffer(
 	PresentFrames(packet, frames, 3);
 	kzgsSync();
 	std::vector<KzgsBurstFrame> captured;
-	if (!kzgsBurstTake(captured) || captured.size() != 1u)
+	KzgsBurstCapturePoint point = KzgsBurstCapturePoint::Unavailable;
+	if (!kzgsBurstTakeEx(captured, point) || captured.size() != 1u ||
+		point != KzgsBurstCapturePoint::SwapchainBackbuffer)
 	{
 		std::printf("  FAIL swap-chain capture returned %zu frames\n", captured.size());
 		g_failures++;
@@ -574,12 +576,18 @@ static bool ReadPresented(std::vector<uint8_t>& pixels, int expectedWidth, int e
 static void CheckFsr1Vulkan(HWND hwnd, KzgsConfigV1& cfg, const std::vector<uint8_t>& scene, int frames)
 {
 	std::printf("== Vulkan FSR1 activation, capture, resize and recreation\n");
+	if (!kzgsHasPreSharpPresentationHook())
+	{
+		std::printf("  FAIL companion does not expose the reviewed pre-sharp source hook\n");
+		++g_failures;
+	}
 	const kz::host::NativeWindow window = kz::host::NativeWindow::win32(hwnd);
 	ResizeTestWindowUnconstrained(hwnd, 1003, 757);
 	kzgsResize(1003, 757);
 	cfg.upscaler = KzgsUpscaler::Off;
 	cfg.upscalerSharpening = 0;
 	cfg.bilinearPresent = true;
+	cfg.sharpPresent = true; // matches the game's default SharpScaling=1
 	kzgsUpdateConfigV1(cfg);
 	PresentFrames(scene, frames, 3);
 	kzgsSync();
@@ -592,9 +600,18 @@ static void CheckFsr1Vulkan(HWND hwnd, KzgsConfigV1& cfg, const std::vector<uint
 	CheckUpscalerStatus(KzgsUpscaler::FSR1, 0, KzgsUpscalerReason::WaitingForFrame);
 	const uint64_t beforeFailure = kzgs::Fsr1TestDispatchCount();
 	kzgs::Fsr1TestFailNextInitialization();
+	kzgsBurstArm(1, -1, -1);
 	PresentFrames(scene, frames, 3);
 	kzgsSync();
 	CheckUpscalerStatus(KzgsUpscaler::FSR1, 0, KzgsUpscalerReason::InitializationFailed);
+	std::vector<KzgsBurstFrame> failureBurst;
+	KzgsBurstCapturePoint failurePoint = KzgsBurstCapturePoint::Unavailable;
+	if (!kzgsBurstTakeEx(failureBurst, failurePoint) || failureBurst.size() != 1 ||
+		failurePoint != KzgsBurstCapturePoint::PresentationRecomposition)
+	{
+		std::printf("  FAIL initialization fallback was mislabeled as a swap-chain capture\n");
+		++g_failures;
+	}
 	std::vector<uint8_t> failureFallback;
 	if (ReadPresented(failureFallback, 1003, 757) &&
 		(failureFallback != baseline || kzgs::Fsr1TestDispatchCount() != beforeFailure))
@@ -611,6 +628,16 @@ static void CheckFsr1Vulkan(HWND hwnd, KzgsConfigV1& cfg, const std::vector<uint
 	PresentFrames(scene, frames, 3);
 	kzgsSync();
 	CheckUpscalerStatus(KzgsUpscaler::FSR1, 0, KzgsUpscalerReason::Active, KzgsUpscaler::FSR1);
+	int sourceWidth = 0, sourceHeight = 0;
+	kzgs::RunOnGSThread([&] { kzgs::Fsr1TestLastSourceViewport(sourceWidth, sourceHeight); });
+	KzgsResolutionInfo resolution;
+	if (!kzgsGetResolutionInfo(resolution) || sourceWidth <= 0 || sourceHeight <= 0 ||
+		sourceWidth > resolution.renderWidth || sourceHeight > resolution.renderHeight)
+	{
+		std::printf("  FAIL FSR1 did not receive the original pre-prescale source (%dx%d)\n",
+			sourceWidth, sourceHeight);
+		++g_failures;
+	}
 	std::vector<uint8_t> easu, repeated;
 	const uint64_t beforeReadback = kzgs::Fsr1TestDispatchCount();
 	if (ReadPresented(easu, 1003, 757) && ReadPresented(repeated, 1003, 757))
@@ -632,6 +659,12 @@ static void CheckFsr1Vulkan(HWND hwnd, KzgsConfigV1& cfg, const std::vector<uint
 		++g_failures;
 	}
 
+	cfg.sharpPresent = false;
+	kzgsUpdateConfigV1(cfg);
+	PresentFrames(scene, frames, 3);
+	kzgsSync();
+	CheckUpscalerStatus(KzgsUpscaler::FSR1, 0, KzgsUpscalerReason::Active, KzgsUpscaler::FSR1);
+	cfg.sharpPresent = true;
 	cfg.upscalerSharpening = 100;
 	kzgsUpdateConfigV1(cfg);
 	PresentFrames(scene, frames, 3);
@@ -652,15 +685,18 @@ static void CheckFsr1Vulkan(HWND hwnd, KzgsConfigV1& cfg, const std::vector<uint
 	CheckUpscalerStatus(KzgsUpscaler::FSR1, 100, KzgsUpscalerReason::Active, KzgsUpscaler::FSR1);
 	std::vector<KzgsBurstFrame> captured;
 	std::vector<uint8_t> withCas;
-	if (!kzgsBurstTake(captured) || captured.size() != 1 || captured[0].width != 1003 || captured[0].height != 757 ||
+	KzgsBurstCapturePoint point = KzgsBurstCapturePoint::Unavailable;
+	if (!kzgsBurstTakeEx(captured, point) || point != KzgsBurstCapturePoint::PresentationRecomposition ||
+		std::strcmp(kzgsBurstCapturePointName(point), "presentation_recomposition") != 0 ||
+		captured.size() != 1 || captured[0].width != 1003 || captured[0].height != 757 ||
 		!ReadPresented(withCas, 1003, 757) || captured[0].rgba != withCas)
 	{
-		std::printf("  FAIL completed upscaled presented capture/replay\n");
+		std::printf("  FAIL upscaled diagnostic recomposition or its capture label\n");
 		++g_failures;
 	}
 	if (!rcas.empty() && withCas == rcas)
 	{
-		std::printf("  FAIL completed capture did not include CAS\n");
+		std::printf("  FAIL this recomposition did not include CAS\n");
 		++g_failures;
 	}
 
@@ -948,14 +984,21 @@ static void CheckProviderVulkan(HWND hwnd, const std::string& path, const std::v
 	kzgsSync();
 	std::vector<KzgsBurstFrame> captured;
 	std::vector<uint8_t> completedCapture;
-	if (kzgsBurstTake(captured) && captured.size() == 1 && ReadPresented(completedCapture, 1003, 757))
-		check(captured[0].rgba == completedCapture, "provider burst captures completed presented output");
+	KzgsBurstCapturePoint point = KzgsBurstCapturePoint::Unavailable;
+	if (kzgsBurstTakeEx(captured, point) && captured.size() == 1 && ReadPresented(completedCapture, 1003, 757))
+		check(point == KzgsBurstCapturePoint::PresentationRecomposition && captured[0].rgba == completedCapture,
+			"provider burst is labeled as a diagnostic recomposition");
 	else
-		check(false, "provider burst captures completed presented output");
+		check(false, "provider burst is labeled as a diagnostic recomposition");
 	previous = stats();
 
+	kzgsBurstArm(1, -1, -1);
 	kzgsVsync(0, false);
 	kzgsSync();
+	captured.clear();
+	check(kzgsBurstTakeEx(captured, point) && captured.size() == 1 &&
+		point == KzgsBurstCapturePoint::PresentationRecomposition,
+		"an idle or skipped present cannot be labeled as a swapchain capture");
 	CheckUpscalerStatus(KzgsUpscaler::DLSS, 0, KzgsUpscalerReason::DuplicatePresent);
 	check(stats().evaluates == previous.evaluates, "idle VSync does not dispatch a possible duplicate");
 	PresentFrames(scene, 1, 3);

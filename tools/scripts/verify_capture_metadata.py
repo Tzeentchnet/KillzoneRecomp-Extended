@@ -20,6 +20,7 @@ CAPTURE_POINTS = {
     "gs_internal_burst",
     "presented_output",
     "swapchain_backbuffer",
+    "presentation_recomposition",
 }
 PIPELINE_ORDER = [
     "gs_merge",
@@ -70,6 +71,9 @@ def image_digest(path: Path) -> str:
 
 def validate_upscaler_pipeline(effective_config: dict[str, Any]) -> None:
     upscaler = effective_config.get("presentation_upscaler")
+    pipeline_contract = effective_config.get("pipeline_contract", 1)
+    if type(pipeline_contract) is not int or pipeline_contract not in (1, 2):
+        raise ValueError("unsupported pipeline contract")
     expected_pipeline = PIPELINE_ORDER.copy()
     if upscaler is not None:
         if not isinstance(upscaler, dict) or not isinstance(upscaler.get("reported"), bool):
@@ -125,9 +129,15 @@ def validate_upscaler_pipeline(effective_config: dict[str, Any]) -> None:
             passes = ["fsr1_easu"]
             if upscaler["sharpening_effective"]:
                 passes.append("fsr1_rcas")
-            expected_pipeline[4:4] = passes
+            if pipeline_contract == 2:
+                expected_pipeline.remove("sharp_prescale_if_upscaling")
+            insertion = expected_pipeline.index("cas")
+            expected_pipeline[insertion:insertion] = passes
         elif upscaler["effective"] in {"dlss", "xess"}:
-            expected_pipeline[4:4] = [f"provider_{upscaler['effective']}"]
+            if pipeline_contract == 2:
+                expected_pipeline.remove("sharp_prescale_if_upscaling")
+            insertion = expected_pipeline.index("cas")
+            expected_pipeline[insertion:insertion] = [f"provider_{upscaler['effective']}"]
     if (
         "pipeline" in effective_config
         or "render_scale" in effective_config
@@ -330,6 +340,16 @@ def validate(directory: Path, require_fire: bool) -> tuple[list[dict[str, Any]],
         "renderer": run["renderer"],
         "adapter": run["adapter"],
         "effective_config": configs[-1]["effective_config"] if configs else run["effective_config"],
+        "pipeline_warnings": (
+            ["legacy active-upscaler pipeline order was not verified"]
+            if any(
+                record["effective_config"].get("pipeline_contract", 1) == 1
+                and (record["effective_config"].get("presentation_upscaler") or {}).get("effective")
+                in {"fsr1", "dlss", "xess"}
+                for record in [run, *configs]
+            )
+            else []
+        ),
         "testing": run["testing"],
         "frame_count": len(frames),
         "event_count": len(events),
@@ -403,10 +423,27 @@ def test_upscaler_pipeline() -> None:
         "sharpening_requested": 0,
         "sharpening_effective": 0,
     }
-    config = {"presentation_upscaler": status, "pipeline": PIPELINE_ORDER[:4] + ["fsr1_easu"] + PIPELINE_ORDER[4:]}
+    active_prefix = ["gs_merge", "aa", "crop_aspect"]
+    config = {
+        "presentation_upscaler": status,
+        "pipeline_contract": 2,
+        "pipeline": active_prefix + ["fsr1_easu"] + PIPELINE_ORDER[4:],
+    }
     validate_upscaler_pipeline(config)
+    legacy = copy.deepcopy(config)
+    del legacy["pipeline_contract"]
+    legacy["pipeline"] = PIPELINE_ORDER[:4] + ["fsr1_easu"] + PIPELINE_ORDER[4:]
+    validate_upscaler_pipeline(legacy)
+    bad_current = copy.deepcopy(config)
+    bad_current["pipeline"] = legacy["pipeline"]
+    try:
+        validate_upscaler_pipeline(bad_current)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("current pipeline accepted prescaling before an active upscaler")
     status["sharpening_effective"] = 100
-    config["pipeline"] = PIPELINE_ORDER[:4] + ["fsr1_easu", "fsr1_rcas"] + PIPELINE_ORDER[4:]
+    config["pipeline"] = active_prefix + ["fsr1_easu", "fsr1_rcas"] + PIPELINE_ORDER[4:]
     validate_upscaler_pipeline(config)
     config["pipeline"] = PIPELINE_ORDER
     try:
@@ -417,7 +454,7 @@ def test_upscaler_pipeline() -> None:
         raise ValueError("self-test accepted an active FSR1 status without its pipeline")
     for provider in ("dlss", "xess"):
         status.update(requested=provider, effective=provider, sharpening_effective=0)
-        config["pipeline"] = PIPELINE_ORDER[:4] + [f"provider_{provider}"] + PIPELINE_ORDER[4:]
+        config["pipeline"] = active_prefix + [f"provider_{provider}"] + PIPELINE_ORDER[4:]
         validate_upscaler_pipeline(config)
         status.update(
             effective="off", reason="required_input_unavailable", sharpening_requested=37,
@@ -428,7 +465,7 @@ def test_upscaler_pipeline() -> None:
         config["pipeline"] = PIPELINE_ORDER
         validate_upscaler_pipeline(config)
         status["effective"] = provider
-        config["pipeline"] = PIPELINE_ORDER[:4] + [f"provider_{provider}"] + PIPELINE_ORDER[4:]
+        config["pipeline"] = active_prefix + [f"provider_{provider}"] + PIPELINE_ORDER[4:]
         try:
             validate_upscaler_pipeline(config)
         except ValueError as error:
@@ -485,6 +522,7 @@ def self_test() -> None:
                         },
                         "output_resolution": {"width": 1920, "height": 1080},
                         "pipeline": PIPELINE_ORDER,
+                        "pipeline_contract": 2,
                         "presentation_upscaler": {
                             "reported": True,
                             "requested": "fsr1",
@@ -542,7 +580,7 @@ def self_test() -> None:
             active_config["presentation_upscaler"].update(
                 effective="fsr1", reason="active", sharpening_effective=50
             )
-            active_config["pipeline"] = PIPELINE_ORDER[:4] + ["fsr1_easu", "fsr1_rcas"] + PIPELINE_ORDER[4:]
+            active_config["pipeline"] = ["gs_merge", "aa", "crop_aspect", "fsr1_easu", "fsr1_rcas"] + PIPELINE_ORDER[4:]
             records.insert(1, {"schema_version": 1, "record": "config", "effective_config": active_config})
             (root / "capture.jsonl").write_text(
                 "".join(json.dumps(record, separators=(",", ":")) + "\n" for record in records),
@@ -555,6 +593,17 @@ def self_test() -> None:
         comparison = compare_summaries(left, right)
         if comparison["max_abs_event_delta"] != 1 or comparison["paired_frame_count"] != 1:
             raise ValueError("self-test comparison produced unexpected alignment")
+        recomposed_records = copy.deepcopy(records)
+        next(record for record in recomposed_records if record.get("record") == "frame")[
+            "capture_point"
+        ] = "presentation_recomposition"
+        (roots[1] / "capture.jsonl").write_text(
+            "".join(json.dumps(record, separators=(",", ":")) + "\n" for record in recomposed_records),
+            encoding="utf-8",
+        )
+        _, recomposed = validate(roots[1], True)
+        if compare_summaries(left, recomposed)["paired_frame_count"] != 0:
+            raise ValueError("a diagnostic recomposition was paired with a different capture point")
         records[0]["effective_config"]["presentation_upscaler"]["sharpening_effective"] = 1
         (roots[1] / "capture.jsonl").write_text(
             "".join(json.dumps(record, separators=(",", ":")) + "\n" for record in records),

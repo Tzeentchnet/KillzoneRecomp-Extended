@@ -363,11 +363,12 @@ int main(int argc, char **argv)
                 std::vector<uint8_t> px;
                 int w = 0, h = 0;
                 bool readbackOk = false;
+                KzgsBurstCapturePoint capturePoint = KzgsBurstCapturePoint::Unavailable;
                 if (backbuffer)
                 {
                     kzgsSync();
                     std::vector<KzgsBurstFrame> captured;
-                    readbackOk = kzgsBurstTake(captured) && captured.size() == 1u;
+                    readbackOk = kzgsBurstTakeEx(captured, capturePoint) && captured.size() == 1u;
                     if (readbackOk)
                     {
                         px = std::move(captured[0].rgba);
@@ -385,10 +386,15 @@ int main(int argc, char **argv)
                     for (size_t i = 0; i + 3 < px.size(); i += 4)
                         nonBlack += (px[i] + px[i + 1] + px[i + 2]) > 30;
                     char name[64];
-                    std::snprintf(name, sizeof(name), "replay_%04llu.png", static_cast<unsigned long long>(frame));
+                    const char *prefix = capturePoint == KzgsBurstCapturePoint::PresentationRecomposition ?
+                        "recomposed" : "replay";
+                    std::snprintf(name, sizeof(name), "%s_%04llu.png", prefix, static_cast<unsigned long long>(frame));
                     savePng(px, w, h, (outDir / name).string());
-                    std::printf("frame %llu: %dx%d nonblack %.1f%%\n", static_cast<unsigned long long>(frame), w, h,
-                                100.0 * nonBlack / (px.size() / 4 ? px.size() / 4 : 1));
+                    std::printf("frame %llu: %dx%d nonblack %.1f%% capture_point=%s\n",
+                                static_cast<unsigned long long>(frame), w, h,
+                                100.0 * nonBlack / (px.size() / 4 ? px.size() / 4 : 1),
+                                backbuffer ? kzgsBurstCapturePointName(capturePoint) :
+                                    (presentWidth > 0 && presentHeight > 0 ? "presented_output" : "gs_internal"));
                 }
                 else
                 {

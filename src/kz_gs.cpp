@@ -157,12 +157,10 @@ namespace
         std::atomic<uint64_t> gameplayStartVsync{0};
         std::atomic<uint64_t> gameplayFrames{0};
         std::atomic<bool> gameplayFramesActive{false};
-        // KZ_SHOT_BURST=N: at every shot time the GS thread captures the next N presented frames (gb_*.png, internal resolution, or
-        // as presented in KZ_WINDOW_SIZE with KZ_SHOT_BURST_PRESENT=1) without stalling the game, plus gb_*.csv with one line per
-        // guest vblank during the capture (field, whether a frame was presented or skipped as unchanged, wall time).
+        // KZ_SHOT_BURST=N: capture the next N GS frames without stalling the game, plus a CSV of guest vblanks.
+        // Presentation-sized snapshots are diagnostic and need not correspond to successful presents.
         bool burstArmed = false;
         int burstIndex = 0;
-        int burstCapturePoint = 0;
         std::atomic<uint64_t> presentedSeq{0};
         std::atomic<uint64_t> currentGuestVsync{0};
         TemporalDelivery temporalDelivery; // VIF/GIF worker only
@@ -373,6 +371,9 @@ namespace
                 (upscaler.effectiveSharpening > 0 ? "\"fsr1_easu\",\"fsr1_rcas\"," : "\"fsr1_easu\",") :
             upscaler.effective == KzgsUpscaler::DLSS ? "\"provider_dlss\"," :
             upscaler.effective == KzgsUpscaler::XeSS ? "\"provider_xess\"," : "";
+        const bool preSharpHook = kzgsHasPreSharpPresentationHook();
+        const char *fallbackPrescale = !preSharpHook || upscaler.effective == KzgsUpscaler::Off
+                                           ? "\"sharp_prescale_if_upscaling\"," : "";
         const std::string adapter = jsonEscape(k.adapter);
         const auto envBool = [](const char *name, bool fallback)
         {
@@ -407,7 +408,7 @@ namespace
             "\"temporal_valid_inputs\":%llu,\"temporal_missing_inputs\":%llu,"
             "\"temporal_invalid_inputs\":%llu,\"temporal_invalid_reasons\":%llu},"
             "\"output_resolution\":{\"width\":%d,\"height\":%d},"
-            "\"pipeline\":[\"gs_merge\",\"aa\",\"sharp_prescale_if_upscaling\","
+            "\"pipeline_contract\":%d,\"pipeline\":[\"gs_merge\",\"aa\",%s"
             "\"crop_aspect\",%s\"cas\",\"present_filter\"],"
             "\"aspect\":\"%s\",\"anisotropy\":%d,\"mipmap_mode\":\"%s\","
             "\"render_distance\":%.3f,\"lod_scale\":%.3f,"
@@ -433,7 +434,7 @@ namespace
             static_cast<unsigned long long>(upscaler.temporalMissingInputs),
             static_cast<unsigned long long>(upscaler.temporalInvalidInputs),
             static_cast<unsigned long long>(upscaler.temporalInvalidReasons),
-            s.windowWidth, s.windowHeight, upscalerPipeline, aspectName(k.aspect),
+            s.windowWidth, s.windowHeight, preSharpHook ? 2 : 1, fallbackPrescale, upscalerPipeline, aspectName(k.aspect),
             k.anisotropy, k.mipmapMode == KzgsMipmapMode::BaseOnly ? "base_only" : "ps2",
             detail.renderDistance, detail.lodScale,
             effectiveAaName(k), effectiveFxaa(k) ? "true" : "false",
@@ -681,7 +682,8 @@ namespace
     void burstFinish(GsState &s)
     {
         std::vector<KzgsBurstFrame> frames;
-        if (!kzgsBurstTake(frames))
+        KzgsBurstCapturePoint point = KzgsBurstCapturePoint::Unavailable;
+        if (!kzgsBurstTakeEx(frames, point))
             return;
         s.burstArmed = false;
         const int index = s.burstIndex++;
@@ -701,10 +703,7 @@ namespace
                 }
             if (savePng((s.shotDir + name).c_str(), b.rgba, b.width, b.height))
             {
-                const char *point = s.burstCapturePoint == 2 ? "swapchain_backbuffer"
-                                    : s.burstCapturePoint == 1 ? "presented_output"
-                                                               : "gs_internal_burst";
-                recordCapture(s, point, name + 1, b.width, b.height, guestVsync, presentSeq);
+                recordCapture(s, kzgsBurstCapturePointName(point), name + 1, b.width, b.height, guestVsync, presentSeq);
             }
             else
                 std::fprintf(stderr, "[kz-measure] failed to save %s\n", (s.shotDir + name).c_str());
@@ -1069,7 +1068,7 @@ namespace
                 const long long nowSec = std::chrono::duration_cast<std::chrono::seconds>(now - s.start).count();
                 if (burstN > 0 && !s.burstArmed && nowSec >= burstFrom && nowSec <= burstTo)
                 {
-                    static const int burstPresent = std::getenv("KZ_SHOT_BURST_PRESENT") ? std::atoi(std::getenv("KZ_SHOT_BURST_PRESENT")) : 0; // 1: snapshot at the window size, 2: the swap chain back buffer at Present
+                    static const int burstPresent = std::getenv("KZ_SHOT_BURST_PRESENT") ? std::atoi(std::getenv("KZ_SHOT_BURST_PRESENT")) : 0; // 1: window-sized snapshot, 2: backbuffer or diagnostic recomposition
                     int ww = 0, wh = 0;
                     if (burstPresent == 2)
                         ww = -1, wh = -1;
@@ -1080,7 +1079,6 @@ namespace
                             std::sscanf(v, "%dx%d", &ww, &wh);
                     }
                     s.vblankLog.clear();
-                    s.burstCapturePoint = burstPresent;
                     s.burstArmed = true;
                     kzgsBurstArm(burstN, ww, wh);
                 }
@@ -1348,6 +1346,7 @@ int kzGsSelfTest()
     check(override.mode == RenderScaleMode::AutomationOverride && override.effectiveScale == 2,
           "automation can request a controlled sub-output input");
     KzConfig legacy;
+    check(legacy.sharpScaling, "SharpScaling defaults to enabled for presentation");
     KzgsConfigV1 renderer;
     renderer.upscale = 3;
     renderer.casSharpness = 30;

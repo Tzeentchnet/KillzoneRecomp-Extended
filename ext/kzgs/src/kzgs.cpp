@@ -33,6 +33,17 @@
 #include <string>
 #include <thread>
 
+template <typename Device>
+constexpr bool HasPreSharpPresentationSource()
+{
+	return requires(const Device& device) { device.GetCurrentBeforeSharp(); };
+}
+
+bool kzgsHasPreSharpPresentationHook()
+{
+	return HasPreSharpPresentationSource<GSDevice>();
+}
+
 namespace
 {
 	// ---------------------------------------------------------------------------------------------------------------
@@ -658,6 +669,7 @@ namespace
 	static std::atomic<bool> s_burst_vulkan{false};
 	static std::vector<KzgsBurstFrame> s_burst_frames;
 	static std::mutex s_burst_mutex;
+	static KzgsBurstCapturePoint s_burst_point = KzgsBurstCapturePoint::Unavailable;
 	static u64 s_vsync_seq = 0;
 	static int s_cur_field = 0;
 	// KZGS_STATS=1: frame-queue statistics on stderr every 600 frames (queue depth after each push, time the producer was held
@@ -1457,14 +1469,24 @@ void kzgsBurstArm(int count, int presentWidth, int presentHeight)
 		s_burst_ph.store(presentHeight, std::memory_order_relaxed);
 		s_burst_vulkan.store(false, std::memory_order_release);
 		s_burst_left.store(std::max(count, 0), std::memory_order_release);
+		s_burst_point = presentWidth < 0 ? KzgsBurstCapturePoint::Unavailable :
+			presentWidth > 0 && presentHeight > 0 ? KzgsBurstCapturePoint::PresentedOutput :
+			KzgsBurstCapturePoint::GsInternal;
 	}
 	if (presentWidth < 0 && count > 0)
 		kzgs::RunOnGSThread([] {
-			if (!kzgs::PresentCapture(&BurstPresentSink) &&
-			    !kzgs::PresentCaptureD3D12(&BurstPresentSink))
+			const bool backbuffer = kzgs::PresentCapture(&BurstPresentSink) ||
+				kzgs::PresentCaptureD3D12(&BurstPresentSink);
+			std::lock_guard<std::mutex> lock(s_burst_mutex);
+			if (backbuffer)
+				s_burst_point = KzgsBurstCapturePoint::SwapchainBackbuffer;
+			else
 			{
 				if (kzgs::Fsr1CanCapture())
+				{
 					s_burst_vulkan.store(true, std::memory_order_release);
+					s_burst_point = KzgsBurstCapturePoint::PresentationRecomposition;
+				}
 				else
 				{
 					Console.Error("kzgs: swap-chain capture is unavailable on the active renderer");
@@ -1474,7 +1496,20 @@ void kzgsBurstArm(int count, int presentWidth, int presentHeight)
 		});
 }
 
-bool kzgsBurstTake(std::vector<KzgsBurstFrame>& out)
+const char* kzgsBurstCapturePointName(KzgsBurstCapturePoint point)
+{
+	switch (point)
+	{
+		case KzgsBurstCapturePoint::GsInternal: return "gs_internal_burst";
+		case KzgsBurstCapturePoint::PresentedOutput: return "presented_output";
+		case KzgsBurstCapturePoint::SwapchainBackbuffer: return "swapchain_backbuffer";
+		case KzgsBurstCapturePoint::PresentationRecomposition: return "presentation_recomposition";
+		case KzgsBurstCapturePoint::Unavailable: return "unavailable";
+	}
+	return "unavailable";
+}
+
+bool kzgsBurstTakeEx(std::vector<KzgsBurstFrame>& out, KzgsBurstCapturePoint& point)
 {
 	if (s_burst_left.load(std::memory_order_acquire) > 0)
 		return false;
@@ -1487,5 +1522,12 @@ bool kzgsBurstTake(std::vector<KzgsBurstFrame>& out)
 	std::lock_guard<std::mutex> lock(s_burst_mutex);
 	out = std::move(s_burst_frames);
 	s_burst_frames.clear();
+	point = s_burst_point;
 	return true;
+}
+
+bool kzgsBurstTake(std::vector<KzgsBurstFrame>& out)
+{
+	KzgsBurstCapturePoint ignored;
+	return kzgsBurstTakeEx(out, ignored);
 }

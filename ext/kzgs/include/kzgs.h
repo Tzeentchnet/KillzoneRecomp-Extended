@@ -135,6 +135,10 @@ struct KzgsResolutionInfo
 // kzgsVsync. Returns false with a message in *err on failure. Only one kzgs instance can be open at a time.
 bool kzgsOpen(const kz::host::NativeWindow& window, const KzgsConfig& cfg, uint8_t* privRegs, std::string* err = nullptr);
 
+// Whether the compiled companion exposes the reviewed pre-sharp source API. Integration tests must also verify
+// the hook ordering; older locked companions can still provide the legacy post-prescale hook.
+bool kzgsHasPreSharpPresentationHook();
+
 // config must point to a complete KzgsConfigV1 when version is KZGS_CONFIG_VERSION_1. Short/unknown versions are
 // rejected before their payload is read. Legacy kzgsOpen always uses Off/0 and disables temporal diagnostics.
 bool kzgsOpenEx(const kz::host::NativeWindow& window, const void* config, size_t configSize, uint32_t version,
@@ -243,9 +247,9 @@ void kzgsSetShowFps(bool show);
 // SMAA luma edge threshold (0.02..0.5, default 0.1 = SMAA's HIGH preset). Higher = only strong edges are smoothed and texture detail is kept;
 // the shaders are rebuilt on the next frame when it changes. Direct3D 11 only. See docs/findings.md ("Menu jitter and blur").
 
-// Measurement aid: after the next `count` kzgsVsync() frames that reach the GS thread, the GS thread copies the output
-// (internal resolution, presentWidth/presentHeight 0; or as presented in such a window) into memory right after the
-// frame is merged, without making the caller wait. kzgsBurstTake() returns them once all are captured.
+// Measurement aid: capture up to `count` GS frames without making the caller wait. Zero dimensions read internal
+// resolution; positive dimensions produce a presentation-sized snapshot. Negative dimensions request a Direct3D
+// backbuffer or a Vulkan diagnostic recomposition. A snapshot is not proof of a successful present.
 struct KzgsBurstFrame
 {
 	std::vector<uint8_t> rgba;
@@ -257,5 +261,15 @@ struct KzgsBurstFrame
 	int gameDeint = 0; // PCSX2 'game_deinterlacing' (selects the MAD/bob path in Merge)
 	uint64_t seq = 0; // count of vsync commands the GS thread has processed
 };
+enum class KzgsBurstCapturePoint
+{
+	Unavailable,
+	GsInternal,
+	PresentedOutput,
+	SwapchainBackbuffer,
+	PresentationRecomposition, // diagnostic snapshot; not proof of a successful present or final CAS output
+};
+const char* kzgsBurstCapturePointName(KzgsBurstCapturePoint point);
 void kzgsBurstArm(int count, int presentWidth = 0, int presentHeight = 0);
 bool kzgsBurstTake(std::vector<KzgsBurstFrame>& out); // true once the armed burst is complete (and moves it out)
+bool kzgsBurstTakeEx(std::vector<KzgsBurstFrame>& out, KzgsBurstCapturePoint& point);
