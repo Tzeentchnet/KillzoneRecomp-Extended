@@ -6,9 +6,10 @@ No actual NVIDIA or Intel SDK was available to validate these adapters; test dou
 driver, GPU, image-quality, or redistribution qualification.
 The host rejects **every temporal-capability provider before context creation**, even a provider claiming to require
 only color. The measured gate remains a no-go; see [temporal qualification](findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10).
-In particular, NGX initialization's compliance with the ABI's no-submission rule, real image layouts, and
-motion/jitter behavior have not been independently established; qualify these before any future host supplies
-temporal inputs.
+In particular, NGX's real image layouts, synchronization, command-buffer-only evaluation, and motion/jitter
+behavior have not been independently established. DLSS refuses initialization unless an ABI 1.1 host provides
+exclusive device-idle initialization and explicitly attests to those SDK/runtime/device qualifications.
+The current host provides neither the initialization scope nor any qualification flags.
 
 The DLSS source implements NGX extension/capability negotiation and a deferred, command-buffer-recorded feature
 lifecycle. XeSS currently implements version, extension, and feature negotiation only. Its context creation
@@ -56,10 +57,13 @@ release build roots or distribution folders. The DLL loader accepts native code;
 DLSS accepts only explicitly identified linear SDR/HDR color, low-resolution `R16G16_SFLOAT` motion, sampled
 depth-only `D16_UNORM` or `D32_SFLOAT`, finite camera data and jitter. Current-to-previous source-pixel motion scales
 and projection jitter are passed explicitly, reverse depth is selected from camera flags, and history resets follow
-the ABI. Its current SDK
+the ABI. ABI 1.1 also requires a known, context-stable depth convention before initialization. Its current SDK
 does not support the adapter's sharpening control: use zero. Device negotiation conservatively requires
 `shaderStorageImageWriteWithoutFormat`, as in NVIDIA's Vulkan example. Concurrent NGX contexts on different Vulkan
-devices are rejected. Actual SDK behavior remains unqualified.
+devices are rejected. The adapter records conservative global and per-image barriers around evaluation, using
+`VK_IMAGE_LAYOUT_GENERAL` for its inputs and output; the NGX-specific attestation is mandatory because those layout,
+access, cross-dispatch, and no-hidden-submission assumptions are **not established by the synthetic tests**.
+Actual SDK behavior remains unqualified.
 
 ## Exact reference provenance and license fields
 

@@ -24,6 +24,9 @@ namespace
 	float lastScaleX = 0;
 	float lastScaleY = 0;
 	uint32_t lastDepthFlags = 0;
+	int initializationCalls = 0;
+	int hostMode = 0;
+	bool initializationFails = false;
 
 #define CHECK(expression) do { if (!(expression)) { \
 	std::fprintf(stderr, "line %d: %s\n", __LINE__, #expression); ++failures; } } while (0)
@@ -36,10 +39,15 @@ namespace
 			return static_cast<T>(value);
 	}
 
-	void VKAPI_CALL barrier(VkCommandBuffer, VkPipelineStageFlags, VkPipelineStageFlags,
-		VkDependencyFlags, uint32_t, const VkMemoryBarrier*, uint32_t, const VkBufferMemoryBarrier*,
+	void VKAPI_CALL barrier(VkCommandBuffer, VkPipelineStageFlags sourceStages, VkPipelineStageFlags destinationStages,
+		VkDependencyFlags, uint32_t memoryCount, const VkMemoryBarrier* memory, uint32_t, const VkBufferMemoryBarrier*,
 		uint32_t count, const VkImageMemoryBarrier* images)
 	{
+		CHECK((sourceStages & VK_PIPELINE_STAGE_ALL_COMMANDS_BIT) &&
+			(destinationStages & VK_PIPELINE_STAGE_ALL_COMMANDS_BIT));
+		CHECK(memoryCount == 1 && memory && memory[0].srcAccessMask == VK_ACCESS_MEMORY_WRITE_BIT &&
+			(memory[0].dstAccessMask & (VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT)) ==
+				(VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT));
 		CHECK(count == 4);
 		CHECK(images[0].image != VK_NULL_HANDLE);
 		CHECK(images[3].newLayout == VK_IMAGE_LAYOUT_GENERAL);
@@ -77,6 +85,33 @@ namespace
 		*out = &calls;
 		return failCreate ? kzgs::vendor::failure(KZGS_PROVIDER_ERROR_CREATE,
 			KZGS_PROVIDER_REASON_PROVIDER_FAILURE, "Deliberate partial creation failure.") : kzgs::vendor::Result{};
+	}
+
+	kzgs::vendor::Result initialize(void*)
+	{
+		++initializationCalls;
+		return initializationFails ? kzgs::vendor::failure(KZGS_PROVIDER_ERROR_CREATE,
+			KZGS_PROVIDER_REASON_OUT_OF_MEMORY, "Fake SDK initialization failed.", -31) : kzgs::vendor::Result{};
+	}
+
+	KzgsProviderResult KZGS_PROVIDER_CALL runInitialization(void*, KzgsProviderInitializationWork work,
+		void* workData, KzgsProviderStatus* status)
+	{
+		if (hostMode == 1)
+		{
+			status->native_code = -12;
+			return KZGS_PROVIDER_ERROR_CREATE;
+		}
+		if (hostMode != 2)
+			work(workData);
+		if (hostMode == 3)
+		{
+			status->native_code = -13;
+			return KZGS_PROVIDER_ERROR_CREATE;
+		}
+		if (hostMode == 4)
+			work(workData);
+		return KZGS_PROVIDER_OK;
 	}
 
 	kzgs::vendor::Result evaluate(void*, const KzgsProviderFrame& frame, bool reset)
@@ -132,6 +167,12 @@ int main()
 	KzgsProviderStatus status{sizeof(status)};
 	KzgsProviderApi api{sizeof(api)};
 	CHECK(kzgs_upscaler_get_api(KZGS_PROVIDER_VERSION(2, 0), &api, &status) == KZGS_PROVIDER_ERROR_VERSION);
+	CHECK(kzgs_upscaler_get_api(KZGS_PROVIDER_VERSION(1, 0), &api, &status) == KZGS_PROVIDER_OK);
+	CHECK(api.abi_version == KZGS_PROVIDER_VERSION(1, 0));
+	api.struct_size = sizeof(api);
+	CHECK(kzgs_upscaler_get_api(KZGS_PROVIDER_VERSION(1, 9), &api, &status) == KZGS_PROVIDER_OK);
+	CHECK(api.abi_version == KZGS_PROVIDER_ABI_VERSION);
+	api.struct_size = sizeof(api);
 	CHECK(kzgs_upscaler_get_api(KZGS_PROVIDER_ABI_VERSION, &api, &status) == KZGS_PROVIDER_OK);
 	KzgsProviderInfo info{sizeof(info)};
 	CHECK(api.query_info(&info, &status) == KZGS_PROVIDER_OK);
@@ -172,6 +213,58 @@ int main()
 	void* context = nullptr;
 	CHECK(api.create(&createInfo, &context, &status) == KZGS_PROVIDER_ERROR_INPUT && !context);
 	createInfo.color_encoding = KZGS_PROVIDER_COLOR_LINEAR_SDR;
+	constexpr size_t legacySize = offsetof(KzgsProviderCreateInfo, initialization);
+	struct alignas(KzgsProviderCreateInfo) LegacyCreate
+	{
+		unsigned char bytes[legacySize];
+		uint64_t canary;
+	} legacy{};
+	std::memcpy(legacy.bytes, &createInfo, legacySize);
+	reinterpret_cast<KzgsProviderCreateInfo*>(legacy.bytes)->struct_size = static_cast<uint32_t>(legacySize);
+	legacy.canary = UINT64_C(0x123456789abcdef0);
+	CHECK(api.create(reinterpret_cast<const KzgsProviderCreateInfo*>(legacy.bytes), &context, &status) ==
+		KZGS_PROVIDER_OK && context);
+	KzgsProviderDestroyInfo legacyDestroy{sizeof(legacyDestroy), KZGS_PROVIDER_DESTROY_COMPLETED, 0};
+	api.destroy(context, &legacyDestroy);
+	CHECK(legacy.canary == UINT64_C(0x123456789abcdef0));
+	context = nullptr;
+
+	const uint32_t qualification = KZGS_PROVIDER_INIT_SDK_EXECUTION_QUALIFIED |
+		KZGS_PROVIDER_INIT_NGX_GENERAL_LAYOUT_QUALIFIED;
+	auto initResult = kzgs::vendor::runInitialization(createInfo, qualification, initialize, nullptr);
+	CHECK(initResult.code == KZGS_PROVIDER_ERROR_CREATE &&
+		initResult.reason == KZGS_PROVIDER_REASON_SYNCHRONIZATION && initializationCalls == 0);
+	KzgsProviderInitialization initialization{sizeof(initialization), KZGS_PROVIDER_INIT_EXCLUSIVE_DEVICE_IDLE,
+		nullptr, runInitialization};
+	createInfo.initialization = &initialization;
+	initResult = kzgs::vendor::runInitialization(createInfo, qualification, initialize, nullptr);
+	CHECK(initResult.reason == KZGS_PROVIDER_REASON_UNQUALIFIED && initializationCalls == 0);
+	initialization.guarantees |= qualification;
+	initialization.struct_size = static_cast<uint32_t>(offsetof(KzgsProviderInitialization, run_exclusive));
+	initResult = kzgs::vendor::runInitialization(createInfo, qualification, initialize, nullptr);
+	CHECK(initResult.reason == KZGS_PROVIDER_REASON_SYNCHRONIZATION && initializationCalls == 0);
+	initialization.struct_size = sizeof(initialization);
+	hostMode = 1;
+	initResult = kzgs::vendor::runInitialization(createInfo, qualification, initialize, nullptr);
+	CHECK(initResult.reason == KZGS_PROVIDER_REASON_SYNCHRONIZATION && initResult.native == -12 && initializationCalls == 0);
+	hostMode = 2;
+	initResult = kzgs::vendor::runInitialization(createInfo, qualification, initialize, nullptr);
+	CHECK(initResult.reason == KZGS_PROVIDER_REASON_SYNCHRONIZATION && initializationCalls == 0);
+	hostMode = 0;
+	initializationFails = true;
+	initResult = kzgs::vendor::runInitialization(createInfo, qualification, initialize, nullptr);
+	CHECK(initResult.reason == KZGS_PROVIDER_REASON_OUT_OF_MEMORY && initResult.native == -31 && initializationCalls == 1);
+	initializationFails = false;
+	initResult = kzgs::vendor::runInitialization(createInfo, qualification, initialize, nullptr);
+	CHECK(initResult.code == KZGS_PROVIDER_OK && initializationCalls == 2);
+	hostMode = 3;
+	initResult = kzgs::vendor::runInitialization(createInfo, qualification, initialize, nullptr);
+	CHECK(initResult.code == KZGS_PROVIDER_ERROR_DEVICE_LOST && initResult.native == -13 && initializationCalls == 3);
+	hostMode = 4;
+	initResult = kzgs::vendor::runInitialization(createInfo, qualification, initialize, nullptr);
+	CHECK(initResult.code == KZGS_PROVIDER_ERROR_DEVICE_LOST && initializationCalls == 4);
+	hostMode = 0;
+	createInfo.initialization = nullptr;
 	CHECK(api.create(&createInfo, &context, &status) == KZGS_PROVIDER_OK && context);
 	CHECK(barrierCalls == 0 && calls == 0);
 

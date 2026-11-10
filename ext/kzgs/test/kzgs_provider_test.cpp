@@ -180,6 +180,10 @@ int main(int argc, char** argv)
 			KZGS_PROVIDER_OK && small.size == sizeof(KzgsProviderApi) && small.version == KZGS_PROVIDER_ABI_VERSION &&
 		std::all_of(std::begin(small.guard), std::end(small.guard), [](uint8_t v) { return v == 0x5a; }),
 		"older, smaller API buffer is not overrun");
+	small.size = 8;
+	Check(mock.api(KZGS_PROVIDER_VERSION(1, 0), reinterpret_cast<KzgsProviderApi*>(&small), &abiStatus) ==
+			KZGS_PROVIDER_OK && small.version == KZGS_PROVIDER_VERSION(1, 0),
+		"1.0 callers negotiate a compatible provider version");
 	struct LargerApi
 	{
 		KzgsProviderApi api;

@@ -391,10 +391,12 @@ if(BUILD_TESTING)
     set_tests_properties(kzgs_temporal_d3d11 PROPERTIES
         LABELS "iso-free;renderer"
         RESOURCE_LOCK kzgs_gpu)
+    kz_add_iso_free_test(kzgs_vendor_conventions kzgs_vendor_conventions_test)
     kz_add_iso_free_test(kzgs_vendor_shim kzgs_vendor_shim_test)
     kz_add_iso_free_test(kzgs_xess_requirements kzgs_xess_requirements_test)
     kz_add_iso_free_test(kzgs_dlss_adapter kzgs_dlss_adapter_test)
-    set_tests_properties(kzgs_vendor_shim kzgs_xess_requirements kzgs_dlss_adapter PROPERTIES LABELS "iso-free;component")
+    set_tests_properties(kzgs_vendor_conventions kzgs_vendor_shim kzgs_xess_requirements kzgs_dlss_adapter
+        PROPERTIES LABELS "iso-free;component")
     add_test(NAME kzgs_vendor_configuration
         COMMAND "${CMAKE_COMMAND}" "-DKZGS_SOURCE=${CMAKE_SOURCE_DIR}"
             "-DKZGS_TEST_WORK=${CMAKE_BINARY_DIR}/kzgs-vendor-config-tests"

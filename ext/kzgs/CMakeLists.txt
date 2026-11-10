@@ -446,6 +446,11 @@ endfunction()
 
 if(KZGS_BUILD_TEST)
 	target_compile_definitions(kzgs PRIVATE KZGS_FSR1_TESTING KZGS_PROVIDER_TESTING)
+	add_executable(kzgs_vendor_conventions_test "${KZGS_ROOT}/test/kzgs_vendor_conventions_test.cpp")
+	target_include_directories(kzgs_vendor_conventions_test PRIVATE "${KZGS_PROVIDER_PUBLIC_INCLUDE}"
+		"${KZGS_PROVIDER_SOURCE_DIR}" "${KZGS_PROVIDER_VULKAN_INCLUDE}")
+	target_compile_features(kzgs_vendor_conventions_test PRIVATE cxx_std_20)
+
 	add_executable(kzgs_vendor_shim_test
 		"${KZGS_ROOT}/test/kzgs_vendor_shim_test.cpp"
 		"${KZGS_PROVIDER_SOURCE_DIR}/kzgs_vendor_provider.cpp")

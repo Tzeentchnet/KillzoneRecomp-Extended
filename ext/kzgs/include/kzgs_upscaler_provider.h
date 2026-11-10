@@ -24,7 +24,7 @@ extern "C" {
 #endif
 
 #define KZGS_PROVIDER_VERSION(major, minor) (((uint32_t)(major) << 16) | (uint32_t)(minor))
-#define KZGS_PROVIDER_ABI_VERSION KZGS_PROVIDER_VERSION(1, 0)
+#define KZGS_PROVIDER_ABI_VERSION KZGS_PROVIDER_VERSION(1, 1)
 #define KZGS_PROVIDER_VERSION_MAJOR(version) ((uint32_t)(version) >> 16)
 #define KZGS_PROVIDER_VERSION_MINOR(version) ((uint32_t)(version) & 0xffffu)
 #define KZGS_PROVIDER_FIELD_END(type, field) (offsetof(type, field) + sizeof(((type*)0)->field))
@@ -67,7 +67,9 @@ enum
 	KZGS_PROVIDER_REASON_UNSUPPORTED_FORMAT = 6,
 	KZGS_PROVIDER_REASON_OUT_OF_MEMORY = 7,
 	KZGS_PROVIDER_REASON_DEVICE_LOST = 8,
-	KZGS_PROVIDER_REASON_PROVIDER_FAILURE = 9
+	KZGS_PROVIDER_REASON_PROVIDER_FAILURE = 9,
+	KZGS_PROVIDER_REASON_SYNCHRONIZATION = 10,
+	KZGS_PROVIDER_REASON_UNQUALIFIED = 11
 };
 
 typedef struct KzgsProviderStatus
@@ -190,6 +192,33 @@ typedef struct KzgsProviderCamera
 #define KZGS_PROVIDER_CAMERA_REVERSED_DEPTH (1u << 0)
 #define KZGS_PROVIDER_CAMERA_INFINITE_FAR  (1u << 1)
 
+typedef uint32_t KzgsProviderDepthConvention;
+enum
+{
+	KZGS_PROVIDER_DEPTH_UNKNOWN = 0,
+	KZGS_PROVIDER_DEPTH_FORWARD = 1,
+	KZGS_PROVIDER_DEPTH_REVERSED = 2
+};
+
+/* ABI 1.1: the host may provide this synchronous, exclusive initialization scope.
+ * The work callback and its data must not be retained or invoked asynchronously.
+ * See the ABI documentation for the required queue, idle, and failure guarantees. */
+typedef void (KZGS_PROVIDER_CALL *KzgsProviderInitializationWork)(void* work_data);
+typedef KzgsProviderResult (KZGS_PROVIDER_CALL *KzgsProviderRunInitialization)(
+	void* host_data, KzgsProviderInitializationWork work, void* work_data, KzgsProviderStatus* status);
+
+#define KZGS_PROVIDER_INIT_EXCLUSIVE_DEVICE_IDLE (1u << 0)
+#define KZGS_PROVIDER_INIT_SDK_EXECUTION_QUALIFIED (1u << 1)
+#define KZGS_PROVIDER_INIT_NGX_GENERAL_LAYOUT_QUALIFIED (1u << 2)
+
+typedef struct KzgsProviderInitialization
+{
+	uint32_t struct_size;
+	uint32_t guarantees;
+	void* host_data;
+	KzgsProviderRunInitialization run_exclusive;
+} KzgsProviderInitialization;
+
 typedef struct KzgsProviderCreateInfo
 {
 	uint32_t struct_size;
@@ -207,6 +236,9 @@ typedef struct KzgsProviderCreateInfo
 	VkFormat destination_format;
 	KzgsProviderColorEncoding color_encoding;
 	uint32_t sharpening; /* 0..100 */
+	/* ABI 1.1 trailing fields; absent on 1.0 hosts. Borrowed only for create. */
+	const KzgsProviderInitialization* initialization;
+	KzgsProviderDepthConvention depth_convention;
 } KzgsProviderCreateInfo;
 
 typedef struct KzgsProviderFrame

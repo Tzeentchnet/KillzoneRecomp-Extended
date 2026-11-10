@@ -331,7 +331,9 @@ KZGS_PROVIDER_EXPORT KzgsProviderResult KZGS_PROVIDER_CALL kzgs_upscaler_get_api
 		return result(status, KZGS_PROVIDER_ERROR_ARGUMENT, KZGS_PROVIDER_REASON_PROVIDER_FAILURE, 0, "API size");
 	api.struct_size = (mode & MOCK_SHORT_API) ?
 		(uint32_t)offsetof(KzgsProviderApi, reset) : (uint32_t)sizeof(api);
-	api.abi_version = KZGS_PROVIDER_ABI_VERSION;
+	api.abi_version = KZGS_PROVIDER_VERSION(1,
+		KZGS_PROVIDER_VERSION_MINOR(requested_version) < KZGS_PROVIDER_VERSION_MINOR(KZGS_PROVIDER_ABI_VERSION) ?
+			KZGS_PROVIDER_VERSION_MINOR(requested_version) : KZGS_PROVIDER_VERSION_MINOR(KZGS_PROVIDER_ABI_VERSION));
 	api.query_info = query_info;
 	api.instance_requirements = instance_requirements;
 	api.device_requirements = device_requirements;

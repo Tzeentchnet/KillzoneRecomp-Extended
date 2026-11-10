@@ -1,6 +1,7 @@
 // Optional local NVIDIA NGX Vulkan adapter. No NVIDIA SDK material is included in this repository.
 // SPDX-License-Identifier: GPL-3.0+
 #include "kzgs_vendor_backend.h"
+#include "kzgs_vendor_conventions.h"
 
 #include <nvsdk_ngx_helpers.h>
 #include <nvsdk_ngx_helpers_vk.h>
@@ -218,19 +219,12 @@ namespace
 			"The source/output resolution is outside all NGX DLSS quality ranges.");
 	}
 
-	Result create(const KzgsProviderCreateInfo& info, void** out)
+	Result initialize(void* opaque)
 	{
-		if (info.sharpening)
-			return failure(KZGS_PROVIDER_ERROR_CREATE, KZGS_PROVIDER_REASON_UNSUPPORTED_FORMAT,
-				"Current DLSS SDK sharpening is unsupported; set provider sharpening to zero.");
-		auto context = std::make_unique<DlssContext>();
-		context->info = info;
-		Result result = acquire(*context);
+		auto& value = *static_cast<DlssContext*>(opaque);
+		Result result = acquire(value);
 		if (result.code != KZGS_PROVIDER_OK)
 			return result;
-		// Transfer ownership before SDK calls so the common ABI destroys partially initialized state.
-		*out = context.release();
-		auto& value = *static_cast<DlssContext*>(*out);
 		NVSDK_NGX_Result native = NVSDK_NGX_VULKAN_GetCapabilityParameters(&value.parameters);
 		if (NVSDK_NGX_FAILED(native) || !value.parameters)
 			return ngxFailure(native, KZGS_PROVIDER_ERROR_CREATE, "NGX capability parameters are unavailable.");
@@ -242,6 +236,24 @@ namespace
 			return failure(KZGS_PROVIDER_ERROR_CREATE, KZGS_PROVIDER_REASON_UNSUPPORTED_DEVICE,
 				"NGX reports DLSS is unavailable.", static_cast<int32_t>(native));
 		return chooseQuality(value);
+	}
+
+	Result create(const KzgsProviderCreateInfo& info, void** out)
+	{
+		if (info.sharpening)
+			return failure(KZGS_PROVIDER_ERROR_CREATE, KZGS_PROVIDER_REASON_UNSUPPORTED_FORMAT,
+				"Current DLSS SDK sharpening is unsupported; set provider sharpening to zero.");
+		if (!KZGS_PROVIDER_HAS_FIELD(&info, KzgsProviderCreateInfo, depth_convention) ||
+			(info.depth_convention != KZGS_PROVIDER_DEPTH_FORWARD && info.depth_convention != KZGS_PROVIDER_DEPTH_REVERSED))
+			return failure(KZGS_PROVIDER_ERROR_CREATE, KZGS_PROVIDER_REASON_MISSING_INPUT,
+				"A known, context-stable depth convention is required for DLSS.");
+		auto context = std::make_unique<DlssContext>();
+		context->info = info;
+		*out = context.release();
+		const Result result = runInitialization(info, KZGS_PROVIDER_INIT_SDK_EXECUTION_QUALIFIED |
+			KZGS_PROVIDER_INIT_NGX_GENERAL_LAYOUT_QUALIFIED, initialize, *out);
+		static_cast<DlssContext*>(*out)->info.initialization = nullptr;
+		return result;
 	}
 
 	NVSDK_NGX_Resource_VK resource(const KzgsProviderImage& image, bool writable)
@@ -256,7 +268,12 @@ namespace
 		if (context.creationFailed)
 			return failure(KZGS_PROVIDER_ERROR_EVALUATE, KZGS_PROVIDER_REASON_PROVIDER_FAILURE,
 				"DLSS feature creation failed previously; retire and recreate the context.");
-		const uint32_t reverse = frame.camera->flags & KZGS_PROVIDER_CAMERA_REVERSED_DEPTH;
+		TemporalConversion conversion{};
+		if (!convertTemporal(frame.jitter_x, frame.jitter_y, frame.motion_scale_x, frame.motion_scale_y,
+				frame.camera->flags, context.info.depth_convention, conversion))
+			return failure(KZGS_PROVIDER_ERROR_INPUT, KZGS_PROVIDER_REASON_MISSING_INPUT,
+				"DLSS temporal parameters do not match the initialized depth convention.");
+		const uint32_t reverse = conversion.reversedDepth ? KZGS_PROVIDER_CAMERA_REVERSED_DEPTH : 0;
 		if (context.created && reverse != context.depthFlags)
 			return failure(KZGS_PROVIDER_ERROR_INPUT, KZGS_PROVIDER_REASON_MISSING_INPUT,
 				"Changing the depth convention requires a new DLSS context.");
@@ -298,10 +315,10 @@ namespace
 		params.Feature.pInOutput = &output;
 		params.pInDepth = &depth;
 		params.pInMotionVectors = &motion;
-		params.InJitterOffsetX = frame.jitter_x;
-		params.InJitterOffsetY = frame.jitter_y;
-		params.InMVScaleX = frame.motion_scale_x;
-		params.InMVScaleY = frame.motion_scale_y;
+		params.InJitterOffsetX = conversion.jitterX;
+		params.InJitterOffsetY = conversion.jitterY;
+		params.InMVScaleX = conversion.motionScaleX;
+		params.InMVScaleY = conversion.motionScaleY;
 		params.InRenderSubrectDimensions = {static_cast<unsigned int>(frame.source_rect.right - frame.source_rect.left),
 			static_cast<unsigned int>(frame.source_rect.bottom - frame.source_rect.top)};
 		params.InColorSubrectBase = {static_cast<unsigned int>(frame.source_rect.left), static_cast<unsigned int>(frame.source_rect.top)};

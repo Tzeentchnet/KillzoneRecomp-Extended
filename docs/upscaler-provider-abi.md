@@ -8,7 +8,7 @@ DLLs and their dependencies. Optional in-tree adapter source requires explicit l
 or provider binary is bundled or automatically staged. See [local vendor adapters](vendor-upscalers.md).
 
 The host loads a selected DLL before Vulkan instance/device creation, obtains `kzgs_upscaler_get_api`, and negotiates
-ABI major 1, minor 0. The provider returns a version with the same major and a minor no greater than the requested
+ABI major 1, minor 1. The provider returns a version with the same major and a minor no greater than the requested
 minor. Major mismatch, a missing entry point, missing mandatory API functions, or an incompatible provider kind
 causes native presentation fallback. The `off`, FSR1, D3D11, D3D12, software, and surfaceless paths remain independent.
 Changing to a provider not negotiated at KzGS open requires closing/reopening KzGS (normally a game or replay
@@ -44,13 +44,46 @@ restart); switching off and back to the provider already negotiated for that dev
   malformed arrays, missing extension dependencies, and
   structures overlapping PCSX2's own feature chain fail closed. The registry can grow without changing the ABI.
 - `create` receives the actual instance, physical device, logical device, graphics queue/family, Vulkan proc-address
-  functions, image formats, extents, crop, encoding, and sharpening. It may allocate provider-owned resources but
-  must not submit or record GPU commands. If it returns an error with a non-null context, the host destroys that
-  context. `reset` is called on a fresh context before its first evaluation with the reason for the discontinuity.
+  functions, image formats, extents, crop, encoding, and sharpening. ABI 1.0 permits allocation but forbids GPU
+  submission and recording in `create`. ABI 1.1 optionally provides the strictly scoped initialization contract
+  below; without it the 1.0 prohibition still applies. If `create` returns an error with a non-null context, the host
+  destroys that context. `reset` is called on a fresh context before its first evaluation with the reason for the discontinuity.
   `evaluate` records commands; `destroy` releases provider-owned resources.
 - The result code is authoritative. `KzgsProviderStatus` supplies a structured reason, native error code, and
   optional message; the host also reports a stable fallback reason through `kzgsGetUpscalerStatus`. Never throw C++
   exceptions across this boundary.
+
+### ABI 1.1 initialization scope
+
+The appended `KzgsProviderCreateInfo::initialization` pointer and `depth_convention` field are absent on 1.0 hosts.
+Providers must test their sizes before reading them, return a version no higher than the requested minor, and reject
+missing required 1.1 fields rather than reading a full newer structure from a 1.0 buffer. A 1.1 host can still use
+1.0 providers, which ignore these trailing fields. A known forward/reversed depth convention describes the entire
+context; every frame's camera flags must agree. `UNKNOWN` is not a valid convention for providers that need to choose
+a depth mode at initialization.
+
+The optional `run_exclusive` host callback is used **only synchronously during create**. The host must:
+
+1. Exclude all other host activity on **every queue of this device**, including submits, presents and queue/device
+   waits, for the entire scope; serialize device and provider operations as Vulkan requires.
+2. Prove previously submitted device work complete before calling the supplied work function **once, on the calling
+   thread**, and prohibit concurrent host queue use while it runs. The vendor may perform its own initialization
+   submissions only inside that function. The callback and its data must never be retained.
+3. Prove all device work complete again after the function returns, even if vendor initialization failed, before
+   releasing the exclusive scope. Return `KZGS_PROVIDER_OK` only when these host guarantees hold and the work
+   function ran once; the provider reports the work's separate result. Report failures with structured status.
+
+If the host fails after invoking work, the provider treats completion as unproven and returns
+`KZGS_PROVIDER_ERROR_DEVICE_LOST` so the host abandons, rather than destroys or reuses, potentially in-flight SDK
+resources. This result can mean *unverifiable completion*, not necessarily a diagnosed hardware loss. A host must
+not advertise the scope merely because it has called an unchecked idle-wait function. Any missing, undersized, or
+failed scope fails closed; 1.0 hosts cannot initiate queue-submitting SDK initialization.
+
+The flags also require explicit qualification of the exact SDK/runtime, device and driver for its execution and
+synchronization behavior. NGX additionally requires qualification of the adapter's `GENERAL` input/output layout,
+access masks and cross-dispatch dependencies. These flags are assertions backed by independent validation, not a way
+to request an unsafe override. The current host supplies **no initialization scope or qualification flags**.
+The synthetic tests' assertions apply only to their test doubles and are not vendor qualification.
 
 ## Frame and resource contract
 
@@ -73,7 +106,7 @@ rectangle. Currently both images are `VK_FORMAT_R8G8B8A8_UNORM`, enter in `VK_IM
 graphics queue. The color encoding is **unknown**; a provider must explicitly support unknown encoding to run.
 `usage` lists guaranteed usage bits, not necessarily every bit used at image creation.
 
-### Temporal qualification (host-internal; ABI unchanged)
+### Temporal qualification (host-internal; frame input contract unchanged)
 
 `kzgs_temporal.h` defines a stricter GS-thread observation/qualification contract, not additional ABI 1.0 fields.
 It requires nonzero frame, presentation, scene, device, provider, and resource identities; matching frame/scene IDs,

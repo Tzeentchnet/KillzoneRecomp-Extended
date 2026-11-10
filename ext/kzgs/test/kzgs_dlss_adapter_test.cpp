@@ -18,6 +18,7 @@ namespace
 	int shutdownCalls = 0;
 	int imageBarriers = 0;
 	int memoryBarriers = 0;
+	int initializationScopes = 0;
 	bool unsupported = false;
 	bool failEval = false;
 	bool failCreate = false;
@@ -55,6 +56,14 @@ namespace
 		return std::strcmp(name, "vkCmdPipelineBarrier") == 0 ? reinterpret_cast<PFN_vkVoidFunction>(barrier) : nullptr;
 	}
 	PFN_vkVoidFunction VKAPI_CALL instanceProc(VkInstance, const char*) { return nullptr; }
+
+	KzgsProviderResult KZGS_PROVIDER_CALL runInitialization(void*, KzgsProviderInitializationWork work,
+		void* workData, KzgsProviderStatus*)
+	{
+		++initializationScopes;
+		work(workData);
+		return KZGS_PROVIDER_OK;
+	}
 
 	KzgsProviderImage image(uintptr_t number, VkFormat format, VkExtent2D extent, VkImageAspectFlags aspect, VkImageUsageFlags usage)
 	{
@@ -184,8 +193,22 @@ int main()
 	createInfo.source_format = createInfo.destination_format = VK_FORMAT_R8G8B8A8_UNORM;
 	createInfo.color_encoding = KZGS_PROVIDER_COLOR_LINEAR_SDR;
 	void* context = nullptr;
+	createInfo.struct_size = static_cast<uint32_t>(offsetof(KzgsProviderCreateInfo, initialization));
+	CHECK(api.create(&createInfo, &context, &status) == KZGS_PROVIDER_ERROR_CREATE && !context);
+	CHECK(status.reason == KZGS_PROVIDER_REASON_MISSING_INPUT && initCalls == 0);
+	createInfo.struct_size = sizeof(createInfo);
+	createInfo.depth_convention = KZGS_PROVIDER_DEPTH_REVERSED;
+	CHECK(api.create(&createInfo, &context, &status) == KZGS_PROVIDER_ERROR_CREATE && !context);
+	CHECK(status.reason == KZGS_PROVIDER_REASON_SYNCHRONIZATION && initCalls == 0);
+	KzgsProviderInitialization initialization{sizeof(initialization), KZGS_PROVIDER_INIT_EXCLUSIVE_DEVICE_IDLE,
+		nullptr, runInitialization};
+	createInfo.initialization = &initialization;
+	CHECK(api.create(&createInfo, &context, &status) == KZGS_PROVIDER_ERROR_CREATE && !context);
+	CHECK(status.reason == KZGS_PROVIDER_REASON_UNQUALIFIED && initCalls == 0);
+	initialization.guarantees |= KZGS_PROVIDER_INIT_SDK_EXECUTION_QUALIFIED |
+		KZGS_PROVIDER_INIT_NGX_GENERAL_LAYOUT_QUALIFIED;
 	CHECK(api.create(&createInfo, &context, &status) == KZGS_PROVIDER_OK && context);
-	CHECK(initCalls == 1 && createCalls == 0 && imageBarriers == 0);
+	CHECK(initCalls == 1 && initializationScopes == 1 && createCalls == 0 && imageBarriers == 0);
 	KzgsProviderSync sync{sizeof(sync), handle<VkCommandBuffer>(5), createInfo.queue, 2, 1, 0};
 	KzgsProviderImage color = image(10, createInfo.source_format, createInfo.source_extent, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_USAGE_SAMPLED_BIT);
 	KzgsProviderImage depth = image(11, VK_FORMAT_D32_SFLOAT, createInfo.source_extent, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_USAGE_SAMPLED_BIT);
@@ -212,8 +235,11 @@ int main()
 	frame.color_encoding = createInfo.color_encoding;
 	frame.jitter_x = 0.25f; frame.jitter_y = -0.375f;
 	frame.motion_scale_x = -640.0f; frame.motion_scale_y = 360.0f;
+	camera.flags = 0;
+	CHECK(api.evaluate(context, &frame, &status) == KZGS_PROVIDER_ERROR_INPUT && imageBarriers == 0);
+	camera.flags = KZGS_PROVIDER_CAMERA_REVERSED_DEPTH;
 	CHECK(api.evaluate(context, &frame, &status) == KZGS_PROVIDER_OK);
-	CHECK(createCalls == 1 && evalCalls == 1 && imageBarriers == 2 && memoryBarriers == 1);
+	CHECK(createCalls == 1 && evalCalls == 1 && imageBarriers == 2 && memoryBarriers == 3);
 	CHECK((createFlags & NVSDK_NGX_DLSS_Feature_Flags_MVLowRes) &&
 		(createFlags & NVSDK_NGX_DLSS_Feature_Flags_DepthInverted) &&
 		(createFlags & NVSDK_NGX_DLSS_Feature_Flags_AutoExposure) &&

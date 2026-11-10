@@ -21,6 +21,11 @@ namespace kzgs::vendor
 		return {code, reason, native, message};
 	}
 
+	using InitializationWork = Result (*)(void*);
+
+	Result runInitialization(const KzgsProviderCreateInfo& info, uint32_t requiredGuarantees,
+		InitializationWork work, void* workData);
+
 	struct Requirements
 	{
 		std::vector<std::string> names;

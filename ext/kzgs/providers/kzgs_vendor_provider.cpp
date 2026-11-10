@@ -1,6 +1,7 @@
 // Shared, fail-closed ABI and Vulkan resource handling for optional temporal adapters.
 // SPDX-License-Identifier: GPL-3.0+
 #include "kzgs_vendor_backend.h"
+#include "kzgs_vendor_conventions.h"
 
 #include <algorithm>
 #include <cmath>
@@ -30,6 +31,32 @@ namespace
 
 	// ABI callbacks are serialized by the host. Storage remains valid until the next provider call.
 	Requirements requirements;
+
+	struct InitializationInvocation
+	{
+		InitializationWork work;
+		void* data;
+		Result result{};
+		bool called = false;
+		bool repeated = false;
+	};
+
+	void KZGS_PROVIDER_CALL initializationWork(void* opaque)
+	{
+		auto& invocation = *static_cast<InitializationInvocation*>(opaque);
+		if (invocation.called)
+		{
+			invocation.repeated = true;
+			return;
+		}
+		invocation.called = true;
+		try { invocation.result = invocation.work(invocation.data); }
+		catch (...)
+		{
+			invocation.result = failure(KZGS_PROVIDER_ERROR_CREATE, KZGS_PROVIDER_REASON_PROVIDER_FAILURE,
+				"SDK initialization threw an exception.");
+		}
+	}
 
 	void copyOutput(void* out, uint32_t capacity, const void* value, size_t size)
 	{
@@ -189,11 +216,11 @@ namespace
 			frame->destination_rect.right != static_cast<int32_t>(context.info.destination_extent.width) ||
 			frame->destination_rect.bottom != static_cast<int32_t>(context.info.destination_extent.height))
 			return format("Image formats, extents, crop, or output do not match the created context.");
-		if (!std::isfinite(frame->jitter_x) || !std::isfinite(frame->jitter_y) ||
-			std::abs(frame->jitter_x) > 0.5f || std::abs(frame->jitter_y) > 0.5f ||
-			!std::isfinite(frame->motion_scale_x) || !std::isfinite(frame->motion_scale_y) ||
-			frame->motion_scale_x == 0.0f || frame->motion_scale_y == 0.0f ||
-			frame->sharpening > 100)
+		TemporalConversion conversion{};
+		const KzgsProviderDepthConvention depth = KZGS_PROVIDER_HAS_FIELD(&context.info, KzgsProviderCreateInfo, depth_convention) ?
+			context.info.depth_convention : KZGS_PROVIDER_DEPTH_UNKNOWN;
+		if (!convertTemporal(frame->jitter_x, frame->jitter_y, frame->motion_scale_x, frame->motion_scale_y,
+				frame->camera->flags, depth, conversion) || frame->sharpening > 100)
 			return missing("Invalid jitter, motion scale, or depth convention.");
 		return {};
 	}
@@ -202,7 +229,10 @@ namespace
 	{
 		const KzgsProviderImage* images[] = {frame.color, frame.depth, frame.motion, frame.output};
 		VkImageMemoryBarrier imageBarriers[4]{};
-		VkPipelineStageFlags sourceStages = before ? 0 : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+		VkMemoryBarrier memory{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+		memory.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+		memory.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+		VkPipelineStageFlags sourceStages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 		for (size_t i = 0; i < 4; ++i)
 		{
 			const KzgsProviderImage& image = *images[i];
@@ -225,7 +255,7 @@ namespace
 		}
 		context.barrier(frame.sync->command_buffer, sourceStages,
 			VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-			0, 0, nullptr, 0, nullptr, 4, imageBarriers);
+			0, 1, &memory, 0, nullptr, 4, imageBarriers);
 	}
 
 	KzgsProviderResult KZGS_PROVIDER_CALL queryInfo(KzgsProviderInfo* out, KzgsProviderStatus* status)
@@ -294,13 +324,15 @@ namespace
 		try
 		{
 			context = std::make_unique<Context>();
-			context->info = *info;
+			std::memcpy(&context->info, info, std::min<size_t>(info->struct_size, sizeof(context->info)));
+			context->info.struct_size = static_cast<uint32_t>(std::min<size_t>(info->struct_size, sizeof(context->info)));
 			context->barrier = reinterpret_cast<PFN_vkCmdPipelineBarrier>(
 				info->get_device_proc_addr(info->device, "vkCmdPipelineBarrier"));
 			if (!context->barrier)
 				return report(status, failure(KZGS_PROVIDER_ERROR_CREATE, KZGS_PROVIDER_REASON_MISSING_FEATURE,
 					"vkCmdPipelineBarrier is unavailable."));
-			const Result result = backend().create(*info, &context->vendor);
+			const Result result = backend().create(context->info, &context->vendor);
+			context->info.initialization = nullptr;
 			if (result.code != KZGS_PROVIDER_OK || !context->vendor)
 			{
 				if (context->vendor)
@@ -371,6 +403,48 @@ namespace
 	}
 }
 
+namespace kzgs::vendor
+{
+	Result runInitialization(const KzgsProviderCreateInfo& info, uint32_t requiredGuarantees,
+		InitializationWork work, void* workData)
+	{
+		if (!KZGS_PROVIDER_HAS_FIELD(&info, KzgsProviderCreateInfo, initialization) ||
+			!KZGS_PROVIDER_HAS_FIELD(info.initialization, KzgsProviderInitialization, run_exclusive) ||
+			!info.initialization->run_exclusive ||
+			!(info.initialization->guarantees & KZGS_PROVIDER_INIT_EXCLUSIVE_DEVICE_IDLE))
+			return failure(KZGS_PROVIDER_ERROR_CREATE, KZGS_PROVIDER_REASON_SYNCHRONIZATION,
+				"Host does not provide exclusive, device-idle SDK initialization.");
+		if ((info.initialization->guarantees & requiredGuarantees) != requiredGuarantees)
+			return failure(KZGS_PROVIDER_ERROR_CREATE, KZGS_PROVIDER_REASON_UNQUALIFIED,
+				"The requested SDK execution and image-layout contract is not qualified.");
+		if (!work)
+			return failure(KZGS_PROVIDER_ERROR_CREATE, KZGS_PROVIDER_REASON_PROVIDER_FAILURE,
+				"SDK initialization callback is missing.");
+
+		InitializationInvocation invocation{work, workData};
+		KzgsProviderStatus status{sizeof(status)};
+		KzgsProviderResult hostResult = KZGS_PROVIDER_ERROR_CREATE;
+		try
+		{
+			hostResult = info.initialization->run_exclusive(info.initialization->host_data,
+				initializationWork, &invocation, &status);
+		}
+		catch (...) {}
+		if (hostResult != KZGS_PROVIDER_OK || invocation.repeated)
+		{
+			if (invocation.called)
+				return failure(KZGS_PROVIDER_ERROR_DEVICE_LOST, KZGS_PROVIDER_REASON_DEVICE_LOST,
+					"Host could not prove completion after SDK initialization; abandon device work.", status.native_code);
+			return failure(KZGS_PROVIDER_ERROR_CREATE, KZGS_PROVIDER_REASON_SYNCHRONIZATION,
+				"Host could not enter exclusive SDK initialization.", status.native_code);
+		}
+		if (!invocation.called)
+			return failure(KZGS_PROVIDER_ERROR_CREATE, KZGS_PROVIDER_REASON_SYNCHRONIZATION,
+				"Host did not invoke the synchronous SDK initialization callback.");
+		return invocation.result;
+	}
+}
+
 KZGS_PROVIDER_EXPORT KzgsProviderResult KZGS_PROVIDER_CALL kzgs_upscaler_get_api(
 	uint32_t version, KzgsProviderApi* out, KzgsProviderStatus* status)
 {
@@ -380,7 +454,8 @@ KZGS_PROVIDER_EXPORT KzgsProviderResult KZGS_PROVIDER_CALL kzgs_upscaler_get_api
 		return report(status, invalid("Provider API buffer is missing."));
 	KzgsProviderApi api{};
 	api.struct_size = sizeof(api);
-	api.abi_version = KZGS_PROVIDER_ABI_VERSION;
+	api.abi_version = KZGS_PROVIDER_VERSION(KZGS_PROVIDER_VERSION_MAJOR(KZGS_PROVIDER_ABI_VERSION),
+		std::min(KZGS_PROVIDER_VERSION_MINOR(version), KZGS_PROVIDER_VERSION_MINOR(KZGS_PROVIDER_ABI_VERSION)));
 	api.query_info = queryInfo;
 	api.instance_requirements = instanceRequirements;
 	api.device_requirements = deviceRequirements;
