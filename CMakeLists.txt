@@ -377,6 +377,9 @@ if(BUILD_TESTING)
         --renderer d3d11 --warp --frames 2 --stress-uploads 64
         --out "${KZ_TEST_STATE_DIR}/kzgs/component")
     kz_add_iso_free_test(kzgs_fsr1_reference kzgs_fsr1_test)
+    kz_add_iso_free_test(kzgs_api_compatibility kzgs_api_compat_test)
+    set_tests_properties(kzgs_api_compatibility PROPERTIES
+        LABELS "iso-free;component;renderer" RESOURCE_LOCK kzgs_gpu)
     kz_add_iso_free_test(kzgs_temporal_contract kzgs_temporal_contract_test)
     kz_add_iso_free_test(kzgs_temporal_vulkan_validation kzgs_test --renderer vulkan --temporal-validation
         --out "${KZ_TEST_STATE_DIR}/kzgs/temporal")

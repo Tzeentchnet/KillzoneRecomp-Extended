@@ -3,12 +3,12 @@
 
 #include "kzgs_temporal.h"
 
-struct KzgsConfig;
+struct KzgsConfigV1;
 
 namespace kzgs
 {
-	void TemporalStart(const KzgsConfig& config);
-	void TemporalConfigure(const KzgsConfig& config);
+	void TemporalStart(const KzgsConfigV1& config);
+	void TemporalConfigure(const KzgsConfigV1& config);
 	void TemporalStop();
 	void TemporalBeginVsync(const KzgsTemporalGuestObservation& guest, uint64_t aspectId);
 	void TemporalEndVsync();

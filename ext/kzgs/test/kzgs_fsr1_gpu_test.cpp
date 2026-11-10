@@ -88,14 +88,14 @@ int main()
 	if (!hwnd)
 		return 2;
 	alignas(16) uint8_t regs[0x2000]{};
-	KzgsConfig cfg;
+	KzgsConfigV1 cfg;
 	cfg.renderer = KzgsRenderer::Vulkan;
 	cfg.upscaler = KzgsUpscaler::FSR1;
 	cfg.debugDevice = true;
 	cfg.vsync = false;
 	kzgsSetLogCallback(Log);
 	std::string error;
-	if (!kzgsOpen(kz::host::NativeWindow::win32(hwnd), cfg, regs, &error))
+	if (!kzgsOpenV1(kz::host::NativeWindow::win32(hwnd), cfg, regs, &error))
 	{
 		std::fprintf(stderr, "FAIL: Vulkan open: %s\n", error.c_str());
 		DestroyWindow(hwnd);

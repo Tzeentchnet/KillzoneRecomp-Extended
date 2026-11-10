@@ -44,7 +44,7 @@ namespace
 		bool enabled = false, log = false, inVsync = false, gotPresent = false, presentSucceeded = false;
 		bool overflow = false, hasPreviousGuest = false;
 		uint64_t frameSequence = 0, deviceId = 0, providerId = 0;
-		KzgsConfig config{};
+		KzgsConfigV1 config{};
 		KzgsTemporalGuestObservation guest{}, previousGuest{};
 		KzgsTemporalFrame frame{};
 		Tracker tracker{};
@@ -234,7 +234,7 @@ namespace
 
 namespace kzgs
 {
-	void TemporalStart(const KzgsConfig& config)
+	void TemporalStart(const KzgsConfigV1& config)
 	{
 		s = {};
 		s.deviceId = ++s_deviceSequence;
@@ -242,7 +242,7 @@ namespace kzgs
 		TemporalConfigure(config);
 	}
 
-	void TemporalConfigure(const KzgsConfig& config)
+	void TemporalConfigure(const KzgsConfigV1& config)
 	{
 		const bool enabled = config.temporalDiagnostics || EnvironmentEnabled() ||
 			config.upscaler == KzgsUpscaler::DLSS || config.upscaler == KzgsUpscaler::XeSS;

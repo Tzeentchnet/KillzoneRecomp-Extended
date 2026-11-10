@@ -25,6 +25,7 @@
 #include "kzgs_temporal.h"
 #include "kz_host/core.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -63,8 +64,6 @@ struct KzgsConfig
 {
 	KzgsRenderer renderer = KzgsRenderer::D3D11;
 	int upscale = 1;                                   // internal resolution multiplier, 1..8
-	KzgsUpscaler upscaler = KzgsUpscaler::Off;         // requested presentation provider; independent of upscale
-	int upscalerSharpening = 0;                        // provider-owned sharpening, 0..100; not CAS
 	KzgsTextureFilter textureFiltering = KzgsTextureFilter::PS2;
 	int anisotropy = 0;                                // 0 (off), 2, 4, 8, 16
 	KzgsMipmapMode mipmapMode = KzgsMipmapMode::PS2;   // BaseOnly disables mip selection and samples level zero
@@ -110,8 +109,17 @@ struct KzgsConfig
 	// path, where a packet may continue in the next call (PCSX2 MTGS semantics).
 	bool selfContainedGifPackets = true;
 	bool debugDevice = false;                          // D3D/Vulkan validation layer
+};
+
+// The original KzgsConfig is kept unchanged for existing aggregate initializers and compiled callers.
+// Extended configurations are passed to kzgsOpenEx/kzgsUpdateConfigEx with an explicit size and version.
+struct KzgsConfigV1 : KzgsConfig
+{
+	KzgsUpscaler upscaler = KzgsUpscaler::Off;         // requested presentation provider; independent of upscale
+	int upscalerSharpening = 0;                        // provider-owned sharpening, 0..100; not CAS
 	bool temporalDiagnostics = false;                  // metadata-only observation; never enables temporal providers
 };
+inline constexpr uint32_t KZGS_CONFIG_VERSION_1 = 1;
 
 struct KzgsResolutionInfo
 {
@@ -126,6 +134,16 @@ struct KzgsResolutionInfo
 // `privRegs` is the caller's 0x2000-byte privileged register block (see above); it is read at open and at every
 // kzgsVsync. Returns false with a message in *err on failure. Only one kzgs instance can be open at a time.
 bool kzgsOpen(const kz::host::NativeWindow& window, const KzgsConfig& cfg, uint8_t* privRegs, std::string* err = nullptr);
+
+// config must point to a complete KzgsConfigV1 when version is KZGS_CONFIG_VERSION_1. Short/unknown versions are
+// rejected before their payload is read. Legacy kzgsOpen always uses Off/0 and disables temporal diagnostics.
+bool kzgsOpenEx(const kz::host::NativeWindow& window, const void* config, size_t configSize, uint32_t version,
+	uint8_t* privRegs, std::string* err = nullptr);
+inline bool kzgsOpenV1(const kz::host::NativeWindow& window, const KzgsConfigV1& cfg,
+	uint8_t* privRegs, std::string* err = nullptr)
+{
+	return kzgsOpenEx(window, &cfg, sizeof(cfg), KZGS_CONFIG_VERSION_1, privRegs, err);
+}
 
 // Destroys the device and joins the GS thread. Safe to call when not open.
 void kzgsClose();
@@ -152,15 +170,15 @@ void kzgsGifTransfer(int path, const uint8_t* data, uint32_t qwords);
 //
 // `wide`: the frame was drawn for an ultrawide display (3D view widened by the caller). With a wide ratio set by kzgsSetWideRatio such
 // frames are stretched to that aspect ratio, other frames use KzgsConfig::aspect (pillarboxed in a wider window).
-void kzgsVsync(int field, bool regsWritten = true, bool wide = false,
-	const KzgsTemporalGuestObservation* temporal = nullptr);
+void kzgsVsync(int field, bool regsWritten = true, bool wide = false);
+void kzgsVsyncTemporal(int field, bool regsWritten, bool wide, const KzgsTemporalGuestObservation* temporal);
 
 // Non-blocking kzgsVsync() for callers that must not stall (the VIF1/GIF worker, which the EE waits for): when the GS thread
 // still has more than maxQueuedFrames frames to finish (slow Present: an external frame limiter, a display slower than the
 // guest vblank rate) nothing is queued and false is returned: the caller keeps its pending state and tries again at the
 // next vblank. At most one thread may call kzgsVsync/kzgsVsyncTry.
-bool kzgsVsyncTry(int field, bool regsWritten = true, bool wide = false,
-	const KzgsTemporalGuestObservation* temporal = nullptr);
+bool kzgsVsyncTry(int field, bool regsWritten = true, bool wide = false);
+bool kzgsVsyncTryTemporal(int field, bool regsWritten, bool wide, const KzgsTemporalGuestObservation* temporal);
 
 // Aspect ratio (width / height, e.g. 64.0f / 27.0f) that wide frames are presented at; 0 = off (every frame uses KzgsConfig::aspect).
 void kzgsSetWideRatio(float ratio);
@@ -181,8 +199,14 @@ void kzgsResize(int width, int height);
 // False until the first frame has completed or after the renderer closes.
 bool kzgsGetResolutionInfo(KzgsResolutionInfo& out);
 
-// Applies new settings (renderer switches recreate the device on the same window).
+// Applies legacy settings, resetting extended settings to Off/0 and disabling temporal diagnostics.
+// Renderer switches recreate the device on the same window.
 void kzgsUpdateConfig(const KzgsConfig& cfg);
+bool kzgsUpdateConfigEx(const void* config, size_t configSize, uint32_t version, std::string* err = nullptr);
+inline bool kzgsUpdateConfigV1(const KzgsConfigV1& cfg, std::string* err = nullptr)
+{
+	return kzgsUpdateConfigEx(&cfg, sizeof(cfg), KZGS_CONFIG_VERSION_1, err);
+}
 
 // Blocks until the GS thread has processed everything queued so far.
 void kzgsSync();

@@ -149,7 +149,7 @@ namespace
 			fn(id, a);
 	}
 
-	static bool ValidateUpscalerConfig(const KzgsConfig& cfg, std::string& error)
+	static bool ValidateUpscalerConfig(const KzgsConfigV1& cfg, std::string& error)
 	{
 		if (!kzgsIsValidUpscaler(cfg.upscaler))
 		{
@@ -170,7 +170,7 @@ namespace
 		s_upscaler_status = {};
 	}
 
-	static void PublishUpscalerStatus(const KzgsConfig& cfg)
+	static void PublishUpscalerStatus(const KzgsConfigV1& cfg)
 	{
 		KzgsUpscalerStatus status;
 		status.requested = cfg.upscaler;
@@ -925,7 +925,7 @@ namespace
 				{
 					u64 p;
 					std::memcpy(&p, payload, sizeof(p));
-					std::unique_ptr<KzgsConfig> cfg(reinterpret_cast<KzgsConfig*>(p));
+					std::unique_ptr<KzgsConfigV1> cfg(reinterpret_cast<KzgsConfigV1*>(p));
 					kzgs::TemporalConfigure(*cfg);
 					kzgs::ProviderStop();
 					kzgs::Fsr1Configure(false, 0);
@@ -997,7 +997,7 @@ namespace
 		std::string error;
 	};
 
-	static void GSThreadMain(KzgsConfig cfg, OpenResult* result)
+	static void GSThreadMain(KzgsConfigV1 cfg, OpenResult* result)
 	{
 		SetThreadDescription(GetCurrentThread(), L"kzgs GS thread");
 
@@ -1050,7 +1050,7 @@ namespace
 // Public API
 // ---------------------------------------------------------------------------------------------------------------------
 
-bool kzgsOpen(const kz::host::NativeWindow& window, const KzgsConfig& cfg, uint8_t* privRegs, std::string* err)
+static bool OpenImpl(const kz::host::NativeWindow& window, const KzgsConfigV1& cfg, uint8_t* privRegs, std::string* err)
 {
 	if (s_open.load())
 	{
@@ -1100,6 +1100,33 @@ bool kzgsOpen(const kz::host::NativeWindow& window, const KzgsConfig& cfg, uint8
 
 	s_open.store(true);
 	return true;
+}
+
+static bool CheckExtendedConfig(const void* config, size_t configSize, uint32_t version, std::string* err)
+{
+	const char* message = !config ? "extended configuration must not be null" :
+		version != KZGS_CONFIG_VERSION_1 ? "unsupported extended configuration version" :
+		configSize < sizeof(KzgsConfigV1) ? "extended configuration is too small" : nullptr;
+	if (!message)
+		return true;
+	if (err)
+		*err = message;
+	return false;
+}
+
+bool kzgsOpen(const kz::host::NativeWindow& window, const KzgsConfig& cfg, uint8_t* privRegs, std::string* err)
+{
+	KzgsConfigV1 extended;
+	static_cast<KzgsConfig&>(extended) = cfg;
+	return OpenImpl(window, extended, privRegs, err);
+}
+
+bool kzgsOpenEx(const kz::host::NativeWindow& window, const void* config, size_t configSize, uint32_t version,
+	uint8_t* privRegs, std::string* err)
+{
+	if (!CheckExtendedConfig(config, configSize, version, err))
+		return false;
+	return OpenImpl(window, *static_cast<const KzgsConfigV1*>(config), privRegs, err);
 }
 
 void kzgsClose()
@@ -1214,7 +1241,7 @@ void kzgsSetShowFps(bool show)
 	g_kzgs_show_fps.store(show, std::memory_order_relaxed);
 }
 
-void kzgsVsync(int field, bool regsWritten, bool wide, const KzgsTemporalGuestObservation* temporal)
+void kzgsVsyncTemporal(int field, bool regsWritten, bool wide, const KzgsTemporalGuestObservation* temporal)
 {
 	if (!s_open.load(std::memory_order_relaxed))
 		return;
@@ -1251,7 +1278,7 @@ void kzgsVsync(int field, bool regsWritten, bool wide, const KzgsTemporalGuestOb
 		Trace(6);
 }
 
-bool kzgsVsyncTry(int field, bool regsWritten, bool wide, const KzgsTemporalGuestObservation* temporal)
+bool kzgsVsyncTryTemporal(int field, bool regsWritten, bool wide, const KzgsTemporalGuestObservation* temporal)
 {
 	if (!s_open.load(std::memory_order_relaxed))
 		return true;
@@ -1273,6 +1300,16 @@ bool kzgsVsyncTry(int field, bool regsWritten, bool wide, const KzgsTemporalGues
 	Push(Cmd::Vsync, static_cast<u32>(field & 1), (regsWritten ? 1u : 0u) | (wide ? 2u : 0u), &p, sizeof(p));
 	Trace(9, static_cast<u32>(queued));
 	return true;
+}
+
+void kzgsVsync(int field, bool regsWritten, bool wide)
+{
+	kzgsVsyncTemporal(field, regsWritten, wide, nullptr);
+}
+
+bool kzgsVsyncTry(int field, bool regsWritten, bool wide)
+{
+	return kzgsVsyncTryTemporal(field, regsWritten, wide, nullptr);
 }
 
 void kzgsWriteCSR(uint32_t csr)
@@ -1322,21 +1359,37 @@ bool kzgsGetResolutionInfo(KzgsResolutionInfo& out)
 	}
 }
 
-void kzgsUpdateConfig(const KzgsConfig& cfg)
+static bool UpdateConfigImpl(const KzgsConfigV1& cfg, std::string* err)
 {
 	if (!s_open.load(std::memory_order_relaxed))
-		return;
+	{
+		if (err)
+			*err = "kzgs is not open";
+		return false;
+	}
 	std::string error;
 	if (!ValidateUpscalerConfig(cfg, error))
 	{
-		const std::string message = "configuration update rejected: " + error;
-		if (s_log_fn)
-			s_log_fn(0, message.c_str());
-		else
-			std::fprintf(stderr, "[kzgs] %s\n", message.c_str());
-		return;
+		if (err)
+			*err = error;
+		return false;
 	}
-	PushPtr(Cmd::UpdateConfig, new KzgsConfig(cfg));
+	PushPtr(Cmd::UpdateConfig, new KzgsConfigV1(cfg));
+	return true;
+}
+
+void kzgsUpdateConfig(const KzgsConfig& cfg)
+{
+	KzgsConfigV1 extended;
+	static_cast<KzgsConfig&>(extended) = cfg;
+	UpdateConfigImpl(extended, nullptr);
+}
+
+bool kzgsUpdateConfigEx(const void* config, size_t configSize, uint32_t version, std::string* err)
+{
+	if (!CheckExtendedConfig(config, configSize, version, err))
+		return false;
+	return UpdateConfigImpl(*static_cast<const KzgsConfigV1*>(config), err);
 }
 
 void kzgsSync()

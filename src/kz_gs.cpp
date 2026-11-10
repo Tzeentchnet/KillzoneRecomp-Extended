@@ -138,9 +138,9 @@ namespace
         bool resizePending = false;
         int resizeW = 0, resizeH = 0;
         bool configPending = false;
-        KzgsConfig pendingConfig;
+        KzgsConfigV1 pendingConfig;
         RenderScaleContract pendingScale;
-        KzgsConfig activeConfig;
+        KzgsConfigV1 activeConfig;
         RenderScaleContract activeScale;
         int windowWidth = 0;
         int windowHeight = 0;
@@ -181,20 +181,20 @@ namespace
         return s;
     }
 
-    void applyUpscalerConfig(const KzConfig &config, KzgsConfig &renderer)
+    void applyUpscalerConfig(const KzConfig &config, KzgsConfigV1 &renderer)
     {
         renderer.upscaler = config.upscalerOverrides.provider.value_or(config.upscaler);
         renderer.upscalerSharpening =
             config.upscalerOverrides.sharpening.value_or(config.upscalerSharpening);
     }
 
-    KzgsConfig toKzgs(
+    KzgsConfigV1 toKzgs(
         const KzConfig &c,
         int windowHeight,
         int windowWidth,
         RenderScaleContract *scaleContract = nullptr)
     {
-        KzgsConfig k;
+        KzgsConfigV1 k;
         switch (c.renderer)
         {
         case KzRenderer::D3D11: k.renderer = KzgsRenderer::D3D11; break;
@@ -954,7 +954,7 @@ namespace
             {
                 const bool upscalerChanged = s.activeConfig.upscaler != s.pendingConfig.upscaler ||
                     s.activeConfig.upscalerSharpening != s.pendingConfig.upscalerSharpening;
-                kzgsUpdateConfig(s.pendingConfig);
+                kzgsUpdateConfigV1(s.pendingConfig);
                 if (upscalerChanged)
                     kzgsSync();
                 s.activeConfig = s.pendingConfig;
@@ -1002,9 +1002,9 @@ namespace
         {
             const bool firstPresent = !presentedOnce;
             if (blockingThrottle)
-                kzgsVsync(field, regsChanged || firstPresent, job->wide, &job->temporal), didPresent = true;
+                kzgsVsyncTemporal(field, regsChanged || firstPresent, job->wide, &job->temporal), didPresent = true;
             else
-                didPresent = kzgsVsyncTry(field, regsChanged || firstPresent, job->wide, &job->temporal);
+                didPresent = kzgsVsyncTryTemporal(field, regsChanged || firstPresent, job->wide, &job->temporal);
             if (didPresent)
             {
                 g_packetsSinceVsync.store(0, std::memory_order_relaxed);
@@ -1140,8 +1140,8 @@ bool kzGsAttach(
     kzWideConfigure(cfg.aspect, windowWidth, windowHeight);
     snapshotPrivRegs(s, s.privRegs);
     RenderScaleContract scale;
-    KzgsConfig kc = toKzgs(cfg, windowHeight, windowWidth, &scale);
-    if (!kzgsOpen(window, kc, s.privRegs, error))
+    KzgsConfigV1 kc = toKzgs(cfg, windowHeight, windowWidth, &scale);
+    if (!kzgsOpenV1(window, kc, s.privRegs, error))
         return false;
     runtime.gs().setRasterBackend(std::make_unique<SkipDrawBackend>());
     PS2HostGs hooks;
@@ -1348,7 +1348,7 @@ int kzGsSelfTest()
     check(override.mode == RenderScaleMode::AutomationOverride && override.effectiveScale == 2,
           "automation can request a controlled sub-output input");
     KzConfig legacy;
-    KzgsConfig renderer;
+    KzgsConfigV1 renderer;
     renderer.upscale = 3;
     renderer.casSharpness = 30;
     applyUpscalerConfig(legacy, renderer);

@@ -82,14 +82,14 @@ namespace
 		int sharpening = 0)
 	{
 		alignas(16) static uint8_t regs[0x2000]{};
-		KzgsConfig cfg;
+		KzgsConfigV1 cfg;
 		cfg.renderer = KzgsRenderer::Vulkan;
 		cfg.upscaler = provider;
 		cfg.upscalerSharpening = sharpening;
 		cfg.debugDevice = true;
 		cfg.vsync = false;
 		std::string error;
-		const bool opened = kzgsOpen(kz::host::NativeWindow::win32(window), cfg, regs, &error);
+		const bool opened = kzgsOpenV1(kz::host::NativeWindow::win32(window), cfg, regs, &error);
 		if (!opened)
 			std::fprintf(stderr, "Vulkan open failed: %s\n", error.c_str());
 		Check(opened, "Vulkan device remains available");

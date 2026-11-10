@@ -516,6 +516,13 @@ if(KZGS_BUILD_TEST)
 	target_precompile_headers(kzgs_fsr1_gpu_test PRIVATE "${P2SRC}/PrecompiledHeader.h")
 	kzgs_stage_resources(kzgs_fsr1_gpu_test)
 
+	add_executable(kzgs_api_compat_test
+		"${KZGS_ROOT}/test/kzgs_api_compat_test.cpp"
+		"${KZGS_ROOT}/test/kzgs_legacy_client.cpp")
+	target_link_libraries(kzgs_api_compat_test PRIVATE "${_kzgs_component_link}")
+	target_compile_features(kzgs_api_compat_test PRIVATE cxx_std_20)
+	kzgs_stage_resources(kzgs_api_compat_test)
+
 	add_executable(kzgs_test "${KZGS_ROOT}/test/kzgs_test.cpp")
 	target_include_directories(kzgs_test PRIVATE "${KZGS_ROOT}/src" "${KZGS_ROOT}/shim/include" "${P3}/vulkan/include")
 	target_compile_definitions(kzgs_test PRIVATE KZGS_FSR1_TESTING KZGS_PROVIDER_TESTING)

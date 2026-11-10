@@ -253,7 +253,7 @@ int main(int argc, char** argv)
 	std::vector<VramReq> vram;
 	std::vector<TexReq> texs;
 	std::string defrost, save_vram;
-	KzgsConfig cfg;
+	KzgsConfigV1 cfg;
 	cfg.upscale = 1;
 	cfg.vsync = false;
 	KzgsUpscalerOverrides upscaler_overrides = kzgsUpscalerEnvironmentOverrides(
@@ -357,7 +357,7 @@ int main(int argc, char** argv)
 		hidden_window = CreateWindowExW(0, L"STATIC", L"kzgs_replay", WS_POPUP, 0, 0, present_w, present_h, nullptr, nullptr, nullptr, nullptr);
 	const kz::host::NativeWindow native_window =
 		hidden_window ? kz::host::NativeWindow::win32(hidden_window) : kz::host::NativeWindow{};
-	if (!kzgsOpen(native_window, cfg, regs, &err))
+	if (!kzgsOpenV1(native_window, cfg, regs, &err))
 	{
 		std::fprintf(stderr, "kzgsOpen failed: %s\n", err.c_str());
 		return 1;

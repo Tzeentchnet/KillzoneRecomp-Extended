@@ -70,17 +70,23 @@ A D3D11-only run touches none of them, except when screenshots, dumps or texture
 ```cpp
 bool kzgsOpen(const kz::host::NativeWindow& window, const KzgsConfig& cfg,
               uint8_t* privRegs, std::string* err = nullptr);
+bool kzgsOpenEx(const kz::host::NativeWindow& window, const void* config,
+                size_t configSize, uint32_t version, uint8_t* privRegs, std::string* err = nullptr);
 void kzgsClose();
 bool kzgsIsOpen();
 bool kzgsGetUpscalerStatus(KzgsUpscalerStatus& out);  // last applied request, effective provider and fallback reason
 void kzgsGifTransfer(int path /*1..3*/, const uint8_t* data, uint32_t qwords);
-void kzgsVsync(int field, bool regsWritten = true);   // presents a frame
+void kzgsVsync(int field, bool regsWritten = true, bool wide = false);
+bool kzgsVsyncTry(int field, bool regsWritten = true, bool wide = false);
+void kzgsVsyncTemporal(int field, bool regsWritten, bool wide, const KzgsTemporalGuestObservation* temporal);
+bool kzgsVsyncTryTemporal(int field, bool regsWritten, bool wide, const KzgsTemporalGuestObservation* temporal);
 void kzgsWriteCSR(uint32_t csr);                      // RESET bit
 void kzgsSoftReset(uint32_t mask = 7);                // GIF path soft reset
 void kzgsReset();                                     // full GS reset
 void kzgsResize(int width, int height);
 bool kzgsGetResolutionInfo(KzgsResolutionInfo& out);  // latest exact render and physical output dimensions
 void kzgsUpdateConfig(const KzgsConfig& cfg);         // any setting, including a renderer switch
+bool kzgsUpdateConfigEx(const void* config, size_t configSize, uint32_t version, std::string* err = nullptr);
 void kzgsSync();                                      // wait until the GS thread has drained the queue
 bool kzgsReadback(std::vector<uint8_t>& rgba, int& w, int& h,
                   int presentWidth = 0, int presentHeight = 0);  // last output frame, RGBA8; internal resolution, or as presented in a window of that size
@@ -93,9 +99,6 @@ bool kzgsBurstTake(std::vector<KzgsBurstFrame>& out);
 `KzgsConfig` has these settings:
 - `renderer`: D3D11, D3D12, Vulkan, or Software (PCSX2's software rasterizer, useful as a reference when debugging)
 - `upscale`: 1 to 8
-- `upscaler` and `upscalerSharpening`: experimental presentation request, default Off/0; independent of integer
-  `upscale` and `casSharpness`. FSR1 is implemented on Vulkan. No vendor binary is bundled; all DLSS/XeSS requests
-  currently fail closed regardless of provider capabilities.
 - `textureFiltering`: PCSX2 `BiFiltering`
 - `anisotropy`
 - `fxaa`
@@ -113,9 +116,21 @@ bool kzgsBurstTake(std::vector<KzgsBurstFrame>& out);
 - `selfContainedGifPackets`: default true; see GIF packet semantics below
 - `debugDevice`
 
+The original aggregate and three-argument `kzgsVsync`/`kzgsVsyncTry` symbols retain their legacy layout and
+function-pointer types. `kzgsOpen` and `kzgsUpdateConfig` consume only `KzgsConfig`; both use default extended
+settings (Off/0 and temporal diagnostics disabled). Use the separately named temporal VSync entry points to send
+guest observations.
+
+New callers use `KzgsConfigV1` (derived from `KzgsConfig`) with `kzgsOpenEx` and `kzgsUpdateConfigEx`, passing
+`sizeof(config)` and `KZGS_CONFIG_VERSION_1`. `kzgsOpenV1`/`kzgsUpdateConfigV1` are convenience wrappers that pass
+those values. Unknown versions and truncated buffers are rejected before reading the configuration. V1 adds
+`upscaler`, `upscalerSharpening`, and `temporalDiagnostics`. The experimental presentation request defaults to
+Off/0 and is independent of integer `upscale` and `casSharpness`; FSR1 is implemented on Vulkan. No vendor binary
+is bundled; all DLSS/XeSS requests currently fail closed regardless of provider capabilities.
+
 Pass `hwnd = nullptr` to open without a window (a surfaceless device). This still renders and supports
 `kzgsReadback`, so it can be used for headless screenshot tests.
-`kzgsGetUpscalerStatus` returns false while closed. After `kzgsUpdateConfig`, call `kzgsSync` before querying the
+`kzgsGetUpscalerStatus` returns false while closed. After either config update, call `kzgsSync` before querying the
 new status. A Vulkan FSR1 request reports `waiting_for_frame` until a successful upscaled present. The provider
 preserves the cropped source and destination aspect; it reports `no_upscale_needed` if either destination axis is
 smaller than the source or both are equal. Initialization and dispatch failures fall back to normal presentation.

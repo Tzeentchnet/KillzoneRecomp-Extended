@@ -193,7 +193,7 @@ int main(int argc, char **argv)
     int every = 30, upscale = 2, presentWidth = 0, presentHeight = 0;
     uint64_t captureFrom = 1, captureTo = UINT64_MAX;
     bool stats = false, fixDy = false, backbuffer = false;
-    KzgsConfig cfg;
+    KzgsConfigV1 cfg;
     KzgsUpscalerOverrides upscalerOverrides = kzgsUpscalerEnvironmentOverrides(
         std::getenv("KZ_UPSCALER"), std::getenv("KZ_UPSCALER_SHARPENING"), std::cerr);
     for (int i = 3; i < argc; ++i)
@@ -303,7 +303,7 @@ int main(int argc, char **argv)
         if (level <= 1)
             std::fprintf(stderr, "[kzgs] %s\n", msg);
     });
-    if (!kzgsOpen(nativeWindow, cfg, regs, &err))
+    if (!kzgsOpenV1(nativeWindow, cfg, regs, &err))
     {
         std::fprintf(stderr, "kzgsOpen failed: %s\n", err.c_str());
         return 1;
