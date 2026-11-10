@@ -1172,18 +1172,23 @@ static void CheckTemporalObservations(HWND hwnd, const std::vector<uint8_t>& sce
 	kzgsGifTransfer(3, scene.data(), static_cast<uint32_t>(scene.size() / 16));
 	const std::vector<uint8_t> movedDepth = BuildDepthScene(8);
 	kzgsGifTransfer(3, movedDepth.data(), static_cast<uint32_t>(movedDepth.size() / 16));
-	kzgsVsyncTemporal(1, true, false, &guest);
+	check(kzgsVsyncTryTemporal(1, true, false, &guest), "non-blocking temporal VSync queues after synchronization");
+	guest.guestVsync = guest.buildId = guest.cameraId = 999;
 	guest.resetReasons = 0;
 	kzgsSync();
 	KzgsTemporalDiagnostics next;
 	check(kzgsGetTemporalDiagnostics(next) && next.guestVsync == 101 &&
+		next.guestBuildId == 8 && next.cameraId == 12 &&
 		(next.resetReasons & guestResets) == guestResets &&
 		(next.resetReasons & KZGS_TEMPORAL_RESET_CAMERA_CHANGE) &&
 		(next.resetReasons & KZGS_TEMPORAL_RESET_WORLD_TRANSITION),
-		"ordered discontinuities and detectable guest transitions are retained");
+		"non-blocking VSync copies guest metadata and retains ordered discontinuities");
 	check(!next.temporalValid && !next.historyFrameId && !next.committedHistoryFrames,
 		"moving synthetic geometry is not treated as motion-vector evidence");
 
+	guest.guestVsync = 101;
+	guest.buildId = 8;
+	guest.cameraId = 12;
 	kzgsVsyncTemporal(1, false, false, &guest);
 	kzgsSync();
 	KzgsTemporalDiagnostics duplicate;

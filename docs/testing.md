@@ -117,7 +117,8 @@ ctest --test-dir .\build\win-msvc-rel -R '^kz_product_selftest$|^kzgs_temporal_(
 ```
 
 The pure synthetic contract test rejects missing, mismatched and invalid inputs and checks that history commits only
-after a successful matching dispatch/present. The product self-test covers guest build/kick camera candidates,
+after a successful matching dispatch/present. Blocking and successfully queued non-blocking temporal VSync submissions
+copy guest metadata before returning. The product self-test covers guest build/kick camera candidates,
 menu/movie forwarding without logo-timer changes, and pending reset delivery. D3D11 WARP and Vulkan render synthetic color/depth triangles, exercise HW draw/display/present
 observations and duplicate/reset paths, and assert that no candidate becomes a valid temporal resource or history.
 Vulkan uses standard validation, not synchronization validation, because of the existing synthetic GS index-upload

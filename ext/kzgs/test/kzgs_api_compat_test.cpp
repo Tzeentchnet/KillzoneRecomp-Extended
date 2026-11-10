@@ -14,6 +14,10 @@
 static_assert(std::is_aggregate_v<KzgsConfig>);
 static_assert(std::is_same_v<decltype(&kzgsVsync), void (*)(int, bool, bool)>);
 static_assert(std::is_same_v<decltype(&kzgsVsyncTry), bool (*)(int, bool, bool)>);
+static_assert(std::is_same_v<decltype(&kzgsVsyncTemporal),
+	void (*)(int, bool, bool, const KzgsTemporalGuestObservation*)>);
+static_assert(std::is_same_v<decltype(&kzgsVsyncTryTemporal),
+	bool (*)(int, bool, bool, const KzgsTemporalGuestObservation*)>);
 
 extern size_t LegacyConfigSize();
 extern size_t LegacyConfigOffset(int index);
