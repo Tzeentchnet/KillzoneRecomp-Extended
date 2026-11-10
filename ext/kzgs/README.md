@@ -91,11 +91,12 @@ void kzgsUpdateConfig(const KzgsConfig& cfg);         // any setting, including 
 bool kzgsUpdateConfigEx(const void* config, size_t configSize, uint32_t version, std::string* err = nullptr);
 void kzgsSync();                                      // wait until the GS thread has drained the queue
 bool kzgsReadback(std::vector<uint8_t>& rgba, int& w, int& h,
-                  int presentWidth = 0, int presentHeight = 0);  // last output frame, RGBA8; internal resolution, or as presented in a window of that size
+                  int presentWidth = 0, int presentHeight = 0);  // RGBA8; internal resolution or a presentation-sized snapshot
 void kzgsSetLogCallback(KzgsLogFn fn);
 void kzgsSetSmaaThreshold(float threshold);              // SMAA luma edge threshold, 0.02..0.5 (default 0.1 = SMAA HIGH)
 void kzgsBurstArm(int count, int presentWidth, int presentHeight); // measurement: capture the next N GS frames (kzgsBurstTake)
 bool kzgsBurstTake(std::vector<KzgsBurstFrame>& out);
+bool kzgsBurstTakeEx(std::vector<KzgsBurstFrame>& out, KzgsBurstCapturePoint& point);
 ```
 
 `KzgsConfig` has these settings:
@@ -114,7 +115,7 @@ bool kzgsBurstTake(std::vector<KzgsBurstFrame>& out);
 - `resourcesDir`: defaults to `<exe>/resources`
 - `cacheDir`: defaults to `<exe>/cache`. Set it to a writable per-user folder if the game is installed read-only.
 - `disableShaderCache`
-- `maxQueuedFrames`: default 2
+- `maxQueuedFrames`: default 1
 - `selfContainedGifPackets`: default true; see GIF packet semantics below
 - `debugDevice`
 
@@ -141,8 +142,9 @@ If a Vulkan idle wait fails for a reason other than device loss, FSR1 abandons p
 until device teardown rather than explicitly destroying them; repeated failures can accumulate allocations.
 Presented-size readbacks and Vulkan negative-size bursts can recomposite a cached upscaler result without
 redispatching. They are diagnostic snapshots, not literal swapchain-image readbacks: a skipped or failed present may
-instead yield a pre-CAS or current-frame snapshot. `kzgsBurstTakeEx` identifies this as
-`presentation_recomposition`, never `swapchain_backbuffer`; the legacy `kzgsBurstTake` remains available.
+instead yield a pre-CAS or current-frame snapshot. For a negative-size Vulkan burst, `kzgsBurstTakeEx` reports
+`presentation_recomposition`, never `swapchain_backbuffer`; positive-size snapshots retain the `presented_output`
+label. The legacy `kzgsBurstTake` remains available.
 Surfaceless Vulkan retains the existing readback behavior and reports `no_surface`.
 
 The [provider ABI](../../docs/upscaler-provider-abi.md) negotiates optional Vulkan extensions/features before device
