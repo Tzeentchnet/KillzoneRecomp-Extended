@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import copy
 import hashlib
+import io
 import json
 import math
 import re
+import sys
 import tempfile
 from collections import Counter
 from pathlib import Path
@@ -414,6 +417,11 @@ def compare_summaries(left: dict[str, Any], right: dict[str, Any]) -> dict[str, 
     }
 
 
+def print_pipeline_warnings(summary: dict[str, Any], label: str) -> None:
+    for warning in summary["pipeline_warnings"]:
+        print(f"Capture metadata: WARNING ({label}): {warning}", file=sys.stderr)
+
+
 def test_upscaler_pipeline() -> None:
     status = {
         "reported": True,
@@ -604,6 +612,22 @@ def self_test() -> None:
         _, recomposed = validate(roots[1], True)
         if compare_summaries(left, recomposed)["paired_frame_count"] != 0:
             raise ValueError("a diagnostic recomposition was paired with a different capture point")
+        legacy_records = copy.deepcopy(records)
+        legacy_config = next(record for record in legacy_records if record.get("record") == "config")[
+            "effective_config"
+        ]
+        legacy_config["pipeline_contract"] = 1
+        legacy_config["pipeline"] = PIPELINE_ORDER[:4] + ["fsr1_easu", "fsr1_rcas"] + PIPELINE_ORDER[4:]
+        (roots[1] / "capture.jsonl").write_text(
+            "".join(json.dumps(record, separators=(",", ":")) + "\n" for record in legacy_records),
+            encoding="utf-8",
+        )
+        _, legacy_summary = validate(roots[1], True)
+        warning_output = io.StringIO()
+        with contextlib.redirect_stderr(warning_output):
+            print_pipeline_warnings(legacy_summary, "fixture")
+        if "legacy active-upscaler pipeline order was not verified" not in warning_output.getvalue():
+            raise ValueError("legacy active-upscaler warning was not emitted")
         records[0]["effective_config"]["presentation_upscaler"]["sharpening_effective"] = 1
         (roots[1] / "capture.jsonl").write_text(
             "".join(json.dumps(record, separators=(",", ":")) + "\n" for record in records),
@@ -635,9 +659,11 @@ def main() -> int:
         if args.directory is None:
             parser.error("directory is required unless --selftest is used")
         _, summary = validate(args.directory.resolve(), args.require_fire)
+        print_pipeline_warnings(summary, "capture")
         comparison = None
         if args.compare:
             _, other = validate(args.compare.resolve(), args.require_fire)
+            print_pipeline_warnings(other, "comparison")
             comparison = compare_summaries(summary, other)
         if args.summary:
             args.summary.parent.mkdir(parents=True, exist_ok=True)
