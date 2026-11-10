@@ -4,30 +4,28 @@ kzgs compiles PCSX2's `pcsx2/GS` renderer into one static library, `kzgs.lib`. I
 game's CPU software rasterizer. It uses the D3D11, D3D12 and Vulkan hardware renderers. The rest of the emulator is
 replaced by small stubs in `shim/`, so the library needs no BIOS, EE/IOP, VIF, DMAC or MTGS.
 
-- PCSX2 source: `ext/pcsx2`, pinned to the companion revision in `config/dependencies.lock.json`, including the
-  generic presentation hook and its completed-frame callback.
-- Dependencies: the official `pcsx2-windows-dependencies.7z` from
-  <https://github.com/PCSX2/pcsx2-windows-dependencies/releases/tag/latest-windows-dependencies>, extracted to
-  `ext/kzgs/deps` (so the headers are in `ext/kzgs/deps/deps/include`). It is not committed.
+- PCSX2 source: `ext/pcsx2`, pinned in `config/dependencies.lock.json` to
+  [Tzeentchnet/pcsx2](https://github.com/Tzeentchnet/pcsx2) companion commit
+  `61570a47840d2f14e802456eb4524ae5b0a597c7`. It includes generic presentation, Vulkan device-negotiation,
+  completed-frame, and GS observation hooks. It is a separate checkout, not the PS2Recomp submodule.
+- Dependencies: the official `pcsx2-windows-dependencies.7z` from the locked PCSX2 Windows dependency release,
+  extracted to `ext/kzgs/deps` (so the headers are in
+  `ext/kzgs/deps/deps/include`). It is not committed.
 
 ## Build
 
-The only supported toolchain is MSVC x64 (VS 2026 / 14.51), using CMake 3.24 or newer with Ninja.
+Windows x64 MSVC and clang-cl with the MSVC ABI have been validated, using CMake 3.24 or newer with Ninja. Provision
+the exact PCSX2 checkout and dependency archive described in the [building guide](../../docs/building.md) first;
+do not replace the pinned archive with an unverified latest release.
 
-```sh
-# one-time: fetch the dependency bundle (~170 MB)
-curl -L -o ext/kzgs/deps/pcsx2-windows-dependencies.7z \
-  https://github.com/PCSX2/pcsx2-windows-dependencies/releases/download/latest-windows-dependencies/pcsx2-windows-dependencies.7z
-"C:/Program Files/7-Zip/7z.exe" x -oext/kzgs/deps ext/kzgs/deps/pcsx2-windows-dependencies.7z
-
-# standalone build + test (keep -j at 4 on this machine)
-cmd //c "tools\scripts\vsenv.bat cmake -S ext\kzgs -B ext\kzgs\build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo"
-cmd //c "tools\scripts\vsenv.bat cmake --build ext\kzgs\build -j 4"
-ext/kzgs/build/kzgs_test.exe            # exit code 0 = pass; add --renderer d3d12|vulkan, --warp, --vsync, --show
-ext/kzgs/build/kzgs_test.exe --renderer d3d11 --warp --golden --out ext/kzgs/build/test-output/d3d11
+```powershell
+.\tools\scripts\vsenv.bat cmake -S .\ext\kzgs -B .\ext\kzgs\build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+.\tools\scripts\vsenv.bat cmake --build .\ext\kzgs\build -j 4
+.\ext\kzgs\build\kzgs_test.exe
+.\ext\kzgs\build\kzgs_test.exe --renderer d3d11 --warp --golden --out .\ext\kzgs\build\test-output\d3d11
 ```
 
-A clean build is 165 Ninja steps (about 160 translation units). The result is `kzgs.lib` (about 87 MB with debug info).
+The standalone build produces `kzgs.lib`.
 
 Using it from the game's CMake:
 
@@ -96,8 +94,8 @@ bool kzgsBurstTake(std::vector<KzgsBurstFrame>& out);
 - `renderer`: D3D11, D3D12, Vulkan, or Software (PCSX2's software rasterizer, useful as a reference when debugging)
 - `upscale`: 1 to 8
 - `upscaler` and `upscalerSharpening`: experimental presentation request, default Off/0; independent of integer
-  `upscale` and `casSharpness`. FSR1 is implemented on Vulkan. DLSS/XeSS require an optional external Vulkan provider;
-  no vendor binary is bundled, and non-Vulkan requests fall back.
+  `upscale` and `casSharpness`. FSR1 is implemented on Vulkan. No vendor binary is bundled; all DLSS/XeSS requests
+  currently fail closed regardless of provider capabilities.
 - `textureFiltering`: PCSX2 `BiFiltering`
 - `anisotropy`
 - `fxaa`
@@ -128,10 +126,17 @@ readback behavior and reports `no_surface`.
 
 The [provider ABI](../../docs/upscaler-provider-abi.md) negotiates optional Vulkan extensions/features before device
 creation, records into a borrowed command buffer, and retires provider contexts only after actual GPU completion.
-Current frames supply color only and identify its encoding as unknown; providers requiring temporal inputs or a known
-encoding fall back. The in-tree mock provider is a test-only blit. The separate
+Current frames supply composed color only and identify its encoding as unknown. Every DLSS/XeSS request falls back
+before provider context creation, even when a DLL claims spatial or color-only capability; the
+[temporal-input gate](../../docs/findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10) is
+FAIL/NO-GO. The in-tree mock is a test-only blit, enabled only by test hooks. The separate
 [local SDK adapters](../../docs/vendor-upscalers.md) are unqualified, and the current host provides no SDK
-initialization scope.
+initialization scope. Neither real SDKs nor vendor GPUs were tested.
+
+The companion hook supplies a crop/aspect-selected source to EASU, optionally RCAS, then existing CAS/final
+presentation. The presentation callback confirms success before the effective provider is reported; GPU completion
+fences govern resource retirement. The GS-thread temporal observer records bounded draw/display/present metadata and
+conservative resets, but does not promote candidate depth, motion, camera, or masks to qualified inputs.
 
 The EASU and RCAS pipelines use independently compiled entry points, not Vulkan specialization constants. AMD's
 unmodified MIT-licensed FSR 1 headers, source commit, hashes, and notice are in `third_party/fsr1`; resource staging
@@ -258,7 +263,8 @@ ext/kzgs/build/kzgs_replay.exe work/trace_full2.bin work/kzdbg/out --every 100 [
   aspect-corrected as presented in a window of that size. `--adapter NAME`, `--hpo N`, `--native N`, `--fxaa`,
   `--antiblur 0|1`, `--interlace N` set the matching `KzgsConfig` fields.
 - `--window` (with `--present WxH`) opens a hidden window of that size, so the swap chain and the Bilinear Sharp pre-scale match the game.
-  `--backbuffer` then writes `bb_<frame>.png`, the swap chain's back buffer at Present: the exact final pixels (CAS included).
+  `--backbuffer` then writes `bb_<frame>.png` from a presented burst. Active FSR1/provider bursts recomposite the
+  completed post-upscaler/post-CAS texture rather than literally reading the swapchain image.
   `--sharp 0|1`, `--bilinear 0|1`, `--cas N`, `--filter N` set the final-scaling and texture-filter fields. `--skip-idle` skips
   vblanks without new GIF packets like the game does, `--single-circuit` applies the game's display-register rewrite
   (read circuit 2 := read circuit 1, see docs/findings.md "Menu jitter and blur").

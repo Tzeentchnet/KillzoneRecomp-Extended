@@ -113,6 +113,22 @@ Get-FileHash 'D:\private\DLSS\lib\Windows_x86_64\rel\nvngx_dlss.dll' -Algorithm 
 Get-FileHash 'D:\private\XeSS\bin\libxess.dll' -Algorithm SHA256
 ```
 
-This work does **not** approve redistribution of an adapter, vendor SDK component, or combined binary. Obtain
-independent legal, GPL-compatibility, trademark, notice, and vendor-license review before considering distribution.
-The fake test headers and functions are independently authored test doubles, not copies of either SDK.
+### Redistribution caveats
+
+- The referenced NVIDIA RTX SDK license permits certain SDK materials, excluding internal developer tools, to be
+  distributed in object code incorporated into an application, subject to its conditions. These include material
+  additional functionality and distribution terms at least as protective as the SDK license; it forbids standalone
+  SDK distribution and use that would make the SDK subject to an open-source license as described in section 4(e).
+  Its supplement has NVIDIA-GPU, commercial-release notification, attribution/trademark, and other requirements.
+  The reference headers separately require an express NVIDIA license agreement.
+- The referenced Intel license permits redistribution of its binary-only software **without modification**, subject
+  to reproduction of the copyright and terms in the software and distribution materials, no implied Intel/supplier
+  endorsement, and its prohibitions on reverse engineering and alteration. Separately licensed third-party files
+  retain their own terms. The XeSS headers have their own express-license/permission notice; do not assume the binary
+  grant automatically resolves the header terms.
+
+These are pointers to the specific reference licenses, not a complete legal analysis or a grant for another SDK
+release or runtime. This work does **not** approve redistribution of an adapter, vendor SDK component, or combined
+binary, and does not establish compatibility with the GPL. Obtain independent vendor-license, GPL-compatibility,
+corresponding-source, trademark, and notice review before considering distribution. The fake test headers and
+functions are independently authored test doubles, not copies of either SDK.

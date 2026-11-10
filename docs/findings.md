@@ -2190,18 +2190,20 @@ GS interface has no reliable semantic event for camera cuts, teleports, pause, s
 
 GFX-04 is a technical **no-go** for DLSS/FSR/XeSS-style temporal reconstruction under the present architecture.
 Required inputs cannot be made correct without the broad game-specific draw/engine guessing prohibited by the stop
-condition. DLSS-01 is therefore stopped before SDK or licensing work. The native fallback is the validated spatial
+condition. At this measurement DLSS-01 stopped before SDK or licensing work; subsequent default-off adapter
+engineering did not qualify temporal inputs or change that decision. The native fallback is the validated spatial
 D3D12 path: integer internal scaling, sharp presentation, CAS, anisotropy, measured mip selection and bounded view
-distance. No temporal setting is exposed in the launcher.
+distance. The later Vulkan FSR1 presentation path is spatial, not temporal, and is explicitly selected. No temporal
+setting is exposed in the launcher.
 
 ## Temporal qualification instrumentation: FAIL / NO-GO (2026-11-10)
 
 This phase executed the temporal-input gate; it did **not** make a temporal provider usable. The earlier GFX-04
 inventory remains the only available gameplay measurement: a depth target existed in 20/20 loading frames but in
 **0/20 gameplay frames**. Its presence during loading does not establish a match to displayed gameplay, complete
-coverage, the depth direction, or suitability for sampling. No explicitly configured authorized `KZ_ISO` or
-protected GS replay was available for a new gameplay run. A local executable alone is not a displayed gameplay
-sequence. No raw gameplay frames, memory, or traces are included in this result.
+coverage, the depth direction, or suitability for sampling. No explicitly configured authorized `KZ_ISO`,
+`KZ_BYOD_ISO`, or protected GS replay was available for a new gameplay run. A local executable alone is not a
+displayed gameplay sequence. No raw gameplay frames, memory, or traces are included in this result.
 
 | Acceptance gate | Evidence and result |
 |---|---|
@@ -2228,8 +2230,10 @@ Strict dependency verification passed (31 checks); the generated resume table pa
 100,661 resume cases), and all 10 US hook entry points used here are registered. PAL generated code was not available
 in this build, so PAL hook execution was not tested. The separate `inventory_generated.py --check` remains **failing
 at the pre-existing baseline**: it reports 35 legacy `kz_hook::` names as unused after the product moved to region
-tables. For example, `GameEntry` and `MoviePlay` were already absent from product `kz_hook::` references at the
-parent commit. This failure is not evidence that the new temporal inputs are qualified.
+tables. The same 35, with no extras, were reproduced on clean pre-upscaler `7f4f8263cc94d953d6a5ef8f3ff702e4a51fdb1a`
+with PCSX2 `d3e6982a3e36647d642bcd805d3ca5b442d0975c`. For example, `GameEntry` and `MoviePlay` were already absent
+from product `kz_hook::` references at the parent commit. This failure is not a passing gate or evidence that the
+new temporal inputs are qualified.
 
 ### Ordered observations and limits
 
@@ -2266,9 +2270,21 @@ At measurement, the provider ABI was 1.0 and XeSS initialization was blocked by 
 subsequently defined an exclusive initialization scope, but the current host does not provide it and no vendor SDK
 or GPU was qualified. This engineering change **does not change the measured no-go**. Any provider advertising
 `KZGS_PROVIDER_CAP_TEMPORAL` is rejected before context creation/evaluation, even if it advertises color-only
-requirements; spatial-only test doubles retain their existing path. DLSS and XeSS stay disabled. Reopen this gate
-only with authorized, matched consecutive gameplay evidence covering moving objects, depth correspondence and
+requirements. The production host rejects every DLSS/XeSS provider before creation even if it claims only spatial or
+color inputs; the named spatial test mock is allowed only by test hooks. DLSS and XeSS stay disabled. Reopen this
+gate only with authorized, matched consecutive gameplay evidence covering moving objects, depth correspondence and
 direction, vector units/sign/jitter, world-only jitter, and UI/reactive behavior.
+
+### Spatial presentation and validation follow-up
+
+Through superproject `ccd5adc1a46b7fb85bc6bc1079902d04cb54b75c` and the locked companion PCSX2
+`61570a47840d2f14e802456eb4524ae5b0a597c7`, Vulkan implements default-off FSR1 EASU and optional provider-owned
+RCAS before the existing CAS/final presentation. The pass is bypassed when either output axis is smaller than the
+cropped source or both axes are equal.
+The tested synthetic vectors, renderer/replay paths, provider mocks, D3D fallbacks, and packaging do not demonstrate
+gameplay image quality or vendor-SDK operation. The complete **33/33 per-compiler** ISO-free results, skipped
+BYOD A/B, PAL limitation, and failing baseline inventory are recorded in
+[testing](testing.md#upscaler-validation-baseline-2026-11-10).
 
 ## GFX-05 display follow-up (2026-10-21)
 

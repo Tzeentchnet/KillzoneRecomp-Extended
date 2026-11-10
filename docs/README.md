@@ -13,6 +13,8 @@ The root [README](../README.md) is the project overview. Detailed guidance and t
 
 ## Technical reference
 
+- [Experimental spatial presentation](configuration.md#experimental-presentation-upscaler) - Vulkan FSR 1,
+  configuration precedence, diagnostics, and native fallback; no temporal reconstruction is qualified.
 - [Vulkan upscaler provider ABI](upscaler-provider-abi.md) - versioning, negotiation, resource ownership, synchronization,
   optional inputs, and fallback rules.
 - [Local vendor SDK adapters](vendor-upscalers.md) - opt-in build, current blockers, and license/provenance fields.

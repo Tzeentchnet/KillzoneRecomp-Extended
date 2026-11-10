@@ -14,6 +14,11 @@ causes native presentation fallback. The `off`, FSR1, D3D11, D3D12, software, an
 Changing to a provider not negotiated at KzGS open requires closing/reopening KzGS (normally a game or replay
 restart); switching off and back to the provider already negotiated for that device is allowed.
 
+**Current production gate:** both DLSS and XeSS are rejected before context creation even if the DLL claims
+spatial or color-only capabilities. ABI negotiation and the test-only spatial mock are not temporal support.
+The [measured input gate](findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10) is FAIL/NO-GO,
+the host provides no vendor initialization scope, and no real SDK or vendor GPU was qualified.
+
 ## Sizes, versioning, and calls
 
 - Every extensible structure begins with `struct_size`. A caller initializes it to the actual buffer capacity; a
@@ -110,8 +115,9 @@ The source and output are distinct host-owned, single-mip/layer color images. Th
 extents, half-open pixel rectangles, subresource ranges, layouts, guaranteed usage flags, and queue-family ownership
 are explicit. The output rectangle starts at `(0,0)` and is distinct from the window-coordinate presentation
 rectangle. Currently both images are `VK_FORMAT_R8G8B8A8_UNORM`, enter in `VK_IMAGE_LAYOUT_GENERAL`, and are on the
-graphics queue. The color encoding is **unknown**; a provider must explicitly support unknown encoding to run.
-`usage` lists guaranteed usage bits, not necessarily every bit used at image creation.
+graphics queue. The color encoding is **unknown**; an otherwise eligible provider must explicitly support unknown
+encoding. This does not bypass the production vendor gate above. `usage` lists guaranteed usage bits, not necessarily
+every bit used at image creation.
 
 ### Temporal qualification (host-internal; frame input contract unchanged)
 

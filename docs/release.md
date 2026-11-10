@@ -15,10 +15,18 @@ The dependency lock is an inventory and integrity gate, not a substitute for lic
 
 AMD FidelityFX FSR 1's `ffx_a.h` and `ffx_fsr1.h` are vendored unmodified from
 [`GPUOpen-Effects/FidelityFX-FSR`](https://github.com/GPUOpen-Effects/FidelityFX-FSR) commit
-`a21ffb8f6c13233ba336352bdff293894c706575`, under the MIT license. Keep
-[`ext/kzgs/third_party/fsr1/LICENSE.txt`](../ext/kzgs/third_party/fsr1/LICENSE.txt) and its provenance notice with
-source distributions; runtime packaging stages them in `resources/shaders/kzgs/fsr1`. Review the combined GPL
-distribution obligations separately. No proprietary upscaler SDK is bundled.
+`a21ffb8f6c13233ba336352bdff293894c706575`, copyright 2021 Advanced Micro Devices, Inc., under MIT. Keep the
+[complete license and copyright notice](../ext/kzgs/third_party/fsr1/LICENSE.txt) and
+[source revision and file hashes](../ext/kzgs/third_party/fsr1/README.md) with source distributions; runtime
+packaging stages the headers, license and provenance notice in `resources/shaders/kzgs/fsr1`.
+[`ffx_a.h`](../ext/kzgs/third_party/fsr1/ffx_a.h) also contains an embedded MIT notice for copyright 2014 Michal
+Drobot (float-approximation concepts); retain that notice as well. Review the combined GPL distribution obligations
+separately. No proprietary upscaler SDK is bundled.
+
+The renderer also builds the [Tzeentchnet/pcsx2](https://github.com/Tzeentchnet/pcsx2) companion at
+`61570a47840d2f14e802456eb4524ae5b0a597c7`, pinned in
+[`config/dependencies.lock.json`](../config/dependencies.lock.json). It is GPL-3.0-or-later; provide the
+corresponding source and notices for the exact distributed build, not just a link to unmodified upstream PCSX2.
 Optional local vendor builds have separate [license and provenance records](vendor-upscalers.md); their
 redistribution, including any combined binary, is not approved by this work.
 

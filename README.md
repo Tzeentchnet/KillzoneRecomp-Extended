@@ -18,6 +18,8 @@ graphics, display, input, configuration, testing, and runtime work. The active t
 - Raw mouse aim, rebindable keyboard controls, SDL3 controllers, adjustable dead zone/range, and dynamic button
   prompts.
 - Anisotropic filtering, FXAA, D3D11 SMAA, sharp scaling, CAS sharpening, and bounded 2x view distance.
+- Default-off Vulkan FSR 1 spatial presentation, available through
+  [experimental configuration](docs/configuration.md#experimental-presentation-upscaler).
 - Launcher-managed display, graphics, controls, audio, disc, and isolated testing settings.
 - US and PAL runtime support from separately generated code sets in one executable.
 
@@ -57,7 +59,7 @@ This is a test build, not an official release.
 Not implemented:
 
 - Killzone Online, DNAS, network login, lobby, or multiplayer gameplay.
-- DLSS, FSR, XeSS, or other temporal reconstruction. The GS boundary does not expose a reliable gameplay depth,
+- DLSS, XeSS, FSR 2+, or other temporal reconstruction. The GS boundary does not expose a reliable gameplay depth,
   motion-vector, or separate HUD/reactive contract.
 - HDR output; the current renderer presents composed SDR color.
 - Distribution of retail assets, generated game code, saves, or memory-card images.
@@ -108,6 +110,7 @@ reproducible, protected-content-safe provenance.
 - [ran-j/PS2Recomp](https://github.com/ran-j/PS2Recomp) and its contributors provide the static recompiler and runtime
   foundation.
 - [PCSX2](https://github.com/PCSX2/pcsx2) contributors provide the renderer, microVU, IPU, and SPU2 foundations.
+- [AMD FidelityFX FSR 1](ext/kzgs/third_party/fsr1/README.md) provides the MIT-licensed spatial upscaling source.
 
 Developed with AI assistance.
 

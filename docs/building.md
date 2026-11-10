@@ -25,7 +25,11 @@ repository does not contain game code or data.
 2. Provision the exact inputs recorded in
    [`config/dependencies.lock.json`](../config/dependencies.lock.json):
 
-   - PCSX2 source under `ext\pcsx2` at the locked revision.
+   - The separate [Tzeentchnet/pcsx2](https://github.com/Tzeentchnet/pcsx2) checkout under `ext\pcsx2`, at
+     companion commit `61570a47840d2f14e802456eb4524ae5b0a597c7` on `feature/kzgs-upscaler-foundation`. It builds on
+     PCSX2 baseline `d3e6982a3e36647d642bcd805d3ca5b442d0975c` and contains the presentation and observation hooks.
+     This checkout is not the PS2Recomp submodule. The companion feature revision may not yet be published; obtain
+     the exact commit locally rather than substituting upstream PCSX2.
    - The locked PCSX2 Windows dependency archive retained and extracted under `ext\kzgs\deps`.
    - The locked SDL3 VC development archive retained and extracted under `ext\sdl3`.
    - For macOS experiments, the locked SDL3 source archive extracted as `ext\sdl3\SDL3-3.4.16-source`.
@@ -104,8 +108,19 @@ cmake --preset win-clang-rel
 cmake --build --preset win-clang-rel
 ```
 
-Experimental default-OFF local DLSS/XeSS SDK targets, their qualification limits, and license/provenance requirements
-are described in [Local Vulkan vendor SDK adapters](vendor-upscalers.md). They are not part of ordinary builds.
+Experimental local SDK adapters are independent, default-OFF targets. SDKs are neither downloaded nor discovered,
+vendored, installed, or staged by these builds:
+
+| Vendor | Enable target | Explicit SDK root | Declared SDK release |
+|---|---|---|---|
+| DLSS | `KZGS_BUILD_DLSS_PROVIDER=ON` | `KZGS_DLSS_SDK_DIR` | `KZGS_DLSS_SDK_VERSION` |
+| XeSS | `KZGS_BUILD_XESS_PROVIDER=ON` | `KZGS_XESS_SDK_DIR` | `KZGS_XESS_SDK_VERSION` |
+
+When enabled, both root and release are required; when disabled, their values are ignored. The release is a
+developer declaration, not authentication. Each target must be built explicitly and is excluded from ordinary
+builds and packages. [Local Vulkan vendor SDK adapters](vendor-upscalers.md) documents exact SDK layouts, configure
+and build commands, license terms, and the lack of real SDK/GPU qualification. Neither target enables temporal
+reconstruction.
 
 Configuration verifies locked dependencies, the compiler, Ninja, and the private generated source tree before
 dependency population. Useful environment overrides are:
@@ -149,7 +164,9 @@ python .\tools\scripts\inventory_generated.py --check
 ```
 
 The inventory gate verifies that fixed guest hook addresses remain executable, dispatchable, signature-matched, and
-uniquely resolvable.
+uniquely resolvable. At the `ccd5adc` validation baseline it reported 35 pre-existing legacy hook-name failures,
+also reproduced on the clean pre-upscaler baseline; it was **not a passing gate**. See the
+[recorded validation](testing.md#upscaler-validation-baseline-2026-11-10).
 
 ## Deferred platform work
 

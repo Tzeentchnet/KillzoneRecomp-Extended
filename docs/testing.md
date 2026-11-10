@@ -37,6 +37,24 @@ python .\tools\scripts\inventory_generated.py --check
 git diff --check
 ```
 
+### Upscaler validation baseline (2026-11-10)
+
+The completed implementation validation covered superproject `ccd5adc1a46b7fb85bc6bc1079902d04cb54b75c` with
+companion PCSX2 `61570a47840d2f14e802456eb4524ae5b0a597c7`. It was ISO-free except where stated otherwise:
+
+| Check | Recorded result and scope |
+|---|---|
+| MSVC and clang-cl test builds, strict configure preflights, ISO-free CTest | **33/33 passed per compiler**, including the product, FSR1, provider, temporal, synthetic replay, and D3D11/D3D12 WARP/software tests. Nine Vulkan-validation tests ran per compiler. |
+| Vulkan FSR1 and renderer validation | Direct FSR1/provider vectors used synchronization validation; full synthetic GS presentation used standard validation because of the existing index-upload hazard described below. These are not gameplay image-quality tests. |
+| Additional D3D12 hardware/WARP | **4/4 passed** for resize, 720p–4K, minimize/restore, and injected device loss. Synthetic D3D11 SMAA+CAS activation and unavailable-provider pixel equivalence passed **2/2**. |
+| Packaging and provenance | Package self-tests passed **10 checks per compiler**, including excluded SDK/protected-content decoys. Dependency, capture-metadata, and image-comparison self-tests passed; strict dependency verification passed **31/31**. |
+| Generated sources | Resume-table verification passed with **132,656 dispatch entries** and **100,661 resume cases**. `inventory_generated.py --check` failed with **35 legacy unused-hook findings**, reproduced identically with no extras on clean pre-upscaler `7f4f8263cc94d953d6a5ef8f3ff702e4a51fdb1a` and PCSX2 `d3e6982a3e36647d642bcd805d3ca5b442d0975c`. This is a known failing baseline, not a passed gate. |
+
+Vulkan BYOD A/B was **skipped**, not passed: neither `KZ_ISO` nor `KZ_BYOD_ISO` named an explicitly authorized image.
+The PAL generated tree was unavailable, so PAL hook execution was not tested. No real DLSS/XeSS SDK, vendor
+runtime, or vendor-GPU integration was qualified. The measured temporal gate remains **FAIL/NO-GO**; see
+[GFX-04 and the temporal observations](findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10).
+
 ## Headless BYOD runs
 
 `tools\scripts\run_headless.ps1` runs the game with explicit private content paths, scripted input, and optional
@@ -54,9 +72,10 @@ python .\tools\scripts\verify_capture_metadata.py .\work\run1 --compare .\work\r
 
 The summary contains only configuration, dimensions, event/frame counts, and hashes.
 The `effective_config.presentation_upscaler` object distinguishes requested/effective providers and sharpening and
-the fallback reason. A `config` record follows changes observed after presentation, and its pipeline names EASU and,
-when enabled, RCAS before the existing CAS pass. The summary uses the latest such configuration. D3D and software
-golden tests check that unavailable requests preserve the existing presentation, including CAS.
+the fallback reason, provider result codes, temporal observation/validity, and valid/missing/invalid input and reason
+masks. A `config` record follows changes observed after presentation, and its pipeline names EASU and, when enabled,
+RCAS before the existing CAS pass. The summary uses the latest such configuration. D3D and software golden tests
+check that unavailable requests preserve the existing presentation, including CAS.
 
 Focused FSR1 checks (the Vulkan tests require a Vulkan GPU and `VK_LAYER_KHRONOS_validation`):
 
@@ -125,20 +144,21 @@ targets, missing lifecycle symbols, independent vendor targets, exclusion from d
 DLL targets. The successful fake-SDK build does not constitute a real SDK build or runtime qualification.
 The current host does not provide the initialization scope; see [vendor SDK adapters](vendor-upscalers.md).
 
-Packaging checks use real audited dependency hashes and synthetic decoys, with work confined to a fresh directory
-under `work`:
+Run the dependency, capture, and image self-tests and the packaging checks with:
 
 ```powershell
 python .\tools\scripts\verify_deps.py --selftest
 python .\tools\scripts\verify_deps.py --strict
 python .\tools\scripts\verify_capture_metadata.py --selftest
+python .\tools\scripts\image_compare.py --selftest
 .\tools\scripts\package_selftest.ps1 -BuildDirectory .\build\win-msvc-rel
 .\tools\scripts\package.ps1 -Config win-msvc-rel -Destination .\work\package-preview -DryRun
 .\tools\scripts\make_release.ps1 -Version 0.1.0 -From .\build\win-msvc-rel `
   -OutputDirectory .\work\release-preview -DryRun
 ```
 
-The self-test contaminates fixture inputs with vendor/provider DLLs, SDK headers and import libraries, PDBs,
+The packaging self-test uses real audited dependency hashes and a fresh fixture directory under `work`. It
+contaminates fixture inputs with vendor/provider DLLs, SDK headers and import libraries, PDBs,
 caches, and protected-content-shaped decoys. It checks both dry-runs, the actual staging directory and ZIP contents,
 the staged executable's ISO-free self-test, required license files, a substituted DLL/CRT hash, a DLL disguised as
 the executable, and preservation of an occupied destination. The source and legal reviews in
@@ -152,13 +172,28 @@ effects, and repeated fixed-aspect/stretch capture without redispatch. The repla
 presented readback with burst output; it also checks the optional debug replay tool when built. PCSX2's existing
 synthetic-scene index upload produces a
 `SYNC-HAZARD-READ-AFTER-WRITE` under synchronization validation even with FSR off; synchronization validation is
-therefore isolated to the direct FSR-vector test, while the full presentation test uses standard validation.
+therefore kept on direct FSR1/provider vector tests, while the full presentation test uses standard validation.
 PCSX2 also emits the informational deprecated-device-layer VUID on this validation-layer version.
 
-For active Vulkan FSR1 or an external provider, presented-size readback and negative-size bursts recomposite the
-completed post-upscaler/post-CAS texture into the requested output rectangle; they do not rerun the upscaler. This
-is not a literal swapchain-image readback. Internal-resolution captures and native presentation retain their existing
-behavior.
+For active Vulkan FSR1 or the test-only spatial mock, presented-size readback and negative-size bursts recomposite
+the completed post-upscaler/post-CAS texture into the requested output rectangle; they do not rerun the upscaler.
+This is not a literal swapchain-image readback. Internal-resolution captures and native presentation retain their
+existing behavior.
+
+For an ISO-free, synthetic replay using the targets built above:
+
+```powershell
+.\build\win-msvc-rel\ext\kzgs\kzgs_test.exe --write-synthetic-trace .\work\synthetic-fsr1.gs
+.\build\win-msvc-rel\kz_gs_replay.exe .\work\synthetic-fsr1.gs .\work\fsr1-replay `
+  --renderer vulkan --upscale 1 --upscaler fsr1 --upscaler-sharpening 60 `
+  --cas 30 --bilinear 1 --present 1003x757 --every 3 --backbuffer
+```
+
+`--upscale` controls internal GS scaling, `--upscaler-sharpening` controls FSR1 RCAS, and `--cas` controls the
+separate later pass. Compare a separate `--upscaler off` run under otherwise identical settings. `kz_gs_replay`
+creates a hidden window; the optional `kzgs_replay` debug tool needs `--window --present WxH` for a surface.
+Both print initial and final requested/effective status and accept the same one-run environment/CLI controls without
+reading the INI. Synthetic traces are not gameplay qualification; keep any authorized retail trace or capture private.
 
 For deterministic scheduling, use `KZ_SHOT_GUEST_INTERVAL=<vblanks>` and optionally
 `KZ_SHOT_GUEST_FROM=<first-vblank>`. Prefix a start with `g`, such as `g60`, to count from the first gameplay frame.

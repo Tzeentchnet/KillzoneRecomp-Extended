@@ -40,3 +40,6 @@ License version 3 (the full text is in LICENSE-GPL-3.0):
 Third-party files keep their own licenses: ext/kzgs/shaders/SMAA-LICENSE.txt,
 ext/kzgs/third_party/smaa/LICENSE.txt and
 resources/prompts/Kenney-Input-Prompts-License.txt (CC0).
+AMD FidelityFX FSR 1 files retain their MIT license and copyright notice in
+ext/kzgs/third_party/fsr1/LICENSE.txt; ffx_a.h also retains its embedded
+Michal Drobot MIT notice.
