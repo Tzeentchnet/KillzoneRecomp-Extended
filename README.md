@@ -364,6 +364,7 @@ supported executable.
 This repository's own code and documentation are MIT under [`LICENSE`](LICENSE), except for the components listed
 there that remain GPL-3.0. In particular, the PCSX2-derived `ext/kz*` libraries, the PS2Recomp submodule, the field
 of view contribution, and every compiled build are GPL-3.0; see [`LICENSE-GPL-3.0`](LICENSE-GPL-3.0).
+The vendored [xBRZ sources](ext/kzgs/third_party/xbrz/README.md) retain their GPL notice and MAME linking exception.
 Killzone is a trademark of Sony Interactive Entertainment; this project is not affiliated with Sony or Guerrilla Games.
 
 The owner-approved distribution disposition is recorded under LEGAL-01 in [`WORKDONE.md`](WORKDONE.md). Retail and

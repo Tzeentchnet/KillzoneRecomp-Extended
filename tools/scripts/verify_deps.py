@@ -146,9 +146,12 @@ def verify_lock_schema(lock: dict[str, Any], report: Report) -> None:
 
         kind = dependency.get("kind")
         revision = dependency.get("revision", "")
-        if kind in {"git-submodule", "git-checkout", "cmake-git"} and not HEX40.fullmatch(
-            revision
-        ):
+        if kind in {
+            "git-submodule",
+            "git-checkout",
+            "cmake-git",
+            "vendored-source",
+        } and not HEX40.fullmatch(revision):
             report.failed(f"{dependency_id}: git revision is not a full 40-digit commit")
         if kind == "archive":
             checksum = dependency.get("sha256", "")
@@ -156,6 +159,36 @@ def verify_lock_schema(lock: dict[str, Any], report: Report) -> None:
                 report.failed(f"{dependency_id}: archive sha256 is not 64 lowercase hex digits")
             if not isinstance(dependency.get("size"), int) or dependency["size"] <= 0:
                 report.failed(f"{dependency_id}: archive size must be a positive integer")
+        if kind == "vendored-source":
+            local = dependency.get("local")
+            if not isinstance(local, dict) or not local.get("directory"):
+                report.failed(f"{dependency_id}: vendored source must declare local.directory")
+                continue
+
+            files = local.get("files")
+            if not isinstance(files, list) or not files:
+                report.failed(f"{dependency_id}: vendored source must declare local.files")
+                continue
+
+            for source_file in files:
+                if not isinstance(source_file, dict):
+                    report.failed(f"{dependency_id}: vendored source file record must be an object")
+                    continue
+
+                relative_path = source_file.get("path")
+                if not isinstance(relative_path, str) or not relative_path:
+                    report.failed(f"{dependency_id}: vendored source file must have a path")
+                else:
+                    parsed_path = Path(relative_path)
+                    if parsed_path.is_absolute() or ".." in parsed_path.parts:
+                        report.failed(
+                            f"{dependency_id}: vendored source file path must stay within its directory"
+                        )
+
+                if not HEX64.fullmatch(source_file.get("sha256", "")):
+                    report.failed(
+                        f"{dependency_id}: vendored source file sha256 is not 64 lowercase hex digits"
+                    )
 
     if report.failures == 0:
         report.passed(f"lock schema and {len(dependencies)} dependency records")
@@ -260,6 +293,47 @@ def verify_archive_dependency(dependency: dict[str, Any], report: Report) -> Non
         )
         return
     report.passed(f"{dependency_id}: extracted directory markers")
+
+
+def verify_vendored_source(dependency: dict[str, Any], report: Report) -> None:
+    local = dependency["local"]
+    directory = ROOT / local["directory"]
+    dependency_id = dependency["id"]
+    required = bool(local.get("required_in_strict"))
+
+    if not directory.is_dir():
+        report.missing(
+            f"{dependency_id}: vendored source directory is missing at {directory}",
+            required,
+        )
+        return
+
+    issues_before = report.failures + report.warnings
+    for expected in local["files"]:
+        path = directory / expected["path"]
+        if not path.is_file():
+            report.missing(
+                f"{dependency_id}: vendored source file is missing at {path}",
+                required,
+            )
+            continue
+
+        try:
+            checksum = hashlib.sha256(normalized_bytes(path)).hexdigest()
+        except OSError as error:
+            report.failed(f"{dependency_id}: cannot read {path}: {error}")
+            continue
+
+        if checksum != expected["sha256"]:
+            report.failed(
+                f"{dependency_id}: {expected['path']} sha256 is {checksum}, "
+                f"expected {expected['sha256']}"
+            )
+
+    if report.failures + report.warnings == issues_before:
+        report.passed(
+            f"{dependency_id}: {len(local['files'])} vendored source files match lock"
+        )
 
 
 def fetchcontent_blocks(text: str) -> dict[str, str]:
@@ -523,6 +597,8 @@ def main() -> int:
             verify_git_dependency(dependency, report)
         elif dependency["kind"] == "archive":
             verify_archive_dependency(dependency, report)
+        elif dependency["kind"] == "vendored-source":
+            verify_vendored_source(dependency, report)
     verify_patch_stack(lock, report)
     return report.finish()
 
