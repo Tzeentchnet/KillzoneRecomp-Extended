@@ -27,6 +27,32 @@ function Get-KzPackageFileHash {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Test-KzNormalizeResourceText {
+    param([Parameter(Mandatory)][string]$Relative)
+
+    $extension = [IO.Path]::GetExtension($Relative).ToLowerInvariant()
+    if ($extension -notin @('.h', '.fx', '.hlsl', '.glsl', '.txt', '.md')) { return $false }
+    # These upstream files are deliberately kept byte-for-byte, including their license.
+    return $Relative -notmatch '(?i)^resources\\shaders\\kzgs\\fsr1\\(ffx_[^\\]+\.h|LICENSE\.txt)$'
+}
+
+function Get-KzResourceInventoryHash {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Relative)
+
+    if (-not (Test-KzNormalizeResourceText $Relative)) { return Get-KzPackageFileHash $Path }
+    Assert-KzPlainPath $Path
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Required package input is missing: $Path"
+    }
+    # Latin-1 is a reversible byte mapping, not a text encoding assumption. Only CRLF is normalized.
+    $encoding = [Text.Encoding]::GetEncoding(28591)
+    $text = $encoding.GetString([IO.File]::ReadAllBytes($Path)).Replace("`r`n", "`n")
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString($sha.ComputeHash($encoding.GetBytes($text))).Replace('-', '').ToLowerInvariant()
+    } finally { $sha.Dispose() }
+}
+
 function Assert-KzGameExecutable {
     param([Parameter(Mandatory)][string]$Path)
 
@@ -58,7 +84,9 @@ function Get-KzPackageManifest {
     $path = Join-Path $Root 'config\package-allowlist.json'
     [void](Get-KzPackageFileHash $path)
     $manifest = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-    if ($manifest.schema_version -ne 1 -or $manifest.resource_count -le 0 -or
+    if ($manifest.schema_version -ne 2 -or
+        $manifest.resource_inventory_normalization -cne 'text-crlf-to-lf;binary-and-vendored-fsr1-exact' -or
+        $manifest.resource_count -le 0 -or
         $manifest.resource_inventory_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
         @($manifest.runtime_dlls).Count -eq 0 -or @($manifest.msvc_runtime_dlls).Count -eq 0) {
         throw 'Invalid package allowlist.'
@@ -109,13 +137,14 @@ function Get-KzPackageResourcePlan {
         foreach ($file in (Get-ChildItem -LiteralPath $directory -File)) {
             if ($file.Extension.ToLowerInvariant() -notin $mapping.Extensions) { continue }
             $relative = Join-Path $mapping.Destination $file.Name
-            $sourceHash = Get-KzPackageFileHash $file.FullName
             $input = Join-Path $InputDirectory $relative
             $inputHash = Get-KzPackageFileHash $input
-            if ($sourceHash -cne $inputHash) {
+            $sourceInventoryHash = Get-KzResourceInventoryHash $file.FullName $relative
+            $inputInventoryHash = Get-KzResourceInventoryHash $input $relative
+            if ($sourceInventoryHash -cne $inputInventoryHash) {
                 throw "Staged resource does not match the audited source: $relative"
             }
-            $inventory.Add($relative.ToLowerInvariant(), $sourceHash)
+            $inventory.Add($relative.ToLowerInvariant(), $sourceInventoryHash)
             $entries.Add([pscustomobject]@{ Source = $input; Relative = $relative; Hash = $inputHash })
         }
     }

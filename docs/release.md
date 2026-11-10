@@ -49,8 +49,11 @@ parent directories, user profiles, the registry, or old build trees.
 SDL, FFmpeg and PCSX2-bundle runtime DLLs and the six Visual C++ release-runtime DLLs. The allowlist includes the
 audited import closure; it is not permission to redistribute any component. The executable must be an x64 PE
 executable, not a renamed DLL. Resources are selected only from the known prompt and shader source directories:
-their complete inventory digest is pinned, and each staged file must match its source. Unlisted files and
-directories are never copied. The package includes the repository MIT and GPL license texts and the FSR1 notice.
+their complete inventory digest is pinned. Shader and other ordinary text resources are compared with CRLF normalized
+to LF, so checkout line endings do not alter the inventory; binary files and the unmodified upstream FSR1 headers
+and license remain byte-exact. The staged bytes are still hashed and checked exactly when copied into the package
+and archive. Unlisted files and directories are never copied. The package includes the repository MIT and GPL
+license texts and the FSR1 notice.
 
 Dry-run both stages without creating a destination:
 

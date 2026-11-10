@@ -20,6 +20,82 @@ try {
     $package = Join-Path $work 'package'
     $release = Join-Path $work 'release'
     $plan = @(Get-KzPackagePlan -Root $root -InputDirectory $BuildDirectory)
+
+    $fixtureRoot = Join-Path $work 'eol-source'
+    $fixtureInput = Join-Path $work 'eol-build'
+    $resourceMappings = @(
+        @{ Source = 'resources\prompts'; Destination = 'resources\prompts' },
+        @{ Source = 'ext\pcsx2\bin\resources\shaders\common'; Destination = 'resources\shaders\common' },
+        @{ Source = 'ext\pcsx2\bin\resources\shaders\dx11'; Destination = 'resources\shaders\dx11' },
+        @{ Source = 'ext\pcsx2\bin\resources\shaders\opengl'; Destination = 'resources\shaders\opengl' },
+        @{ Source = 'ext\pcsx2\bin\resources\shaders\vulkan'; Destination = 'resources\shaders\vulkan' },
+        @{ Source = 'ext\kzgs\shaders'; Destination = 'resources\shaders\kzgs' },
+        @{ Source = 'ext\kzgs\third_party\fsr1'; Destination = 'resources\shaders\kzgs\fsr1' }
+    )
+    $encoding = [Text.Encoding]::GetEncoding(28591)
+    foreach ($mapping in $resourceMappings) {
+        $sourceDir = Join-Path $fixtureRoot $mapping.Source
+        $inputDir = Join-Path $fixtureInput $mapping.Destination
+        New-Item -ItemType Directory -Force -Path $sourceDir, $inputDir | Out-Null
+        foreach ($file in (Get-ChildItem -LiteralPath (Join-Path $root $mapping.Source) -File)) {
+            $relative = Join-Path $mapping.Destination $file.Name
+            $bytes = [IO.File]::ReadAllBytes($file.FullName)
+            if (Test-KzNormalizeResourceText $relative) {
+                $lf = $encoding.GetString($bytes).Replace("`r`n", "`n")
+                [IO.File]::WriteAllBytes((Join-Path $sourceDir $file.Name), $encoding.GetBytes($lf))
+                [IO.File]::WriteAllBytes((Join-Path $inputDir $file.Name), $encoding.GetBytes($lf.Replace("`n", "`r`n")))
+            } else {
+                [IO.File]::WriteAllBytes((Join-Path $sourceDir $file.Name), $bytes)
+                [IO.File]::WriteAllBytes((Join-Path $inputDir $file.Name), $bytes)
+            }
+        }
+    }
+    $manifest = Get-KzPackageManifest $root
+    $eolPlan = @(Get-KzPackageResourcePlan -Root $fixtureRoot -InputDirectory $fixtureInput -Manifest $manifest)
+    if ($eolPlan.Count -ne $manifest.resource_count) { throw 'LF/CRLF resource inventory count changed.' }
+    foreach ($mapping in $resourceMappings) {
+        foreach ($file in (Get-ChildItem -LiteralPath (Join-Path $fixtureRoot $mapping.Source) -File)) {
+            $relative = Join-Path $mapping.Destination $file.Name
+            if (-not (Test-KzNormalizeResourceText $relative)) { continue }
+            $inputFile = Join-Path $fixtureInput $relative
+            $lf = $encoding.GetString([IO.File]::ReadAllBytes($file.FullName))
+            [IO.File]::WriteAllBytes($file.FullName, $encoding.GetBytes($lf.Replace("`n", "`r`n")))
+            [IO.File]::WriteAllBytes($inputFile, $encoding.GetBytes($lf))
+        }
+    }
+    [void]@(Get-KzPackageResourcePlan -Root $fixtureRoot -InputDirectory $fixtureInput -Manifest $manifest)
+    'PASS audited resource inventory is identical for LF and CRLF checkouts and staged text'
+
+    $binary = (Get-ChildItem -LiteralPath (Join-Path $fixtureInput 'resources\prompts') -Filter '*.png' -File | Select-Object -First 1).FullName
+    $originalBinary = [IO.File]::ReadAllBytes($binary)
+    $changedBinary = [byte[]]::new($originalBinary.Length + 1)
+    [Array]::Copy($originalBinary, $changedBinary, $originalBinary.Length)
+    $changedBinary[$originalBinary.Length] = 13
+    [IO.File]::WriteAllBytes($binary, $changedBinary)
+    $rejectedBinary = $false
+    try { [void]@(Get-KzPackageResourcePlan -Root $fixtureRoot -InputDirectory $fixtureInput -Manifest $manifest) }
+    catch { $rejectedBinary = $_.Exception.Message -match 'does not match the audited source' }
+    if (-not $rejectedBinary) { throw 'Changed binary resource was not rejected byte-for-byte.' }
+    [IO.File]::WriteAllBytes($binary, $originalBinary)
+
+    $vendor = Join-Path $fixtureInput 'resources\shaders\kzgs\fsr1\ffx_a.h'
+    $originalVendor = [IO.File]::ReadAllBytes($vendor)
+    $vendorText = $encoding.GetString($originalVendor).Replace("`r`n", "`n")
+    [IO.File]::WriteAllBytes($vendor, $encoding.GetBytes($vendorText.Replace("`n", "`r`n")))
+    $rejectedVendor = $false
+    try { [void]@(Get-KzPackageResourcePlan -Root $fixtureRoot -InputDirectory $fixtureInput -Manifest $manifest) }
+    catch { $rejectedVendor = $_.Exception.Message -match 'does not match the audited source' }
+    if (-not $rejectedVendor) { throw 'Modified upstream FSR1 bytes were not rejected.' }
+    [IO.File]::WriteAllBytes($vendor, $originalVendor)
+
+    $shader = Join-Path $fixtureInput 'resources\shaders\kzgs\fsr1_easu.glsl'
+    [IO.File]::AppendAllText($shader, "`n// altered`n")
+    $rejectedText = $false
+    try { [void]@(Get-KzPackageResourcePlan -Root $fixtureRoot -InputDirectory $fixtureInput -Manifest $manifest) }
+    catch { $rejectedText = $_.Exception.Message -match 'does not match the audited source' }
+    if (-not $rejectedText) { throw 'Changed shader text was not rejected.' }
+    'PASS binary and vendored FSR1 bytes remain exact and text edits are rejected'
+
     foreach ($entry in $plan) {
         if ($entry.Relative -in @('LICENSE', 'LICENSE-GPL-3.0')) { continue }
         $target = Join-Path $input $entry.Relative
