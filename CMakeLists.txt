@@ -489,6 +489,7 @@ if(BUILD_TESTING)
         ENVIRONMENT "${_kz_iso_free_environment}"
         RESOURCE_LOCK kzgs_gpu TIMEOUT 180)
     kz_add_iso_free_test(kzgs_palette_guard kzgs_palette_test)
+    kz_add_iso_free_test(kzgs_xbrz_scaler kzgs_xbrz_test)
     set_tests_properties(
         kz_spu2_component
         kz_vu1_component
@@ -497,7 +498,13 @@ if(BUILD_TESTING)
         kzgs_fsr1_reference
         kzgs_temporal_contract
         kzgs_palette_guard
+        kzgs_xbrz_scaler
         PROPERTIES LABELS "iso-free;component")
+    if(TARGET kzgs_xbrz_probe)
+        kz_add_iso_free_test(kzgs_xbrz_probe kzgs_xbrz_probe
+            --self-test "${KZ_TEST_STATE_DIR}/kzgs/xbrz-probe")
+        set_tests_properties(kzgs_xbrz_probe PROPERTIES LABELS "iso-free;component")
+    endif()
     set_tests_properties(kz_gs_component PROPERTIES RESOURCE_LOCK kzgs_gpu)
 
     kz_add_iso_free_test(kzgs_d3d11_golden kzgs_test

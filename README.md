@@ -118,6 +118,7 @@ reproducible, protected-content-safe provenance.
 | `patches/` | Reconstructible PS2Recomp changes and rationale |
 | `tools/` | Build, regeneration, testing, profiling, and analysis scripts |
 | `docs/` | User guides, technical evidence, and archived research |
+| [`docs/xbrz_texture_upscaling.md`](docs/xbrz_texture_upscaling.md) | Feature contract, architecture, safety boundaries and acceptance gates for the xBRZ prototype |
 
 ## Credits
 
@@ -139,6 +140,7 @@ Developed with AI assistance.
 Repository-owned code and documentation are MIT under [LICENSE](LICENSE), except for the components identified there
 as GPL-3.0. PCSX2-derived libraries, PS2Recomp, the field-of-view contribution, and every compiled build remain
 GPL-3.0; see [LICENSE-GPL-3.0](LICENSE-GPL-3.0).
+The vendored [xBRZ sources](ext/kzgs/third_party/xbrz/README.md) retain their GPL notice and MAME linking exception.
 
 Killzone is a trademark of Sony Interactive Entertainment. This project is not affiliated with Sony or Guerrilla
 Games.
