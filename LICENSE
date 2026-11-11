@@ -1,7 +1,7 @@
 MIT License
 
 Copyright (c) 2026 drakolordx7
-Copyright (c) 2026 Killzone Recomp Maintainers
+Copyright (c) 2026 Killzone Recomp Extended Maintainers
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -24,6 +24,9 @@ SOFTWARE.
 ---------------------------------------------------------------------------
 
 Scope
+
+Killzone Recomp Extended is an actively maintained community continuation.
+This project-status statement does not change the license grant above.
 
 The MIT license above covers this repository's own code and documentation,
 except for the parts listed below, which stay under the GNU General Public

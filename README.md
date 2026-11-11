@@ -18,6 +18,10 @@ mouse-and-keyboard controls, gamepads, internal resolution scaling, and optional
 > **Bring your own disc.** This repository contains no game code or data. You need a supported Killzone NTSC-U
 > (`SCUS-97402`) or PAL (`SCES-52893`, English/Russian/Greek) disc image.
 
+> [!NOTE]
+> **Companion Blender add-on:** [Killzone Blender Importer](https://github.com/Tzeentchnet/Killzone-Blender-Importer)
+> provides Blender 5.2 tools for inspecting and importing Killzone assets.
+
 This community project continues [drakolordx7/KillzoneRecomp](https://github.com/drakolordx7/KillzoneRecomp) with
 additional graphics, display, input, configuration, testing, and runtime work. The active development target is
 Windows x64.
