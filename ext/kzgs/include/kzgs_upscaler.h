@@ -13,6 +13,7 @@ enum class KzgsUpscaler
 	FSR1,
 	DLSS,
 	XeSS,
+	FSR3,
 };
 
 struct KzgsUpscalerOverrides
@@ -71,6 +72,7 @@ struct KzgsUpscalerStatus
 const char* kzgsUpscalerName(KzgsUpscaler provider);
 const char* kzgsUpscalerReasonName(KzgsUpscalerReason reason);
 bool kzgsIsValidUpscaler(KzgsUpscaler provider);
+bool kzgsIsTemporalUpscaler(KzgsUpscaler provider);
 bool kzgsParseUpscaler(std::string_view text, KzgsUpscaler& provider);
 bool kzgsParseUpscalerSharpening(std::string_view text, int& sharpening);
 

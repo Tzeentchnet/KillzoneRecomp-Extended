@@ -1,15 +1,14 @@
 # Local Vulkan vendor SDK adapters
 
-These are **experimental, default-OFF developer targets**, not release features. The renderer currently supplies
-neither matched temporal inputs nor a known color encoding, so both providers remain unavailable and fall back.
-No actual NVIDIA or Intel SDK was available to validate these adapters; test doubles are not evidence of SDK,
-driver, GPU, image-quality, or redistribution qualification.
-The host rejects **every DLSS/XeSS provider before context creation**, even a DLL claiming spatial or color-only
-capability. The measured gate remains a no-go; see [temporal qualification](findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10).
-In particular, NGX's real image layouts, synchronization, command-buffer-only evaluation, and motion/jitter
-behavior have not been independently established. DLSS refuses initialization unless an ABI 1.1 host provides
-exclusive device-idle initialization and explicitly attests to those SDK/runtime/device qualifications.
-The current host provides neither the initialization scope nor any qualification flags.
+The source-built **AMD FidelityFX FSR 3.1.6 Super Resolution** provider is an experimental Vulkan feature.
+Production-qualified matched depth, motion, masks, and full camera matrices are still unavailable, so its default
+`strict` input mode fails closed. An explicit `experimental` mode instead supplies a provenance-marked approximation
+bundle described below. It is not production image-quality qualification.
+
+The DLSS and XeSS adapters remain default-OFF developer targets. No actual NVIDIA or Intel SDK was available to
+validate them; test doubles are not evidence of SDK, driver, GPU, image-quality, or redistribution qualification.
+Their strict temporal inputs remain unavailable. In particular, NGX's real image layouts, synchronization,
+command-buffer-only evaluation, and motion/jitter behavior have not been independently established.
 
 The conditional DLSS and XeSS sources implement SDK negotiation, initialization and command-buffer-recorded
 evaluation against their respective headers. The XeSS Vulkan header says `xessVKInit` may create staging buffers
@@ -22,18 +21,86 @@ Before invoking an initializer, each adapter pins its own module for the rest of
 initialization fails. This conservative lifetime also prevents unloading SDK code after device loss, wrong-thread
 destruction, or an SDK destruction failure.
 
-These are **unqualified conditional paths**: the real vendor headers, import libraries, runtime behavior, and GPUs
-were not available to compile or validate them here. The successful fake-SDK targets exercise only the independent
-test doubles, not the actual SDK binary interfaces. The current host supplies no scope or qualification flags, and
-the temporal no-go independently prevents either provider from being created.
+These DLSS/XeSS paths are **unqualified conditional paths**: the real vendor headers, import libraries, runtime
+behavior, and GPUs were not available to compile or validate them here. The successful fake-SDK targets exercise
+only independent test doubles, not the actual SDK binary interfaces. Their temporal no-go independently prevents
+either provider from being created.
+
+## FSR 3 Super Resolution implementation
+
+This scope is **FSR 3 Super Resolution only**. Frame generation is intentionally excluded: it requires a separate
+design for optical flow, latency, input sampling, frame pacing, UI composition, and presentation ownership. The host
+recognizes `KZGS_PROVIDER_KIND_FSR3`, maps `Upscaler=fsr3` to
+`<exe>\upscalers\kzgs_upscaler_fsr3.dll`, and builds that DLL from locked FidelityFX source. The provider records
+onto the host's current Vulkan graphics command buffer; it does not replace the swapchain, submit another queue, or
+retain the command buffer.
+
+AMD's official
+[FSR 3.1.6 Super Resolution documentation](https://gpuopen.com/manuals/fsr_sdk/techniques/super-resolution-upscaler/)
+requires current render-resolution color and depth, current-to-previous 2D screen-space motion, applied projection
+jitter, positive frame delta, and reset signaling. Motion normally excludes jitter unless the integration explicitly
+uses the SDK's jitter-cancellation path. Exposure may be omitted when auto exposure is selected. Reactive and
+transparency/composition masks are optional API resources but important for this game's particles, alpha blending,
+weapon, HUD, and post-processing. The strict-mode blockers remain:
+
+- gameplay depth was observed in 0/20 measured frames and has no qualified direction or displayed-frame match;
+- the GS has transformed vertices but no object identity or previous transforms, so dynamic/skinned motion is absent;
+- no qualified world-only color, UI/composition masks, or complete scene-cut source exists;
+- the presented texture already contains world, weapon, HUD, transparency, effects, and post-processing.
+
+`FSR3InputMode=experimental` is the only mode that permits substitutes. ABI 1.2 marks every substituted input in
+`approximate_inputs`; the only qualified input is the observed composed color. The approximation bundle is:
+
+- AMD phase-count/Halton projection jitter applied to the world camera only; viewmodel and 2D rendering remain
+  unjittered;
+- FidelityFX Optical Flow `R16G16_SINT` current-to-previous displacement, expanded from 8x8 blocks to full-resolution
+  `R16G16_SFLOAT` motion with the current/previous jitter delta removed;
+- constant forward far depth (`R32_SFLOAT`, value `1.0`);
+- an `R8_UNORM` reactive mask derived from the residual between current color and flow-warped committed color;
+- guest near/far/FOV and game-frame time, explicitly marked approximate;
+- no fabricated composition or UI mask.
+
+The first presentation after startup or geometry change is an intentional native fallback: it publishes the exact
+source/output geometry needed by the game-side jitter producer. The next matched frame dispatches with a reset.
+Optical Flow, approximation, and FSR history commit only after command recording **and** successful use by
+presentation. Rejected input, failed dispatch/presentation, redraw, or resize invalidates speculative history.
+
+The resulting image can ghost around HUD/viewmodel edges, particles, disocclusions, camera cuts, or newly exposed
+geometry. Experimental mode is an opt-in research path, not evidence that the strict input gate passed.
+
+### Locked source and shader generation
+
+[`config/dependencies.lock.json`](../config/dependencies.lock.json) pins:
+
+- FidelityFX SDK `v2.4.0` (`7539ae8b6568ad29ed78a753404351daf3b5cca7`), which contains FSR 3.1.6;
+- AMD shader tooling commit `c6efa6bf7f2027b3ec94f28578bb5965eabb9e55`, used only at build time;
+- miniz `3.1.2` commit `77d0dce8627735138c51770d1799a1ef48f2117d`.
+
+Run `tools\scripts\provision_fidelityfx.ps1` to verify/extract those archives and generate the locked shader headers.
+The SDK `v2.4.0` archive does not ship the required Vulkan generated headers or GLSL entry wrappers, so generation
+uses AMD's older Vulkan GLSL wrappers/core while resolving algorithm headers from `v2.4.0` first. The generator
+targets Vulkan 1.1 / SPIR-V 1.3, adapts the older sampler bindings to backend bindings 320/321, emits the `main`
+entry metadata expected by the current backend, and retains full-precision variants for nominal 16-bit/wave64
+permutations. The runtime requests `shaderStorageImageWriteWithoutFormat` for FidelityFX's formatless output.
+Provisioning is hash-checked and idempotent.
 
 ## Local build
 
-Use a Windows x64 MSVC or clang-cl developer shell and an SDK obtained by you under its own terms. Keep SDKs outside
-the repository. There is no SDK download, vendoring, auto-discovery, installation, or release staging. The SDK
-release is a **declared** provenance field; compile/link checks and hashes do not independently authenticate it.
-The vendor runtime or driver may have separate update/telemetry behavior; that behavior has not been validated
-or controlled by these build scripts.
+FSR 3 is source-built by default when its locked dependencies have been provisioned:
+
+```powershell
+.\tools\scripts\provision_fidelityfx.ps1
+.\tools\scripts\vsenv.bat cmake --build .\build\win-msvc-rel --target kzgs_upscaler_fsr3
+```
+
+Set `KZGS_BUILD_FSR3_PROVIDER=OFF` only for a build that intentionally excludes it. Game/test staging copies
+`kzgs_upscaler_fsr3.dll`, the FidelityFX notices, and the miniz license under the output's `upscalers` tree.
+The source archives and shader compiler are build inputs, not runtime assets.
+
+DLSS and XeSS instead require a Windows x64 MSVC or clang-cl developer shell and SDKs obtained by you under their
+own terms. Keep those SDKs outside the repository. There is no DLSS/XeSS SDK download, vendoring, auto-discovery,
+installation, or release staging. A declared SDK release, compile/link checks, and hashes do not independently
+authenticate it. Vendor runtime or driver update/telemetry behavior has not been validated or controlled here.
 
 For DLSS, the reference layout is:
 
@@ -56,7 +123,7 @@ cmake --preset win-msvc-rel -DKZGS_BUILD_XESS_PROVIDER=ON `
 cmake --build --preset win-msvc-rel --target kzgs_upscaler_xess
 ```
 
-Each target is `EXCLUDE_FROM_ALL`, independent of `kzgs`, and writes to
+Each DLSS/XeSS target is `EXCLUDE_FROM_ALL`, independent of `kzgs`, and writes to
 `build\win-msvc-rel\local-sdk-providers\RelWithDebInfo`; an ordinary build or package does not stage it. For
 private experiments only, a developer would manually place the selected provider in `<exe>\upscalers` and place its
 licensed runtime dependency there as well: NVIDIA's `nvngx_dlss.dll` from the SDK's `lib\Windows_x86_64\rel`,
@@ -83,6 +150,18 @@ auto-exposure. Sharpening must be zero. The candidate path transitions sampled i
 dependencies, and restores supplied layouts on all return paths. XeSS SDK context operations are serialized on the
 initialization thread; wrong-thread evaluation fails before recording and unsafe destruction abandons the context.
 These mappings and synchronization assumptions still need real SDK, driver, GPU, and temporal-image qualification.
+
+## FSR 3 validation status
+
+The ISO-free `kzgs_fsr3_vulkan_validation` test uses a synthetic GS scene and the real source-built provider. It
+checks bootstrap fallback, active output readback, translated-frame Optical Flow/history advancement, missing-input
+fallback, recovery, resize/recreation, and forced partial FSR/Optical Flow context-creation cleanup. It passes
+standard Vulkan validation on an NVIDIA GeForce RTX 5070.
+
+Synchronization validation is deliberately disabled for that full GS presentation test because the baseline
+synthetic GS path reports a pre-existing index-buffer upload/read hazard before FSR work. Direct provider tests keep
+their existing synchronization coverage. Do not describe the FSR 3 integration as synchronization-validation clean,
+and do not treat a synthetic pattern as gameplay image-quality qualification.
 
 ## Exact reference provenance and license fields
 

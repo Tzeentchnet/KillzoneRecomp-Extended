@@ -53,10 +53,10 @@ preserved, and saves retain the disc path and all bindings. A build refuses to o
 
 ### Experimental presentation upscaler
 
-The launcher's **Graphics** tab exposes Off/FSR 1 selection and FSR 1 sharpening. Its **FSR 1 quality** preset selects
+The launcher's **Graphics** tab exposes Off, FSR 1, and experimental FSR 3 Super Resolution selection plus provider
+sharpening. Its **FSR 1 quality** preset selects
 Vulkan, 3x internal rendering, FSR 1 with 15% RCAS, PS2 mip transitions, 16x anisotropy, and disables the separate
-CAS and AA passes. This is the recommended starting point for 1440p output. DLSS and XeSS remain visible as
-unavailable when loaded from an existing config and cannot be selected in the launcher.
+CAS and AA passes. This is the recommended starting point for 1440p output. DLSS and XeSS remain unavailable.
 
 The same settings can be edited directly:
 
@@ -64,39 +64,57 @@ The same settings can be edited directly:
 [Graphics]
 Upscaler=off
 UpscalerSharpening=0
+FSR3InputMode=strict
 ```
 
-`Upscaler` accepts `off`, `fsr1`, `dlss`, or `xess` (case-insensitive); saves use these lowercase names.
+`Upscaler` accepts `off`, `fsr1`, `fsr3`, `dlss`, or `xess` (case-insensitive); saves use these lowercase names.
 `fsr1` runs AMD FidelityFX FSR 1 EASU on the Vulkan hardware renderer, after crop/aspect selection and before the
 existing CAS/final presentation filters. `UpscalerSharpening` is provider-owned: 0 disables RCAS; 1 through 100 enable
-it, mapping linearly from 2 to 0 AMD attenuation stops. It is independent of the existing `Sharpen`/CAS setting.
+it. FSR 1 maps that range linearly from 2 to 0 AMD attenuation stops; FSR 3 maps it to the SDK's 0..1 sharpness.
+It is independent of the existing `Sharpen`/CAS setting.
 The existing `Upscale` selects automatic or integer GS supersampling and is unchanged. Increasing that internal
 scale can make the cropped source larger than the output, in which case presentation FSR1 does not run.
 
-FSR1 runs only when neither output axis is smaller than the cropped source and at least one axis is larger. Otherwise
+`FSR3InputMode` accepts `strict` (default) or `experimental`:
+
+- `strict` requires qualified matched depth, motion, world-only jitter, camera, and timing. Those inputs are not
+  currently available, so strict FSR 3 intentionally falls back.
+- `experimental` enables the source-built FidelityFX FSR 3.1.6 provider on Vulkan with explicitly marked
+  approximations: world-camera Halton jitter, FidelityFX Optical Flow-derived motion, constant forward far depth, a
+  color-residual reactive mask, and guest scalar camera/timing data. It does not fabricate composition/UI masks.
+
+Experimental mode is Super Resolution only; it does not generate frames or replace the swapchain. The HUD and
+viewmodel remain unjittered while the composed image is reconstructed, so HUD edges, particles, disocclusions, and
+newly exposed geometry may ghost or otherwise reconstruct incorrectly.
+
+FSR1 and FSR 3 run only when neither output axis is smaller than the cropped source and at least one axis is larger. Otherwise
 its status is `no_upscale_needed` and the existing presentation path is used. D3D11, D3D12, software, surfaceless
-Vulkan, unavailable DLSS/XeSS, and initialization/dispatch failures also fall back to the existing native presentation
-and filters; provider sharpening is then zero. A vendor request does **not** automatically select FSR1. Off preserves
-the existing path. No proprietary SDK is included or required. The vendored AMD FSR 1 source is MIT licensed; see
+Vulkan, unavailable DLSS/XeSS, strict or incomplete FSR 3 input, and initialization/dispatch failures also fall back to the existing native
+presentation and filters; provider sharpening is then zero. A temporal-provider request does **not** automatically
+select FSR1. Off preserves the existing path. No proprietary SDK is included or required. The vendored AMD FSR 1
+source is MIT licensed; see
 its [notice and provenance](../ext/kzgs/third_party/fsr1/README.md).
 
-Optional Vulkan providers may be placed in `<exe>/upscalers/kzgs_upscaler_dlss.dll` or
-`<exe>/upscalers/kzgs_upscaler_xess.dll`. No vendor binary is bundled; the optional local SDK adapters are
-unqualified and the current host provides no vendor initialization scope, as described in
+Optional Vulkan providers may be placed in `<exe>/upscalers/kzgs_upscaler_fsr3.dll`,
+`<exe>/upscalers/kzgs_upscaler_dlss.dll`, or `<exe>/upscalers/kzgs_upscaler_xess.dll`. Builds with
+`KZGS_BUILD_FSR3_PROVIDER=ON` stage the source-built FSR 3 DLL and its FidelityFX/miniz notices automatically.
+The optional local DLSS/XeSS SDK adapters remain unqualified and are not staged by ordinary builds; see
 [local vendor adapters](vendor-upscalers.md).
 A provider must be selected
 before the Vulkan device is created so its required extensions and features can be negotiated; selecting a different
 provider on an already-open device reports `device_recreation_required` and falls back until KzGS is reopened
 (normally by restarting the game or replay).
-The current renderer exposes composed color only, with an unknown color encoding. **Both DLSS and XeSS are
-unavailable**, even if a DLL claims spatial or color-only capability: the measured matched temporal-input gate is
-FAIL/NO-GO. Explicitly select `fsr1` to use the independent spatial path. No estimated or zero motion is
-substituted. The host supplies no vendor SDK initialization scope, and no real SDK or vendor GPU was qualified.
+The measured matched temporal-input gate remains FAIL/NO-GO for strict FSR 3, DLSS, and XeSS. Experimental FSR 3 is
+the only path permitted to convert the ordered candidates into ABI 1.2 approximations; DLSS/XeSS remain strict.
+The first FSR 3 presentation after startup or resize intentionally falls back while publishing exact jitter
+geometry. The next matched frame can activate with reset history.
 
-For a single run, use `KZ_UPSCALER` and `KZ_UPSCALER_SHARPENING`, or start the executable directly, for example:
+For a single run, use `KZ_UPSCALER`, `KZ_UPSCALER_SHARPENING`, and `KZ_FSR3_INPUT_MODE`, or start the executable
+directly, for example:
 
 ```powershell
 .\build\win-msvc-rel\killzone.exe --upscaler=fsr1 --upscaler-sharpening=35
+.\build\win-msvc-rel\killzone.exe --upscaler=fsr3 --fsr3-input-mode=experimental
 ```
 
 Set `Renderer=vulkan` in the INI as well. Each CLI setting takes precedence over its corresponding environment
@@ -124,10 +142,10 @@ are still diagnostic, not permission to dispatch. See [testing](testing.md#headl
 | `no_upscale_needed`, `invalid_dimensions` | The cropped source/output dimensions do not need or cannot support the pass. |
 | `provider_missing`, `provider_version_mismatch`, `provider_invalid` | DLL/dependency load, ABI version, entry point, kind, or required-function failure. |
 | `instance_extension_unavailable`, `device_extension_unavailable`, `device_feature_unavailable` | Vulkan requirements could not be negotiated. |
-| `required_input_unavailable`, `unsupported_color_encoding` | Required matched inputs or an accepted color encoding are unavailable; the current vendor gate rejects all DLSS/XeSS requests. |
+| `required_input_unavailable`, `unsupported_color_encoding` | Required matched inputs or an accepted color encoding are unavailable. This is expected for strict FSR 3 and all DLSS/XeSS requests; experimental FSR 3 also uses it during bootstrap or after unmatched input. |
 | `device_recreation_required` | A different provider was selected after device creation; restart/reopen KzGS to negotiate it. |
 | `initialization_failed`, `dispatch_failed`, `present_failed`, `reset_failed`, `duplicate_present`, `device_lost` | Initialization, evaluation, presentation, history/reset, duplicate-frame, or device failure; native presentation is used when possible. |
-| `idle_wait_failed` | A non-device-loss Vulkan idle wait failed; potentially in-flight FSR1 resources are abandoned instead of explicitly destroyed. |
+| `idle_wait_failed` | A non-device-loss Vulkan idle wait failed; potentially in-flight Vulkan upscaler resources are abandoned instead of explicitly destroyed. |
 
 The launcher's **Validated enhancements** preset selects the measured stock-game setup: D3D12, VSync, automatic
 internal scale, 16x anisotropy, highest mip detail, clean PS2 effects, replacement textures off, 2x view distance,

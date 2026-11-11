@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -20,6 +21,18 @@
 #include <memory>
 #include <string>
 #include <vector>
+
+static_assert(KZGS_PROVIDER_KIND_DLSS == 1);
+static_assert(KZGS_PROVIDER_KIND_XESS == 2);
+static_assert(KZGS_PROVIDER_KIND_FSR3 == 3);
+static_assert(KZGS_PROVIDER_ABI_VERSION == KZGS_PROVIDER_VERSION(1, 2));
+static_assert(KZGS_PROVIDER_CAP_APPROXIMATE_INPUTS == (UINT64_C(1) << 2));
+static_assert(offsetof(KzgsProviderFrame, approximate_inputs) ==
+	KZGS_PROVIDER_FIELD_END(KzgsProviderFrame, camera));
+static_assert(offsetof(KzgsProviderCamera, valid_fields) ==
+	KZGS_PROVIDER_FIELD_END(KzgsProviderCamera, previous_world_to_view));
+static_assert(KZGS_PROVIDER_CAMERA_VALID_SCALARS == KZGS_TEMPORAL_CAMERA_VALID_SCALARS);
+static_assert(KZGS_PROVIDER_CAMERA_VALID_MATRICES == KZGS_TEMPORAL_CAMERA_VALID_MATRICES);
 
 namespace
 {
@@ -153,6 +166,12 @@ namespace
 			status.providerReason == providerReason && (!message || std::strcmp(status.providerMessage, message) == 0),
 			"structured provider status");
 	}
+
+	uint32_t KindMode(KzgsUpscaler provider)
+	{
+		return provider == KzgsUpscaler::XeSS ? MOCK_KIND_XESS :
+			provider == KzgsUpscaler::FSR3 ? MOCK_KIND_FSR3 : 0;
+	}
 }
 
 int main(int argc, char** argv)
@@ -183,12 +202,17 @@ int main(int argc, char** argv)
 	abiStatus.struct_size = sizeof(abiStatus);
 	Check(mock.api(KZGS_PROVIDER_ABI_VERSION, reinterpret_cast<KzgsProviderApi*>(&small), &abiStatus) ==
 			KZGS_PROVIDER_OK && small.size == sizeof(KzgsProviderApi) && small.version == KZGS_PROVIDER_ABI_VERSION &&
+		mock.Stats().negotiated_version == KZGS_PROVIDER_VERSION(1, 2) &&
 		std::all_of(std::begin(small.guard), std::end(small.guard), [](uint8_t v) { return v == 0x5a; }),
 		"older, smaller API buffer is not overrun");
 	small.size = 8;
 	Check(mock.api(KZGS_PROVIDER_VERSION(1, 0), reinterpret_cast<KzgsProviderApi*>(&small), &abiStatus) ==
 			KZGS_PROVIDER_OK && small.version == KZGS_PROVIDER_VERSION(1, 0),
 		"1.0 callers negotiate a compatible provider version");
+	small.size = 8;
+	Check(mock.api(KZGS_PROVIDER_VERSION(1, 1), reinterpret_cast<KzgsProviderApi*>(&small), &abiStatus) ==
+			KZGS_PROVIDER_OK && small.version == KZGS_PROVIDER_VERSION(1, 1),
+		"1.1 callers preserve their negotiated provider version");
 	struct LargerApi
 	{
 		KzgsProviderApi api;
@@ -214,6 +238,35 @@ int main(int argc, char** argv)
 		smallInfo.size == sizeof(KzgsProviderInfo) && smallInfo.kind == KZGS_PROVIDER_KIND_DLSS &&
 		std::all_of(std::begin(smallInfo.guard), std::end(smallInfo.guard), [](uint8_t v) { return v == 0x3c; }),
 		"smaller capability buffer is not overrun");
+	KzgsProviderFrame legacyFrame{};
+	legacyFrame.struct_size = KZGS_PROVIDER_FIELD_END(KzgsProviderFrame, camera);
+	KzgsProviderCamera legacyCamera{};
+	legacyCamera.struct_size = KZGS_PROVIDER_FIELD_END(KzgsProviderCamera, previous_world_to_view);
+	Check(KZGS_PROVIDER_HAS_FIELD(&legacyFrame, KzgsProviderFrame, camera) &&
+			!KZGS_PROVIDER_HAS_FIELD(&legacyFrame, KzgsProviderFrame, approximate_inputs) &&
+			KZGS_PROVIDER_HAS_FIELD(&legacyCamera, KzgsProviderCamera, previous_world_to_view) &&
+			!KZGS_PROVIDER_HAS_FIELD(&legacyCamera, KzgsProviderCamera, valid_fields),
+		"1.0/1.1 struct sizes hide only ABI 1.2 trailing fields");
+	mock.set(MOCK_APPROXIMATE_CAPABILITY);
+	KzgsProviderInfo approximateInfo{};
+	approximateInfo.struct_size = sizeof(approximateInfo);
+	Check(larger.api.query_info(&approximateInfo, &abiStatus) == KZGS_PROVIDER_OK &&
+		(approximateInfo.capabilities & KZGS_PROVIDER_CAP_APPROXIMATE_INPUTS),
+		"ABI 1.2 provider advertises approximate-input support explicitly");
+	mock.set(MOCK_APPROXIMATE_CAPABILITY | MOCK_ABI_1_1);
+	larger.api.struct_size = sizeof(larger);
+	Check(mock.api(KZGS_PROVIDER_ABI_VERSION, &larger.api, &abiStatus) == KZGS_PROVIDER_OK &&
+		larger.api.abi_version == KZGS_PROVIDER_VERSION(1, 1),
+		"provider can negotiate ABI 1.1 with a 1.2 host");
+	approximateInfo = {};
+	approximateInfo.struct_size = sizeof(approximateInfo);
+	Check(larger.api.query_info(&approximateInfo, &abiStatus) == KZGS_PROVIDER_OK &&
+		!(approximateInfo.capabilities & KZGS_PROVIDER_CAP_APPROXIMATE_INPUTS),
+		"ABI 1.1 negotiation cannot advertise ABI 1.2 approximation semantics");
+	mock.set(0);
+	larger.api.struct_size = sizeof(larger);
+	Check(mock.api(KZGS_PROVIDER_ABI_VERSION, &larger.api, &abiStatus) == KZGS_PROVIDER_OK,
+		"mock restores ABI 1.2 negotiation after compatibility probes");
 	KzgsProviderSync partialSync{};
 	partialSync.struct_size = sizeof(uint32_t);
 	KzgsProviderFrame partialFrame{};
@@ -296,7 +349,8 @@ int main(int argc, char** argv)
 		return failures ? 1 : 0;
 	}
 	kzgs::ProviderTestSetPath((path + L".missing").c_str());
-	for (const KzgsUpscaler provider : {KzgsUpscaler::DLSS, KzgsUpscaler::XeSS})
+	for (const KzgsUpscaler provider :
+		{KzgsUpscaler::DLSS, KzgsUpscaler::XeSS, KzgsUpscaler::FSR3})
 	{
 		if (Open(window, KzgsUpscalerReason::ProviderMissing, provider, 37))
 		{
@@ -309,9 +363,10 @@ int main(int argc, char** argv)
 	}
 	kzgs::ProviderTestSetPath(path.c_str());
 
-	for (const KzgsUpscaler provider : {KzgsUpscaler::DLSS, KzgsUpscaler::XeSS})
+	for (const KzgsUpscaler provider :
+		{KzgsUpscaler::DLSS, KzgsUpscaler::XeSS, KzgsUpscaler::FSR3})
 	{
-		const uint32_t kind = provider == KzgsUpscaler::XeSS ? MOCK_KIND_XESS : 0;
+		const uint32_t kind = KindMode(provider);
 		for (const uint32_t capability : {0u, static_cast<uint32_t>(MOCK_TEMPORAL_COLOR_ONLY),
 				static_cast<uint32_t>(MOCK_TEMPORAL_COLOR_ONLY | MOCK_DUAL_CAPABILITY),
 				static_cast<uint32_t>(MOCK_CREATE_FAILURE | MOCK_EVALUATE_FAILURE)})
@@ -347,7 +402,7 @@ int main(int argc, char** argv)
 				const KzgsMockStats after = mock.Stats();
 				Check(after.creates == before.creates && after.evaluates == before.evaluates &&
 					after.resets == before.resets,
-					"unqualified DLSS/XeSS never create, evaluate, or reset vendor history");
+					"unqualified temporal providers never create, evaluate, or reset vendor history");
 			}
 		}
 	}
@@ -437,7 +492,9 @@ int main(int argc, char** argv)
 			KzgsMockStats after = mock.Stats();
 			Check(after.creates == initial.creates + 1 && after.evaluates == initial.evaluates + 1 &&
 				after.resets == initial.resets + 1 && after.last_presentation_id == 10 &&
-				after.last_valid_inputs == KZGS_PROVIDER_INPUT_COLOR, "create, reset, and explicit frame contract");
+				after.last_valid_inputs == KZGS_PROVIDER_INPUT_COLOR && !after.last_approximate_inputs &&
+				after.last_frame_struct_size == sizeof(KzgsProviderFrame),
+				"create, reset, and explicit ABI 1.2 frame contract");
 
 			const uint64_t firstFrame = after.last_frame_id;
 			Check(!kzgs::ProviderTestUpscale(source.get(), 1, 0, 4, 3, 9, 6, 11, true, output) &&
@@ -646,19 +703,25 @@ int main(int argc, char** argv)
 		});
 		kzgsClose();
 	}
-	mock.set(MOCK_ABI_1_0);
-	if (Open(window, KzgsUpscalerReason::WaitingForFrame))
+	for (const uint32_t abiMode : {static_cast<uint32_t>(MOCK_ABI_1_0),
+			static_cast<uint32_t>(MOCK_ABI_1_1)})
 	{
-		kzgs::RunOnGSThread([&]() {
-			auto source = Upload();
-			GSTexture* output = nullptr;
-			Check(source && kzgs::ProviderTestUpscale(source.get(), 0, 0, 4, 4, 8, 8, 29, false, output),
-				"1.0 provider works with a 1.1 host");
-			kzgs::ProviderTestPresented(29, true, true);
-			static_cast<GSDeviceVK*>(g_gs_device.get())->ExecuteCommandBuffer(true);
-			source.reset();
-		});
-		kzgsClose();
+		mock.set(abiMode);
+		if (Open(window, KzgsUpscalerReason::WaitingForFrame))
+		{
+			Check(mock.Stats().negotiated_version == KZGS_PROVIDER_VERSION(1, abiMode == MOCK_ABI_1_0 ? 0 : 1),
+				"older provider preserves its negotiated minor ABI");
+			kzgs::RunOnGSThread([&]() {
+				auto source = Upload();
+				GSTexture* output = nullptr;
+				Check(source && kzgs::ProviderTestUpscale(source.get(), 0, 0, 4, 4, 8, 8, 29, false, output),
+					"1.0/1.1 provider works with a 1.2 host");
+				kzgs::ProviderTestPresented(29, true, true);
+				static_cast<GSDeviceVK*>(g_gs_device.get())->ExecuteCommandBuffer(true);
+				source.reset();
+			});
+			kzgsClose();
+		}
 	}
 	mock.set(0);
 	if (Open(window, KzgsUpscalerReason::ProviderInvalid, KzgsUpscaler::XeSS))
@@ -675,6 +738,26 @@ int main(int argc, char** argv)
 			KzgsUpscalerStatus status;
 			Check(kzgsGetUpscalerStatus(status) && status.effective == KzgsUpscaler::XeSS &&
 				status.reason == KzgsUpscalerReason::Active, "XeSS provider reports effective status");
+			static_cast<GSDeviceVK*>(g_gs_device.get())->ExecuteCommandBuffer(true);
+			source.reset();
+		});
+		kzgsClose();
+	}
+	mock.set(0);
+	if (Open(window, KzgsUpscalerReason::ProviderInvalid, KzgsUpscaler::FSR3))
+		kzgsClose();
+	mock.set(MOCK_KIND_FSR3);
+	if (Open(window, KzgsUpscalerReason::WaitingForFrame, KzgsUpscaler::FSR3))
+	{
+		kzgs::RunOnGSThread([&]() {
+			auto source = Upload();
+			GSTexture* output = nullptr;
+			Check(source && kzgs::ProviderTestUpscale(source.get(), 0, 0, 4, 4, 8, 8, 29, false, output),
+				"FSR3-kind provider negotiates and dispatches");
+			kzgs::ProviderTestPresented(29, true, true);
+			KzgsUpscalerStatus status;
+			Check(kzgsGetUpscalerStatus(status) && status.effective == KzgsUpscaler::FSR3 &&
+				status.reason == KzgsUpscalerReason::Active, "FSR3 provider reports effective status");
 			static_cast<GSDeviceVK*>(g_gs_device.get())->ExecuteCommandBuffer(true);
 			source.reset();
 		});

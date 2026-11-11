@@ -14,6 +14,9 @@ namespace kzgs::temporal
 		bool ready = false;
 	};
 
+	Decision ValidateStrict(const KzgsTemporalFrame& frame);
+	Decision ValidateFSR3Experimental(const KzgsTemporalFrame& frame);
+
 	class Tracker
 	{
 	public:

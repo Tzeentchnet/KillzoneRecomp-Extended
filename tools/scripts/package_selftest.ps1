@@ -115,9 +115,14 @@ try {
 
     $decoys = @(
         'nvngx_dlss.dll', 'nvngx_dlssd.dll', 'libxess.dll',
-        'kzgs_upscaler_dlss.dll', 'kzgs_upscaler_xess.dll', 'nvngx_dlss.pdb', 'libxess.pdb',
+        'kzgs_upscaler_fsr3.dll', 'kzgs_upscaler_dlss.dll', 'kzgs_upscaler_xess.dll',
+        'nvngx_dlss.pdb', 'libxess.pdb',
         'nvsdk_ngx_d.lib', 'libxess.lib', 'game.iso', 'eeMemory.bin',
-        'upscalers\kzgs_upscaler_dlss.dll', 'upscalers\kzgs_upscaler_xess.dll',
+        'upscalers\kzgs_upscaler_fsr3.dll', 'upscalers\kzgs_upscaler_dlss.dll',
+        'upscalers\kzgs_upscaler_xess.dll',
+        'upscalers\licenses\FidelityFX-SDK-2.4.0\license.md',
+        'upscalers\licenses\FidelityFX-SDK-2.4.0\3rdpartynotice.md',
+        'upscalers\licenses\miniz-LICENSE',
         'SDK\DLSS\include\nvsdk_ngx_vk.h', 'SDK\DLSS\lib\nvsdk_ngx_d.lib',
         'SDK\XeSS\lib\libxess.lib', 'SDK\XeSS\bin\libxess.dll',
         'cache\shader_cache.bin', 'disc\SLUS_000.00', 'generated\private.cpp',
@@ -131,7 +136,7 @@ try {
     }
     $dry = @(& "$PSScriptRoot\package.ps1" -Root $root -BuildDirectory $input -Destination $package -DryRun)
     if ((Test-Path -LiteralPath $package) -or
-        @($dry | Where-Object { $_ -match '(?i)^INCLUDE .*?(dlss|xess|\.pdb|\.lib|cache|private)' }).Count) {
+        @($dry | Where-Object { $_ -match '(?i)^INCLUDE .*?(fsr3|fidelityfx|miniz-license|dlss|xess|\.pdb|\.lib|cache|private)' }).Count) {
         throw 'Package dry-run created files or selected an excluded input.'
     }
     'PASS package dry-run excludes vendor DLLs, SDK roots, import libs, symbols, protected fixtures and caches'
@@ -207,7 +212,7 @@ try {
     $releaseDry = @(& "$PSScriptRoot\make_release.ps1" -Version selftest -From $package `
         -OutputDirectory $release -CrtDirectory $crt -DryRun)
     if ((Test-Path -LiteralPath $release) -or
-        @($releaseDry | Where-Object { $_ -match '(?i)^INCLUDE .*?(dlss|xess|\.pdb|\.lib|cache|private)' }).Count) {
+        @($releaseDry | Where-Object { $_ -match '(?i)^INCLUDE .*?(fsr3|fidelityfx|miniz-license|dlss|xess|\.pdb|\.lib|cache|private)' }).Count) {
         throw 'Release dry-run created files or selected an excluded input.'
     }
     'PASS release dry-run excludes contaminated source and CRT directory decoys'

@@ -164,12 +164,18 @@ namespace
 	{
 		if (!kzgsIsValidUpscaler(cfg.upscaler))
 		{
-			error = "upscaler must be off, fsr1, dlss or xess";
+			error = "upscaler must be off, fsr1, fsr3, dlss or xess";
 			return false;
 		}
 		if (cfg.upscalerSharpening < 0 || cfg.upscalerSharpening > 100)
 		{
 			error = "upscaler sharpening must be an integer from 0 to 100";
+			return false;
+		}
+		if (cfg.fsr3InputMode != KzgsFsr3InputMode::Strict &&
+			cfg.fsr3InputMode != KzgsFsr3InputMode::Experimental)
+		{
+			error = "FSR 3 input mode must be strict or experimental";
 			return false;
 		}
 		return true;
@@ -198,9 +204,10 @@ namespace
 				KzgsUpscalerReason::NotImplemented;
 		kzgs::ProviderStop();
 		kzgs::Fsr1Configure(fsr1, cfg.upscalerSharpening);
-		if (cfg.upscaler == KzgsUpscaler::DLSS || cfg.upscaler == KzgsUpscaler::XeSS)
+		if (kzgsIsTemporalUpscaler(cfg.upscaler))
 		{
-			const kzgs::ProviderStatus provider = kzgs::ProviderConfigure(cfg.upscaler, vulkan, cfg.upscalerSharpening);
+			const kzgs::ProviderStatus provider = kzgs::ProviderConfigure(
+				cfg.upscaler, vulkan, cfg.upscalerSharpening, cfg.fsr3InputMode);
 			status.reason = provider.reason;
 			status.providerResult = provider.result;
 			status.providerReason = provider.providerReason;
@@ -269,7 +276,7 @@ namespace
 		{
 			std::lock_guard lock(s_upscaler_mutex);
 			requested = s_upscaler_status.requested;
-			if (requested != KzgsUpscaler::DLSS && requested != KzgsUpscaler::XeSS)
+			if (!kzgsIsTemporalUpscaler(requested))
 				return;
 			const KzgsUpscaler effective = applied ? requested : KzgsUpscaler::Off;
 			const int sharpening = applied ? s_upscaler_status.requestedSharpening : 0;
@@ -291,7 +298,8 @@ namespace
 		{
 			const std::string message = std::string("Vulkan ") + kzgsUpscalerName(requested) + " provider: " +
 				kzgsUpscalerReasonName(provider.reason) +
-				(provider.message[0] ? std::string(" (") + provider.message + ")" : "");
+				(provider.message[0] ? std::string(" (") + provider.message + ")" : "") +
+				(provider.nativeCode ? std::string(" [native=") + std::to_string(provider.nativeCode) + "]" : "");
 			if (s_log_fn)
 				s_log_fn(applied ? 2 : 1, message.c_str());
 			else
@@ -1114,13 +1122,38 @@ static bool OpenImpl(const kz::host::NativeWindow& window, const KzgsConfigV1& c
 	return true;
 }
 
-static bool CheckExtendedConfig(const void* config, size_t configSize, uint32_t version, std::string* err)
+struct LegacyKzgsConfigV1 : KzgsConfig
 {
+	KzgsUpscaler upscaler = KzgsUpscaler::Off;
+	int upscalerSharpening = 0;
+	bool temporalDiagnostics = false;
+};
+static_assert(sizeof(LegacyKzgsConfigV1) < sizeof(KzgsConfigV1));
+
+static bool ReadExtendedConfig(const void* config, size_t configSize, uint32_t version,
+	KzgsConfigV1& extended, std::string* err)
+{
+	const bool legacySize = configSize == sizeof(LegacyKzgsConfigV1);
+	const bool currentSize = configSize >= sizeof(KzgsConfigV1);
 	const char* message = !config ? "extended configuration must not be null" :
 		version != KZGS_CONFIG_VERSION_1 ? "unsupported extended configuration version" :
-		configSize < sizeof(KzgsConfigV1) ? "extended configuration is too small" : nullptr;
+		!legacySize && !currentSize ? "extended configuration is too small" : nullptr;
 	if (!message)
+	{
+		if (legacySize)
+		{
+			const LegacyKzgsConfigV1& legacy = *static_cast<const LegacyKzgsConfigV1*>(config);
+			static_cast<KzgsConfig&>(extended) = static_cast<const KzgsConfig&>(legacy);
+			extended.upscaler = legacy.upscaler;
+			extended.upscalerSharpening = legacy.upscalerSharpening;
+			extended.temporalDiagnostics = legacy.temporalDiagnostics;
+		}
+		else
+		{
+			extended = *static_cast<const KzgsConfigV1*>(config);
+		}
 		return true;
+	}
 	if (err)
 		*err = message;
 	return false;
@@ -1136,9 +1169,10 @@ bool kzgsOpen(const kz::host::NativeWindow& window, const KzgsConfig& cfg, uint8
 bool kzgsOpenEx(const kz::host::NativeWindow& window, const void* config, size_t configSize, uint32_t version,
 	uint8_t* privRegs, std::string* err)
 {
-	if (!CheckExtendedConfig(config, configSize, version, err))
+	KzgsConfigV1 extended;
+	if (!ReadExtendedConfig(config, configSize, version, extended, err))
 		return false;
-	return OpenImpl(window, *static_cast<const KzgsConfigV1*>(config), privRegs, err);
+	return OpenImpl(window, extended, privRegs, err);
 }
 
 void kzgsClose()
@@ -1176,7 +1210,7 @@ bool kzgsGetUpscalerStatus(KzgsUpscalerStatus& out)
 			return false;
 		out = s_upscaler_status;
 	}
-	if (out.requested == KzgsUpscaler::DLSS || out.requested == KzgsUpscaler::XeSS)
+	if (kzgsIsTemporalUpscaler(out.requested))
 	{
 		out.temporalMissingInputs = KZGS_TEMPORAL_REQUIRED;
 		KzgsTemporalDiagnostics diagnostics;
@@ -1224,6 +1258,11 @@ bool kzgsGetUpscalerStatus(KzgsUpscalerStatus& out)
 bool kzgsGetTemporalDiagnostics(KzgsTemporalDiagnostics& out)
 {
 	return s_open.load(std::memory_order_acquire) && kzgs::TemporalGetDiagnostics(out);
+}
+
+bool kzgsGetFsr3JitterState(KzgsFsr3JitterState& out)
+{
+	return s_open.load(std::memory_order_acquire) && kzgs::ProviderGetFsr3JitterState(out);
 }
 
 void kzgsGifTransfer(int path, const uint8_t* data, uint32_t qwords)
@@ -1399,9 +1438,10 @@ void kzgsUpdateConfig(const KzgsConfig& cfg)
 
 bool kzgsUpdateConfigEx(const void* config, size_t configSize, uint32_t version, std::string* err)
 {
-	if (!CheckExtendedConfig(config, configSize, version, err))
+	KzgsConfigV1 extended;
+	if (!ReadExtendedConfig(config, configSize, version, extended, err))
 		return false;
-	return UpdateConfigImpl(*static_cast<const KzgsConfigV1*>(config), err);
+	return UpdateConfigImpl(extended, err);
 }
 
 void kzgsSync()

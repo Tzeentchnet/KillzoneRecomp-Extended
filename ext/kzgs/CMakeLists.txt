@@ -356,6 +356,13 @@ target_link_libraries(kzgs PUBLIC kz_host_core)
 target_precompile_headers(kzgs PRIVATE "${P2SRC}/PrecompiledHeader.h")
 target_include_directories(kzgs PUBLIC "${KZGS_ROOT}/include")
 target_include_directories(kzgs PRIVATE "${KZGS_ROOT}/third_party/smaa")
+if(KZGS_BUILD_FSR3_PROVIDER)
+	target_sources(kzgs PRIVATE
+		"${KZGS_ROOT}/src/kzgs_temporal_approximation_vulkan.cpp"
+	)
+	target_link_libraries(kzgs PRIVATE kzgs_fidelityfx)
+	target_compile_definitions(kzgs PRIVATE KZGS_HAS_FSR3=1)
+endif()
 
 # ---------------------------------------------------------------------------------------------------------------------
 # MULTI: the unshared sources as three static libraries, as in PCSX2 (GS-sse4 / GS-avx / GS-avx2). Code in them is only
@@ -442,6 +449,24 @@ function(kzgs_stage_resources target)
 		COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${KZGS_RUNTIME_DLLS} "$<TARGET_FILE_DIR:${target}>"
 		COMMENT "kzgs: staging GS shaders and runtime DLLs for ${target}"
 		VERBATIM)
+	if(KZGS_BUILD_FSR3_PROVIDER)
+		add_dependencies(${target} kzgs_upscaler_fsr3)
+		add_custom_command(TARGET ${target} POST_BUILD
+			COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:${target}>/upscalers"
+			COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+				"$<TARGET_FILE:kzgs_upscaler_fsr3>" "$<TARGET_FILE_DIR:${target}>/upscalers"
+			COMMAND "${CMAKE_COMMAND}" -E make_directory
+				"$<TARGET_FILE_DIR:${target}>/upscalers/licenses/FidelityFX-SDK-2.4.0"
+			COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+				"${KZGS_FIDELITYFX_SDK_DIR}/Kits/FidelityFX/docs/license.md"
+				"${KZGS_FIDELITYFX_SDK_DIR}/3rdpartynotice.md"
+				"$<TARGET_FILE_DIR:${target}>/upscalers/licenses/FidelityFX-SDK-2.4.0"
+			COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+				"${KZGS_MINIZ_DIR}/LICENSE"
+				"$<TARGET_FILE_DIR:${target}>/upscalers/licenses/miniz-LICENSE"
+			COMMENT "kzgs: staging the source-built FSR 3 provider and notices for ${target}"
+			VERBATIM)
+	endif()
 endfunction()
 
 if(KZGS_BUILD_TEST)

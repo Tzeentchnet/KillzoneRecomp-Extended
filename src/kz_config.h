@@ -3,9 +3,11 @@
 // PC port settings, stored in killzone.ini next to the executable. Every field has a default so a missing or partial
 // file is valid. The launcher edits these; the runtime reads them at boot (and some live, e.g. sensitivity).
 
-#include "kzgs_upscaler.h"
+#include "kzgs.h"
 
 #include <filesystem>
+#include <iosfwd>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -57,7 +59,9 @@ struct KzConfig
     int upscale = 0; // integer GS render multiplier; 0 = auto from physical output height
     KzgsUpscaler upscaler = KzgsUpscaler::Off; // experimental presentation provider, independent of Upscale
     int upscalerSharpening = 0; // provider-owned sharpening, 0..100; independent of Sharpen/CAS
+    KzgsFsr3InputMode fsr3InputMode = KzgsFsr3InputMode::Strict;
     KzgsUpscalerOverrides upscalerOverrides; // one-run environment/CLI values; never serialized
+    std::optional<KzgsFsr3InputMode> fsr3InputModeOverride; // one-run environment/CLI value; never serialized
     KzAspect aspect = KzAspect::Widescreen16x9;
     int anisotropy = 16;     // 0/2/4/8/16
     KzMipmapMode mipmapMode = KzMipmapMode::PS2;
@@ -119,3 +123,12 @@ int kzConfigSelfTest();
 // Process-wide settings (loaded once in main; the launcher may replace them before boot).
 KzConfig &kzConfig();
 bool kzRendererSupportsSmaa(KzRenderer renderer);
+
+// Extends the runner's existing upscaler option dispatch with --fsr3-input-mode strict|experimental.
+KzgsUpscalerOptionResult kzParseGraphicsOption(
+    std::string_view argument, const char *next, KzgsUpscalerOverrides &overrides,
+    bool &consumeNext, std::ostream &diagnostics);
+
+#ifndef KZ_CONFIG_IMPLEMENTATION
+#define kzgsParseUpscalerOption(...) kzParseGraphicsOption(__VA_ARGS__)
+#endif

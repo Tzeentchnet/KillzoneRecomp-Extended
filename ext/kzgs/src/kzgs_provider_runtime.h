@@ -15,6 +15,8 @@
 #endif
 
 class GSTexture;
+enum class KzgsFsr3InputMode : uint64_t;
+struct KzgsFsr3JitterState;
 
 namespace kzgs
 {
@@ -32,13 +34,15 @@ namespace kzgs
 	void ProviderPrepare(KzgsUpscaler requested, bool vulkan, ProviderReport report);
 	void ProviderRemove();
 	bool ProviderHasNegotiation();
-	ProviderStatus ProviderConfigure(KzgsUpscaler requested, bool vulkan, int sharpening);
+	ProviderStatus ProviderConfigure(KzgsUpscaler requested, bool vulkan, int sharpening,
+		KzgsFsr3InputMode fsr3InputMode);
 	void ProviderStop();
 	void ProviderReset(KzgsProviderResetReason reason);
 	void ProviderBeginVsync();
 	void ProviderEndVsync();
 	bool ProviderCanCapture();
 	void ProviderCaptureUse(GSTexture* texture);
+	bool ProviderGetFsr3JitterState(KzgsFsr3JitterState& out);
 
 	void ProviderInstanceExtensions(void*, const std::vector<VkExtensionProperties>&, std::vector<std::string>&);
 	void ProviderDeviceExtensions(void*, VkInstance, VkPhysicalDevice,

@@ -389,6 +389,17 @@ if(BUILD_TESTING)
         FAIL_REGULAR_EXPRESSION "Validation Error;SYNC-HAZARD")
     set_property(TEST kzgs_temporal_vulkan_validation APPEND PROPERTY ENVIRONMENT
         "VK_LAYER_VALIDATE_SYNC=0")
+    if(KZGS_BUILD_FSR3_PROVIDER)
+        kz_add_iso_free_test(kzgs_fsr3_vulkan_validation kzgs_test
+            --renderer vulkan --fsr3-validation
+            --out "${KZ_TEST_STATE_DIR}/kzgs/fsr3")
+        set_tests_properties(kzgs_fsr3_vulkan_validation PROPERTIES
+            LABELS "iso-free;renderer;vulkan-validation"
+            RESOURCE_LOCK kzgs_gpu
+            FAIL_REGULAR_EXPRESSION "Validation Error;SYNC-HAZARD")
+        set_property(TEST kzgs_fsr3_vulkan_validation APPEND PROPERTY ENVIRONMENT
+            "VK_LAYER_VALIDATE_SYNC=0")
+    endif()
     kz_add_iso_free_test(kzgs_temporal_d3d11 kzgs_test --renderer d3d11 --warp --temporal-validation
         --out "${KZ_TEST_STATE_DIR}/kzgs/temporal-d3d11")
     set_tests_properties(kzgs_temporal_d3d11 PROPERTIES

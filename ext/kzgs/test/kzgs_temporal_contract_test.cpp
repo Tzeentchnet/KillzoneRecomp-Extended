@@ -40,6 +40,7 @@ namespace
 		frame.deviceId = 1;
 		frame.providerId = 1;
 		frame.validInputs = KZGS_TEMPORAL_REQUIRED;
+		frame.qualifiedInputs = KZGS_TEMPORAL_REQUIRED;
 		frame.mergedColor = Image(id, 1, VK_FORMAT_R8G8B8A8_UNORM);
 		frame.worldColor = Image(id, 2, VK_FORMAT_R8G8B8A8_UNORM);
 		frame.depth = Image(id, 3, VK_FORMAT_D32_SFLOAT);
@@ -69,12 +70,34 @@ namespace
 		frame.camera.farPlane = 1000.0f;
 		frame.camera.verticalFovRadians = 1.0f;
 		frame.camera.depthDirection = KzgsTemporalDepthDirection::Reversed;
+		frame.camera.validFields = KZGS_TEMPORAL_CAMERA_VALID_ALL;
 		for (int i = 0; i < 16; ++i)
 			frame.camera.worldToView[i] = frame.camera.previousWorldToView[i] =
 				frame.camera.viewToClip[i] = frame.camera.previousViewToClip[i] = i % 5 == 0 ? 1.0f : 0.0f;
 		frame.outputWidth = 1280;
 		frame.outputHeight = 896;
 		frame.aspectId = 1;
+		return frame;
+	}
+
+	KzgsTemporalFrame ExperimentalFrame()
+	{
+		KzgsTemporalFrame frame = Frame(10, 9, 1);
+		frame.validInputs = KZGS_TEMPORAL_FSR3_EXPERIMENTAL_REQUIRED;
+		frame.qualifiedInputs = KZGS_TEMPORAL_COLOR | KZGS_TEMPORAL_JITTER |
+			KZGS_TEMPORAL_CAMERA | KZGS_TEMPORAL_FRAME_TIME;
+		frame.approximateInputs = KZGS_TEMPORAL_DEPTH | KZGS_TEMPORAL_MOTION;
+		frame.inputPolicy = KzgsTemporalInputPolicy::FSR3Experimental;
+		frame.depth.nativeFormat = VK_FORMAT_R32_SFLOAT;
+		frame.worldColor = {};
+		frame.reactive = {};
+		frame.composition = {};
+		frame.ui = {};
+		frame.camera.validFields = KZGS_TEMPORAL_CAMERA_VALID_SCALARS;
+		for (float* matrix : {frame.camera.worldToView, frame.camera.previousWorldToView,
+				frame.camera.viewToClip, frame.camera.previousViewToClip})
+			for (int i = 0; i < 16; ++i)
+				matrix[i] = 0.0f;
 		return frame;
 	}
 
@@ -108,11 +131,105 @@ int main()
 		Tracker tracker;
 		KzgsTemporalFrame frame = Frame(10, 9, 1);
 		frame.validInputs &= ~bit;
+		frame.qualifiedInputs &= ~bit;
 		const Decision decision = tracker.Begin(frame);
 		Check(!decision.ready && (decision.missingInputs & bit) &&
 			tracker.CommittedFrames() == 0 && tracker.HistoryFrame() == 0,
 			"each missing required input fails closed");
 	}
+
+	KzgsTemporalFrame experimental = ExperimentalFrame();
+	Decision experimentalDecision = ValidateFSR3Experimental(experimental);
+	Check(experimentalDecision.ready && !experimentalDecision.missingInputs &&
+		!experimentalDecision.invalidInputs && !experimentalDecision.invalidReasons,
+		"FSR3 experimental minimum accepts scalar camera fields without matrices or masks");
+	experimental.validInputs |= KZGS_TEMPORAL_REACTIVE | KZGS_TEMPORAL_COMPOSITION;
+	experimental.approximateInputs |= KZGS_TEMPORAL_REACTIVE;
+	experimental.qualifiedInputs |= KZGS_TEMPORAL_COMPOSITION;
+	experimental.reactive = Image(10, 5, VK_FORMAT_R8_UNORM);
+	experimental.composition = Image(10, 6, VK_FORMAT_R8_UNORM);
+	experimentalDecision = ValidateFSR3Experimental(experimental);
+	Check(experimentalDecision.ready,
+		"FSR3 experimental validation accepts independently classified optional masks");
+	for (uint64_t bit = 1; bit <= KZGS_TEMPORAL_FRAME_TIME; bit <<= 1)
+	{
+		if (!(KZGS_TEMPORAL_FSR3_EXPERIMENTAL_REQUIRED & bit))
+			continue;
+		experimental = ExperimentalFrame();
+		experimental.validInputs &= ~bit;
+		experimental.qualifiedInputs &= ~bit;
+		experimental.approximateInputs &= ~bit;
+		experimentalDecision = ValidateFSR3Experimental(experimental);
+		Check(!experimentalDecision.ready && (experimentalDecision.missingInputs & bit),
+			"each missing FSR3 experimental minimum input fails closed");
+	}
+
+	experimental = ExperimentalFrame();
+	experimental.approximateInputs |= KZGS_TEMPORAL_REACTIVE;
+	experimentalDecision = ValidateFSR3Experimental(experimental);
+	Check(!experimentalDecision.ready &&
+		(experimentalDecision.invalidInputs & KZGS_TEMPORAL_REACTIVE) &&
+		(experimentalDecision.invalidReasons & KZGS_TEMPORAL_INVALID_PROVENANCE),
+		"approximate inputs must be a subset of structurally valid inputs");
+	experimental = ExperimentalFrame();
+	experimental.qualifiedInputs &= ~KZGS_TEMPORAL_COLOR;
+	experimentalDecision = ValidateFSR3Experimental(experimental);
+	Check(!experimentalDecision.ready &&
+		(experimentalDecision.invalidInputs & KZGS_TEMPORAL_COLOR) &&
+		(experimentalDecision.invalidReasons & KZGS_TEMPORAL_INVALID_PROVENANCE),
+		"experimental inputs must be classified as qualified or approximate");
+	experimental = ExperimentalFrame();
+	experimental.inputPolicy = KzgsTemporalInputPolicy::Strict;
+	experimentalDecision = ValidateFSR3Experimental(experimental);
+	Check(!experimentalDecision.ready &&
+		(experimentalDecision.invalidReasons & KZGS_TEMPORAL_INVALID_POLICY),
+		"experimental validation requires the explicit FSR3 policy");
+	experimental = ExperimentalFrame();
+	experimental.camera.validFields &= ~KZGS_TEMPORAL_CAMERA_VALID_VERTICAL_FOV;
+	experimentalDecision = ValidateFSR3Experimental(experimental);
+	Check(!experimentalDecision.ready &&
+		(experimentalDecision.invalidInputs & KZGS_TEMPORAL_CAMERA) &&
+		(experimentalDecision.invalidReasons & KZGS_TEMPORAL_INVALID_CAMERA),
+		"FSR3 experimental validation requires all scalar camera fields");
+	experimental = ExperimentalFrame();
+	experimental.camera.validFields |= KZGS_TEMPORAL_CAMERA_VALID_VIEW_TO_CLIP;
+	experimentalDecision = ValidateFSR3Experimental(experimental);
+	Check(!experimentalDecision.ready &&
+		(experimentalDecision.invalidReasons & KZGS_TEMPORAL_INVALID_CAMERA),
+		"claimed experimental camera matrices must still be valid");
+	experimental = ExperimentalFrame();
+	experimental.jitterFrameId--;
+	experimentalDecision = ValidateFSR3Experimental(experimental);
+	Check(!experimentalDecision.ready &&
+		(experimentalDecision.invalidReasons & KZGS_TEMPORAL_INVALID_JITTER),
+		"FSR3 experimental validation rejects unmatched jitter");
+	experimental = ExperimentalFrame();
+	experimental.frameTimeMs = 0.0f;
+	experimentalDecision = ValidateFSR3Experimental(experimental);
+	Check(!experimentalDecision.ready &&
+		(experimentalDecision.invalidReasons & KZGS_TEMPORAL_INVALID_FRAME_TIME),
+		"FSR3 experimental validation rejects invalid frame timing");
+	experimental = ExperimentalFrame();
+	experimental.depth.nativeFormat = VK_FORMAT_R8_UNORM;
+	experimentalDecision = ValidateFSR3Experimental(experimental);
+	Check(!experimentalDecision.ready &&
+		(experimentalDecision.invalidReasons & KZGS_TEMPORAL_INVALID_DEPTH),
+		"FSR3 experimental validation rejects unsupported surrogate depth formats");
+
+	KzgsTemporalFrame approximateStrict = Frame(10, 9, 1);
+	approximateStrict.qualifiedInputs &= ~KZGS_TEMPORAL_DEPTH;
+	approximateStrict.approximateInputs = KZGS_TEMPORAL_DEPTH;
+	Tracker strictTracker;
+	const Decision strictApproximate = strictTracker.Begin(approximateStrict);
+	Check(!strictApproximate.ready &&
+		(strictApproximate.invalidInputs & KZGS_TEMPORAL_DEPTH) &&
+		(strictApproximate.invalidReasons & KZGS_TEMPORAL_INVALID_PROVENANCE),
+		"strict Tracker rejects every approximate input");
+	KzgsTemporalFrame legacyStrict = Frame(10, 9, 1);
+	legacyStrict.qualifiedInputs = 0;
+	Tracker legacyStrictTracker;
+	Check(legacyStrictTracker.Begin(legacyStrict).ready,
+		"strict Tracker preserves legacy valid-input behavior when no approximations are present");
 
 	KzgsTemporalFrame bad = Frame(10, 9, 1);
 	bad.depth.frameId = 9;

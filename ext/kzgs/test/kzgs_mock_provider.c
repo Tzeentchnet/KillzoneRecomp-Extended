@@ -58,11 +58,15 @@ static KzgsProviderResult KZGS_PROVIDER_CALL query_info(KzgsProviderInfo* out, K
 		return result(status, KZGS_PROVIDER_ERROR_ARGUMENT, KZGS_PROVIDER_REASON_PROVIDER_FAILURE, 0, "info size");
 	info.struct_size = (mode & MOCK_SHORT_INFO) ?
 		(uint32_t)offsetof(KzgsProviderInfo, supported_color_encodings) : (uint32_t)sizeof(info);
-	info.kind = (mode & MOCK_KIND_XESS) ? KZGS_PROVIDER_KIND_XESS : KZGS_PROVIDER_KIND_DLSS;
+	info.kind = (mode & MOCK_KIND_FSR3) ? KZGS_PROVIDER_KIND_FSR3 :
+		(mode & MOCK_KIND_XESS) ? KZGS_PROVIDER_KIND_XESS : KZGS_PROVIDER_KIND_DLSS;
 	info.name = "in-tree mock";
 	info.capabilities = (mode & MOCK_TEMPORAL_COLOR_ONLY) ?
 		(KZGS_PROVIDER_CAP_TEMPORAL | ((mode & MOCK_DUAL_CAPABILITY) ? KZGS_PROVIDER_CAP_SPATIAL : 0)) :
 		KZGS_PROVIDER_CAP_SPATIAL;
+	if ((mode & MOCK_APPROXIMATE_CAPABILITY) &&
+		KZGS_PROVIDER_VERSION_MINOR(stats.negotiated_version) >= 2)
+		info.capabilities |= KZGS_PROVIDER_CAP_APPROXIMATE_INPUTS;
 	info.supported_inputs = KZGS_PROVIDER_INPUT_COLOR | KZGS_PROVIDER_INPUT_DEPTH;
 	info.required_inputs = KZGS_PROVIDER_INPUT_COLOR | ((mode & MOCK_REQUIRE_DEPTH) ? KZGS_PROVIDER_INPUT_DEPTH : 0);
 	info.supported_color_encodings = (mode & MOCK_BAD_COLOR_ENCODING) ?
@@ -230,6 +234,9 @@ static KzgsProviderResult KZGS_PROVIDER_CALL evaluate(
 {
 	MockContext* context = (MockContext*)opaque;
 	VkImageBlit blit = {0};
+	const KzgsProviderInputs approximate_inputs =
+		KZGS_PROVIDER_HAS_FIELD(frame, KzgsProviderFrame, approximate_inputs) ?
+			frame->approximate_inputs : 0;
 	stats.evaluates++;
 	if (!context || !KZGS_PROVIDER_HAS_FIELD(frame, KzgsProviderFrame, camera) ||
 		!KZGS_PROVIDER_HAS_FIELD(frame->sync, KzgsProviderSync, completed_token) ||
@@ -253,6 +260,9 @@ static KzgsProviderResult KZGS_PROVIDER_CALL evaluate(
 			(VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT) ||
 		frame->sync->queue_family != context->queue_family || frame->color->queue_family != context->queue_family ||
 		frame->output->queue_family != context->queue_family || frame->valid_inputs != KZGS_PROVIDER_INPUT_COLOR ||
+		(approximate_inputs & ~frame->valid_inputs) ||
+		(approximate_inputs && (!(mode & MOCK_APPROXIMATE_CAPABILITY) ||
+			KZGS_PROVIDER_VERSION_MINOR(stats.negotiated_version) < 2)) ||
 		frame->depth || frame->motion || frame->reactive_mask || frame->composition_mask || frame->camera ||
 		frame->color_encoding != KZGS_PROVIDER_COLOR_UNKNOWN || frame->source_rect.left < 0 ||
 		frame->source_rect.top < 0 || frame->source_rect.right <= frame->source_rect.left ||
@@ -272,6 +282,8 @@ static KzgsProviderResult KZGS_PROVIDER_CALL evaluate(
 	stats.last_submission_token = frame->sync->submission_token;
 	stats.last_completed_token = frame->sync->completed_token;
 	stats.last_valid_inputs = frame->valid_inputs;
+	stats.last_approximate_inputs = approximate_inputs;
+	stats.last_frame_struct_size = frame->struct_size;
 	stats.last_output_width = frame->output->extent.width;
 	stats.last_output_height = frame->output->extent.height;
 	stats.last_sharpening = frame->sharpening;
@@ -348,6 +360,9 @@ KZGS_PROVIDER_EXPORT KzgsProviderResult KZGS_PROVIDER_CALL kzgs_upscaler_get_api
 			KZGS_PROVIDER_VERSION_MINOR(requested_version) : KZGS_PROVIDER_VERSION_MINOR(KZGS_PROVIDER_ABI_VERSION));
 	if (mode & MOCK_ABI_1_0)
 		api.abi_version = KZGS_PROVIDER_VERSION(1, 0);
+	else if (mode & MOCK_ABI_1_1)
+		api.abi_version = KZGS_PROVIDER_VERSION(1, 1);
+	stats.negotiated_version = api.abi_version;
 	api.query_info = query_info;
 	api.instance_requirements = instance_requirements;
 	api.device_requirements = device_requirements;

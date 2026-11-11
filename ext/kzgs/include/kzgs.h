@@ -113,11 +113,19 @@ struct KzgsConfig
 
 // The original KzgsConfig is kept unchanged for existing aggregate initializers and compiled callers.
 // Extended configurations are passed to kzgsOpenEx/kzgsUpdateConfigEx with an explicit size and version.
+// The fixed-width representation keeps this appended V1 field outside the legacy V1 tail padding.
+enum class KzgsFsr3InputMode : uint64_t
+{
+	Strict = 0,
+	Experimental = 1,
+};
+
 struct KzgsConfigV1 : KzgsConfig
 {
 	KzgsUpscaler upscaler = KzgsUpscaler::Off;         // requested presentation provider; independent of upscale
 	int upscalerSharpening = 0;                        // provider-owned sharpening, 0..100; not CAS
 	bool temporalDiagnostics = false;                  // metadata-only observation; never enables temporal providers
+	KzgsFsr3InputMode fsr3InputMode = KzgsFsr3InputMode::Strict; // strict requires qualified temporal inputs
 };
 inline constexpr uint32_t KZGS_CONFIG_VERSION_1 = 1;
 
@@ -127,6 +135,14 @@ struct KzgsResolutionInfo
 	int renderHeight = 0;
 	int outputWidth = 0;                               // current physical swap-chain output
 	int outputHeight = 0;
+};
+
+struct KzgsFsr3JitterState
+{
+	uint64_t generation = 0;
+	uint32_t sourceWidth = 0, sourceHeight = 0;
+	uint32_t displayWidth = 0, displayHeight = 0;
+	bool enabled = false;
 };
 
 // Creates the GS thread and render device on `window`, which must outlive kzgsClose. An empty handle is surfaceless.
@@ -139,8 +155,9 @@ bool kzgsOpen(const kz::host::NativeWindow& window, const KzgsConfig& cfg, uint8
 // the hook ordering; older locked companions can still provide the legacy post-prescale hook.
 bool kzgsHasPreSharpPresentationHook();
 
-// config must point to a complete KzgsConfigV1 when version is KZGS_CONFIG_VERSION_1. Short/unknown versions are
-// rejected before their payload is read. Legacy kzgsOpen always uses Off/0 and disables temporal diagnostics.
+// config must point to a complete current KzgsConfigV1 or the exact legacy V1 prefix when version is
+// KZGS_CONFIG_VERSION_1. Other short/unknown versions are rejected before their payload is read. A legacy V1 prefix
+// defaults FSR 3 inputs to Strict. Legacy kzgsOpen uses Off/0, disables temporal diagnostics, and uses Strict.
 bool kzgsOpenEx(const kz::host::NativeWindow& window, const void* config, size_t configSize, uint32_t version,
 	uint8_t* privRegs, std::string* err = nullptr);
 inline bool kzgsOpenV1(const kz::host::NativeWindow& window, const KzgsConfigV1& cfg,
@@ -161,6 +178,10 @@ bool kzgsGetUpscalerStatus(KzgsUpscalerStatus& out);
 
 // Most recent GS-thread metadata observation. False when disabled or before a VSync completes.
 bool kzgsGetTemporalDiagnostics(KzgsTemporalDiagnostics& out);
+
+// Exact geometry for the next experimental FSR 3 camera-jitter sequence. False
+// until a capable Vulkan FSR 3 provider has observed a source/output pair.
+bool kzgsGetFsr3JitterState(KzgsFsr3JitterState& out);
 
 // Queues a GIF packet (sequence of GIFtags + data) for PATH 1, 2 or 3. `qwords` is the size in 16-byte units.
 // The data is copied; the caller may reuse its buffer immediately. PATH1 transfers stop at the first EOP, as on
@@ -203,7 +224,7 @@ void kzgsResize(int width, int height);
 // False until the first frame has completed or after the renderer closes.
 bool kzgsGetResolutionInfo(KzgsResolutionInfo& out);
 
-// Applies legacy settings, resetting extended settings to Off/0 and disabling temporal diagnostics.
+// Applies legacy settings, resetting extended settings to Off/0, disabling temporal diagnostics, and using Strict.
 // Renderer switches recreate the device on the same window.
 void kzgsUpdateConfig(const KzgsConfig& cfg);
 bool kzgsUpdateConfigEx(const void* config, size_t configSize, uint32_t version, std::string* err = nullptr);

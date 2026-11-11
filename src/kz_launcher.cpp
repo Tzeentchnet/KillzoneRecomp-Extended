@@ -113,6 +113,7 @@ namespace
         cfg.upscale = 0;
         cfg.upscaler = KzgsUpscaler::Off;
         cfg.upscalerSharpening = 0;
+        cfg.fsr3InputMode = KzgsFsr3InputMode::Strict;
         cfg.aspect = KzAspect::Widescreen16x9;
         cfg.anisotropy = 16;
         cfg.mipmapMode = KzMipmapMode::HighestDetail;
@@ -136,6 +137,7 @@ namespace
         cfg.upscale = 3;
         cfg.upscaler = KzgsUpscaler::FSR1;
         cfg.upscalerSharpening = 15;
+        cfg.fsr3InputMode = KzgsFsr3InputMode::Strict;
         cfg.anisotropy = 16;
         cfg.mipmapMode = KzMipmapMode::PS2;
         cfg.fxaa = false;
@@ -185,6 +187,7 @@ namespace
         case KzgsUpscaler::FSR1: current = "AMD FSR 1"; break;
         case KzgsUpscaler::DLSS: current = "NVIDIA DLSS (unavailable)"; break;
         case KzgsUpscaler::XeSS: current = "Intel XeSS (unavailable)"; break;
+        case KzgsUpscaler::FSR3: current = "AMD FSR 3 SR (experimental)"; break;
         }
 
         bool changed = false;
@@ -201,6 +204,12 @@ namespace
                 changed = true;
             }
             ImGui::Separator();
+            if (ImGui::Selectable("AMD FSR 3 SR (Vulkan, experimental)",
+                                  value == KzgsUpscaler::FSR3))
+            {
+                value = KzgsUpscaler::FSR3;
+                changed = true;
+            }
             ImGui::BeginDisabled();
             ImGui::Selectable("NVIDIA DLSS (unavailable)", value == KzgsUpscaler::DLSS);
             ImGui::Selectable("Intel XeSS (unavailable)", value == KzgsUpscaler::XeSS);
@@ -208,6 +217,16 @@ namespace
             ImGui::EndCombo();
         }
         return changed;
+    }
+
+    bool fsr3InputModeControlEnabled(const KzConfig &cfg)
+    {
+        return cfg.renderer == KzRenderer::Vulkan && cfg.upscaler == KzgsUpscaler::FSR3;
+    }
+
+    bool providerSharpeningControlEnabled(const KzConfig &cfg)
+    {
+        return cfg.upscaler == KzgsUpscaler::FSR1 || cfg.upscaler == KzgsUpscaler::FSR3;
     }
 
     // ---- layout helpers: every setting is one row, "label + one-line explanation" on the left, control on the right
@@ -462,7 +481,8 @@ namespace
                     {
                         row("Presentation upscaler",
                             "FSR 1 is available only on Vulkan. At 1440p, 3x internal rendering keeps FSR active "
-                            "while reducing aliasing. DLSS and XeSS remain unavailable.");
+                            "while reducing aliasing. FSR 3 Super Resolution is experimental and Vulkan-only; "
+                            "DLSS and XeSS remain unavailable.");
                         upscalerCombo(cfg.upscaler);
 
                         row("Availability",
@@ -472,18 +492,50 @@ namespace
                             ImGui::TextColored(ImVec4(0.45f, 0.80f, 0.45f, 1.0f), "Ready (verified at game start)");
                         else if (cfg.upscaler == KzgsUpscaler::FSR1)
                             ImGui::TextColored(ImVec4(0.90f, 0.45f, 0.35f, 1.0f), "Select Vulkan to enable FSR 1");
-                        else if (cfg.upscaler == KzgsUpscaler::DLSS || cfg.upscaler == KzgsUpscaler::XeSS)
+                        else if (cfg.upscaler == KzgsUpscaler::FSR3 &&
+                                 cfg.renderer != KzRenderer::Vulkan)
+                            ImGui::TextColored(ImVec4(0.90f, 0.45f, 0.35f, 1.0f),
+                                               "Select Vulkan to enable FSR 3 SR");
+                        else if (cfg.upscaler == KzgsUpscaler::FSR3 &&
+                                 cfg.fsr3InputMode == KzgsFsr3InputMode::Strict)
+                            ImGui::TextColored(ImVec4(0.95f, 0.70f, 0.30f, 1.0f),
+                                               "Strict mode intentionally fails closed: qualified inputs are unavailable");
+                        else if (cfg.upscaler == KzgsUpscaler::FSR3)
+                            ImGui::TextColored(ImVec4(0.45f, 0.80f, 0.45f, 1.0f),
+                                               "Experimental path enabled (verified at game start)");
+                        else if (kzgsIsTemporalUpscaler(cfg.upscaler))
                             ImGui::TextColored(ImVec4(0.90f, 0.45f, 0.35f, 1.0f), "Selected provider is unavailable");
                         else
                             ImGui::TextDisabled("Off");
 
-                        row("FSR 1 sharpening",
-                            "RCAS sharpening applied by FSR 1. Start around 15%%. The separate Sharpening control "
-                            "below applies another CAS pass, so leave it off unless intentionally stacking both.");
-                        ImGui::BeginDisabled(cfg.upscaler != KzgsUpscaler::FSR1);
+                        row("Provider sharpening",
+                            "RCAS sharpening applied by FSR 1 or FSR 3 SR. Start around 15%%. The separate "
+                            "Sharpening control below applies another CAS pass, so avoid unintentionally stacking both.");
+                        ImGui::BeginDisabled(!providerSharpeningControlEnabled(cfg));
                         ImGui::SliderInt("##fsr-sharpening", &cfg.upscalerSharpening, 0, 100,
                                          cfg.upscalerSharpening == 0 ? "Off" : "%d%%");
                         ImGui::EndDisabled();
+
+                        row("FSR 3 input mode (experimental)",
+                            "Strict requires qualified temporal inputs and fails closed. Experimental explicitly "
+                            "allows approximated inputs; it is available only with Vulkan and FSR 3 SR.");
+                        ImGui::BeginDisabled(!fsr3InputModeControlEnabled(cfg));
+                        enumCombo<KzgsFsr3InputMode>(
+                            "##fsr3-input-mode", cfg.fsr3InputMode,
+                            {{KzgsFsr3InputMode::Strict, "Strict (qualified inputs only)"},
+                             {KzgsFsr3InputMode::Experimental, "Experimental (approximated inputs)"}});
+                        ImGui::EndDisabled();
+
+                        row("Experimental input warning",
+                            "FSR 3 experimental mode uses synthetic far-plane depth and color-derived Optical Flow "
+                            "motion. The HUD and viewmodel remain unjittered, so edges, disocclusion, and ghosting "
+                            "can be incorrect. This is Super Resolution only; it does not generate frames.");
+                        if (cfg.upscaler == KzgsUpscaler::FSR3 &&
+                            cfg.fsr3InputMode == KzgsFsr3InputMode::Experimental)
+                            ImGui::TextColored(ImVec4(0.95f, 0.70f, 0.30f, 1.0f),
+                                               "Approximate inputs active");
+                        else
+                            ImGui::TextDisabled("Not active");
                         ImGui::EndTable();
                     }
 
@@ -865,6 +917,7 @@ int kzLauncherSelfTest()
     cfg.upscale = 8;
     cfg.upscaler = KzgsUpscaler::FSR1;
     cfg.upscalerSharpening = 77;
+    cfg.fsr3InputMode = KzgsFsr3InputMode::Experimental;
     cfg.aspect = KzAspect::Classic4x3;
     cfg.anisotropy = 0;
     cfg.mipmapMode = KzMipmapMode::PS2;
@@ -886,6 +939,7 @@ int kzLauncherSelfTest()
     applyValidatedGraphicsPreset(cfg);
     check(cfg.renderer == KzRenderer::D3D12 && cfg.vsync && cfg.upscale == 0 &&
               cfg.upscaler == KzgsUpscaler::Off && cfg.upscalerSharpening == 0 &&
+              cfg.fsr3InputMode == KzgsFsr3InputMode::Strict &&
               cfg.aspect == KzAspect::Widescreen16x9,
           "validated preset output contract");
     check(cfg.anisotropy == 16 && cfg.mipmapMode == KzMipmapMode::HighestDetail &&
@@ -904,7 +958,8 @@ int kzLauncherSelfTest()
     cfg.renderDistance = 1.5f;
     applyFsr1QualityGraphicsPreset(cfg);
     check(cfg.renderer == KzRenderer::Vulkan && cfg.upscale == 3 &&
-              cfg.upscaler == KzgsUpscaler::FSR1 && cfg.upscalerSharpening == 15,
+              cfg.upscaler == KzgsUpscaler::FSR1 && cfg.upscalerSharpening == 15 &&
+              cfg.fsr3InputMode == KzgsFsr3InputMode::Strict,
           "FSR 1 quality preset output contract");
     check(cfg.anisotropy == 16 && cfg.mipmapMode == KzMipmapMode::PS2 && cfg.bilinear,
           "FSR 1 quality preset texture controls");
@@ -913,5 +968,13 @@ int kzLauncherSelfTest()
     check(cfg.aspect == KzAspect::Classic4x3 && cfg.renderDistance == 1.5f &&
               cfg.masterVolume == 37 && cfg.startLevel == 7,
           "FSR 1 quality preset preserves unrelated settings");
+    check(!fsr3InputModeControlEnabled(cfg), "FSR 3 input mode control is disabled for FSR 1");
+    cfg.upscaler = KzgsUpscaler::FSR3;
+    check(fsr3InputModeControlEnabled(cfg), "FSR 3 input mode control is enabled for Vulkan and FSR 3");
+    check(providerSharpeningControlEnabled(cfg), "provider sharpening is enabled for FSR 3");
+    cfg.renderer = KzRenderer::D3D12;
+    check(!fsr3InputModeControlEnabled(cfg), "FSR 3 input mode control is disabled outside Vulkan");
+    cfg.upscaler = KzgsUpscaler::XeSS;
+    check(!providerSharpeningControlEnabled(cfg), "provider sharpening remains disabled for XeSS");
     return failures;
 }

@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0+
 #include "kzgs_provider_runtime.h"
+#include "kzgs.h"
 #include "kzgs_fsr1.h"
 #include "kzgs_fsr1_runtime.h"
 #include "kzgs_temporal_runtime.h"
+#ifdef KZGS_HAS_FSR3
+#include "kzgs_temporal_approximation_vulkan.h"
+#endif
 
 #include "GS/Renderers/Common/GSRenderer.h"
 #include "GS/Renderers/Vulkan/GSTextureVK.h"
@@ -14,6 +18,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 #include <deque>
@@ -95,6 +100,9 @@ namespace
 		VkFormat sourceFormat = VK_FORMAT_UNDEFINED;
 		int sharpening = 0;
 		uint64_t lastFence = 0;
+#ifdef KZGS_HAS_FSR3
+		std::unique_ptr<kzgs::TemporalApproximationVulkan> approximation;
+#endif
 	};
 
 	struct State
@@ -118,6 +126,7 @@ namespace
 		bool resumeAfterDevice = false;
 		bool reconfigurePending = false;
 		int sharpening = 0;
+		KzgsFsr3InputMode fsr3InputMode = KzgsFsr3InputMode::Strict;
 		VkPhysicalDeviceFeatures requiredCore{};
 		std::vector<std::string> deviceExtensions;
 		std::vector<std::unique_ptr<FeatureNode>> featureNodes;
@@ -133,6 +142,10 @@ namespace
 
 	State s;
 	bool s_unresolvedDeviceWork = false;
+	std::atomic<uint64_t> s_jitterSource{};
+	std::atomic<uint64_t> s_jitterDisplay{};
+	std::atomic<uint64_t> s_jitterGeneration{1};
+	std::atomic<bool> s_jitterEnabled{};
 #ifdef KZGS_PROVIDER_TESTING
 	std::wstring s_testPath;
 	bool s_testAllowSpatialMock = false;
@@ -150,6 +163,34 @@ namespace
 #else
 		return false;
 #endif
+	}
+
+	uint64_t PackExtent(uint32_t width, uint32_t height)
+	{
+		return (static_cast<uint64_t>(width) << 32) | height;
+	}
+
+	void DisableJitter()
+	{
+		if (s_jitterEnabled.exchange(false, std::memory_order_acq_rel))
+			s_jitterGeneration.fetch_add(1, std::memory_order_release);
+	}
+
+	void PublishJitter(const kzgs::fsr1::Plan& plan)
+	{
+		const uint32_t sourceWidth = static_cast<uint32_t>(plan.source.right - plan.source.left);
+		const uint32_t sourceHeight = static_cast<uint32_t>(plan.source.bottom - plan.source.top);
+		const uint64_t source = PackExtent(sourceWidth, sourceHeight);
+		const uint64_t display = PackExtent(
+			static_cast<uint32_t>(plan.outputWidth), static_cast<uint32_t>(plan.outputHeight));
+		const bool changed = s_jitterSource.load(std::memory_order_acquire) != source ||
+			s_jitterDisplay.load(std::memory_order_acquire) != display ||
+			!s_jitterEnabled.load(std::memory_order_acquire);
+		s_jitterSource.store(source, std::memory_order_release);
+		s_jitterDisplay.store(display, std::memory_order_release);
+		s_jitterEnabled.store(true, std::memory_order_release);
+		if (changed)
+			s_jitterGeneration.fetch_add(1, std::memory_order_release);
 	}
 
 	KzgsProviderStatus EmptyStatus()
@@ -215,6 +256,14 @@ namespace
 		if (!s_testPath.empty())
 			return s_testPath;
 #endif
+		const wchar_t* fileName = nullptr;
+		switch (provider)
+		{
+			case KzgsUpscaler::DLSS: fileName = L"kzgs_upscaler_dlss.dll"; break;
+			case KzgsUpscaler::XeSS: fileName = L"kzgs_upscaler_xess.dll"; break;
+			case KzgsUpscaler::FSR3: fileName = L"kzgs_upscaler_fsr3.dll"; break;
+			default: return {};
+		}
 		std::wstring path(32768, L'\0');
 		const DWORD length = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
 		if (!length || length >= path.size())
@@ -225,8 +274,19 @@ namespace
 			return {};
 		path.resize(slash + 1);
 		path += L"upscalers\\";
-		path += provider == KzgsUpscaler::DLSS ? L"kzgs_upscaler_dlss.dll" : L"kzgs_upscaler_xess.dll";
+		path += fileName;
 		return path;
+	}
+
+	KzgsProviderKind ProviderKind(KzgsUpscaler provider)
+	{
+		switch (provider)
+		{
+			case KzgsUpscaler::DLSS: return KZGS_PROVIDER_KIND_DLSS;
+			case KzgsUpscaler::XeSS: return KZGS_PROVIDER_KIND_XESS;
+			case KzgsUpscaler::FSR3: return KZGS_PROVIDER_KIND_FSR3;
+			default: return 0;
+		}
 	}
 
 	bool CopyExtensions(const KzgsProviderRequirements& requirements, std::vector<std::string>& names)
@@ -311,6 +371,10 @@ namespace
 
 	void DestroyContext(std::unique_ptr<Context>& context, KzgsProviderDestroyReason reason, uint64_t completed)
 	{
+#ifdef KZGS_HAS_FSR3
+		if (context && context->approximation && reason == KZGS_PROVIDER_DESTROY_DEVICE_LOST)
+			context->approximation->Abandon();
+#endif
 		if (context && context->handle)
 		{
 			KzgsProviderDestroyInfo info{sizeof(info), reason, completed};
@@ -339,6 +403,7 @@ namespace
 
 	void Retire(KzgsProviderResetReason reason)
 	{
+		DisableJitter();
 		s.awaitingPresent = false;
 		s.resetReason = reason;
 		if (s.active)
@@ -356,6 +421,32 @@ namespace
 			context.plan.source.right == plan.source.right && context.plan.source.bottom == plan.source.bottom &&
 			context.plan.outputWidth == plan.outputWidth && context.plan.outputHeight == plan.outputHeight &&
 			context.sourceFormat == format && context.sharpening == s.sharpening;
+	}
+
+	KzgsProviderResult KZGS_PROVIDER_CALL RunInitialization(void* hostData,
+		KzgsProviderInitializationWork work, void* workData, KzgsProviderStatus* status)
+	{
+		auto* device = static_cast<GSDeviceVK*>(hostData);
+		if (!device || !work)
+		{
+			if (status)
+			{
+				const KzgsProviderStatus value{sizeof(value), KZGS_PROVIDER_ERROR_ARGUMENT,
+					KZGS_PROVIDER_REASON_PROVIDER_FAILURE, 0,
+					"The provider initialization callback is invalid."};
+				std::memcpy(status, &value, std::min<size_t>(status->struct_size, sizeof(value)));
+			}
+			return KZGS_PROVIDER_ERROR_ARGUMENT;
+		}
+		device->WaitForGPUIdle();
+		work(workData);
+		if (status)
+		{
+			const KzgsProviderStatus value{sizeof(value), KZGS_PROVIDER_OK,
+				KZGS_PROVIDER_REASON_NONE, 0, nullptr};
+			std::memcpy(status, &value, std::min<size_t>(status->struct_size, sizeof(value)));
+		}
+		return KZGS_PROVIDER_OK;
 	}
 
 	bool CreateContext(const kzgs::fsr1::Plan& plan, VkFormat sourceFormat)
@@ -382,13 +473,37 @@ namespace
 		info.queue_family = s.device->GetGraphicsQueueFamilyIndex();
 		info.get_instance_proc_addr = vkGetInstanceProcAddr;
 		info.get_device_proc_addr = vkGetDeviceProcAddr;
-		info.source_extent = {static_cast<uint32_t>(plan.sourceWidth), static_cast<uint32_t>(plan.sourceHeight)};
-		info.source_rect = {plan.source.left, plan.source.top, plan.source.right, plan.source.bottom};
+		const bool experimentalFsr3 = s.prepared == KzgsUpscaler::FSR3 &&
+			s.fsr3InputMode == KzgsFsr3InputMode::Experimental;
+		if (experimentalFsr3)
+		{
+			info.source_extent = {
+				static_cast<uint32_t>(plan.source.right - plan.source.left),
+				static_cast<uint32_t>(plan.source.bottom - plan.source.top)};
+			info.source_rect = {0, 0,
+				static_cast<int32_t>(info.source_extent.width),
+				static_cast<int32_t>(info.source_extent.height)};
+		}
+		else
+		{
+			info.source_extent = {
+				static_cast<uint32_t>(plan.sourceWidth), static_cast<uint32_t>(plan.sourceHeight)};
+			info.source_rect = {
+				plan.source.left, plan.source.top, plan.source.right, plan.source.bottom};
+		}
 		info.source_format = sourceFormat;
 		info.destination_extent = {static_cast<uint32_t>(plan.outputWidth), static_cast<uint32_t>(plan.outputHeight)};
 		info.destination_format = static_cast<GSTextureVK*>(context->output.get())->GetVkFormat();
-		info.color_encoding = KZGS_PROVIDER_COLOR_UNKNOWN;
+		info.color_encoding = experimentalFsr3 ?
+			KZGS_PROVIDER_COLOR_LINEAR_SDR : KZGS_PROVIDER_COLOR_UNKNOWN;
 		info.sharpening = static_cast<uint32_t>(s.sharpening);
+		const KzgsProviderInitialization initialization{sizeof(initialization),
+			KZGS_PROVIDER_INIT_EXCLUSIVE_DEVICE_IDLE |
+				KZGS_PROVIDER_INIT_SDK_EXECUTION_QUALIFIED,
+			s.device, RunInitialization};
+		info.initialization = &initialization;
+		info.depth_convention = experimentalFsr3 ?
+			KZGS_PROVIDER_DEPTH_FORWARD : KZGS_PROVIDER_DEPTH_UNKNOWN;
 		KzgsProviderStatus status = EmptyStatus();
 		const KzgsProviderResult result = s.api.create(&info, &context->handle, &status);
 		if (result != KZGS_PROVIDER_OK || !context->handle)
@@ -421,6 +536,31 @@ namespace
 					KZGS_PROVIDER_DESTROY_COMPLETED, s.device->GetCompletedFenceCounter());
 			return false;
 		}
+#ifdef KZGS_HAS_FSR3
+		if (experimentalFsr3)
+		{
+			std::string approximationError;
+			context->approximation = kzgs::TemporalApproximationVulkan::Create(*s.device,
+				info.source_extent, approximationError);
+			if (!context->approximation)
+			{
+				Failure(KzgsUpscalerReason::InitializationFailed, KZGS_PROVIDER_ERROR_CREATE,
+					nullptr, approximationError.c_str());
+				DestroyContext(context, KZGS_PROVIDER_DESTROY_COMPLETED,
+					s.device->GetCompletedFenceCounter());
+				return false;
+			}
+		}
+#else
+		if (experimentalFsr3)
+		{
+			Failure(KzgsUpscalerReason::InitializationFailed, KZGS_PROVIDER_ERROR_UNSUPPORTED,
+				nullptr, "This build does not include the FSR 3 approximation subsystem.");
+			DestroyContext(context, KZGS_PROVIDER_DESTROY_COMPLETED,
+				s.device->GetCompletedFenceCounter());
+			return false;
+		}
+#endif
 		s.active = std::move(context);
 		s.resetReason = KZGS_PROVIDER_RESET_INITIAL;
 		return true;
@@ -449,6 +589,8 @@ namespace
 	{
 		const GSPresentationUpscaleFrame* frame;
 		uint64_t frameId;
+		bool experimentalFsr3;
+		KzgsTemporalFrame temporal;
 	};
 
 	bool Record(void* userdata, const GSDeviceVK::ExternalCommands& commands)
@@ -460,47 +602,147 @@ namespace
 		frame.struct_size = sizeof(frame);
 		frame.frame_id = data.frameId;
 		frame.presentation_id = data.frame->presentation_id;
-		frame.valid_inputs = KZGS_PROVIDER_INPUT_COLOR;
 		const KzgsProviderSync sync{sizeof(sync), commands.command_buffer, s.device->GetGraphicsQueue(),
 			s.device->GetGraphicsQueueFamilyIndex(), commands.fence_counter, s.device->GetCompletedFenceCounter()};
-		const KzgsProviderImage color = Image(commands.source, false);
 		const KzgsProviderImage output = Image(commands.output, true);
 		frame.sync = &sync;
-		frame.color = &color;
 		frame.output = &output;
-		frame.source_rect = {s.active->plan.source.left, s.active->plan.source.top,
-			s.active->plan.source.right, s.active->plan.source.bottom};
 		frame.destination_rect = {0, 0, s.active->plan.outputWidth, s.active->plan.outputHeight};
 		frame.presentation_rect[0] = data.frame->destination_rect.x;
 		frame.presentation_rect[1] = data.frame->destination_rect.y;
 		frame.presentation_rect[2] = data.frame->destination_rect.z;
 		frame.presentation_rect[3] = data.frame->destination_rect.w;
-		frame.color_encoding = KZGS_PROVIDER_COLOR_UNKNOWN;
 		frame.sharpening = static_cast<uint32_t>(s.sharpening);
+		KzgsProviderImage color{};
+		KzgsProviderCamera camera{};
+#ifdef KZGS_HAS_FSR3
+		kzgs::TemporalApproximationImages approximation{};
+#endif
+		KzgsTemporalFrame temporal = data.temporal;
+		if (data.experimentalFsr3)
+		{
+#ifdef KZGS_HAS_FSR3
+			const KzgsProviderRect sourceRect{s.active->plan.source.left, s.active->plan.source.top,
+				s.active->plan.source.right, s.active->plan.source.bottom};
+			if (!s.active->approximation ||
+				!s.active->approximation->Record(commands, sourceRect,
+					temporal.jitterX, temporal.jitterY,
+					temporal.resetReasons != 0, approximation))
+			{
+				const char* message = s.active->approximation ?
+					s.active->approximation->LastError() :
+					"The FSR 3 approximation context is unavailable.";
+				Failure(KzgsUpscalerReason::DispatchFailed, KZGS_PROVIDER_ERROR_EVALUATE,
+					nullptr, message);
+				return false;
+			}
+			const auto temporalImage = [&](const KzgsProviderImage& image, uint64_t id) {
+				KzgsTemporalImage result;
+				result.frameId = temporal.frameId;
+				result.sceneId = temporal.sceneId;
+				result.resourceId = id;
+				result.width = image.extent.width;
+				result.height = image.extent.height;
+				result.rect = {0, 0, static_cast<int32_t>(image.extent.width),
+					static_cast<int32_t>(image.extent.height)};
+				result.backend = KzgsTemporalBackend::Vulkan;
+				result.nativeFormat = static_cast<uint32_t>(image.format);
+				result.rendererFormat = static_cast<uint32_t>(GSTexture::Format::Color);
+				return result;
+			};
+			temporal.mergedColor = temporalImage(approximation.color, approximation.colorId);
+			temporal.depth = temporalImage(approximation.depth, approximation.depthId);
+			temporal.motion = temporalImage(approximation.motion, approximation.motionId);
+			temporal.reactive = temporalImage(approximation.reactive, approximation.reactiveId);
+			temporal.validInputs |= KZGS_TEMPORAL_DEPTH | KZGS_TEMPORAL_MOTION |
+				KZGS_TEMPORAL_REACTIVE;
+			temporal.approximateInputs |= KZGS_TEMPORAL_DEPTH | KZGS_TEMPORAL_MOTION |
+				KZGS_TEMPORAL_REACTIVE;
+			temporal.depthDirection = KzgsTemporalDepthDirection::Forward;
+			temporal.motionUnits = KzgsTemporalMotionUnits::Pixels;
+			temporal.motionDirection = KzgsTemporalMotionDirection::PreviousMinusCurrent;
+			temporal.motionIncludesJitter = false;
+			temporal.colorEncoding = KzgsTemporalColorEncoding::LinearSDR;
+			const kzgs::temporal::Decision decision = kzgs::TemporalBeginDispatch(temporal);
+			if (!decision.ready)
+			{
+				s.active->approximation->PresentationComplete(false);
+				Failure(KzgsUpscalerReason::RequiredInputUnavailable, KZGS_PROVIDER_ERROR_INPUT,
+					nullptr, "The experimental FSR 3 temporal frame failed validation.");
+				s.failure.providerReason = KZGS_PROVIDER_REASON_UNQUALIFIED;
+				return false;
+			}
+			frame.valid_inputs = temporal.validInputs & UINT64_C(0xff);
+			frame.approximate_inputs = temporal.approximateInputs & UINT64_C(0xff);
+			frame.color = &approximation.color;
+			frame.depth = &approximation.depth;
+			frame.motion = &approximation.motion;
+			frame.reactive_mask = &approximation.reactive;
+			frame.source_rect = {0, 0,
+				static_cast<int32_t>(approximation.color.extent.width),
+				static_cast<int32_t>(approximation.color.extent.height)};
+			frame.color_encoding = KZGS_PROVIDER_COLOR_LINEAR_SDR;
+			frame.jitter_x = temporal.jitterX;
+			frame.jitter_y = temporal.jitterY;
+			frame.motion_scale_x = 1.0f;
+			frame.motion_scale_y = 1.0f;
+			frame.frame_time_ms = temporal.frameTimeMs;
+			camera.struct_size = sizeof(camera);
+			camera.near_plane = temporal.camera.nearPlane;
+			camera.far_plane = temporal.camera.farPlane;
+			camera.vertical_fov_radians = temporal.camera.verticalFovRadians;
+			camera.valid_fields = KZGS_PROVIDER_CAMERA_VALID_SCALARS;
+			frame.camera = &camera;
+#else
+			Failure(KzgsUpscalerReason::DispatchFailed, KZGS_PROVIDER_ERROR_UNSUPPORTED,
+				nullptr, "This build does not include FSR 3 approximation support.");
+			return false;
+#endif
+		}
+		else
+		{
+			color = Image(commands.source, false);
+			frame.valid_inputs = KZGS_PROVIDER_INPUT_COLOR;
+			frame.color = &color;
+			frame.source_rect = {s.active->plan.source.left, s.active->plan.source.top,
+				s.active->plan.source.right, s.active->plan.source.bottom};
+			frame.color_encoding = KZGS_PROVIDER_COLOR_UNKNOWN;
+		}
 		KzgsProviderStatus status = EmptyStatus();
 		const KzgsProviderResult result = s.api.evaluate(s.active->handle, &frame, &status);
 		if (result != KZGS_PROVIDER_OK)
 		{
+			if (data.experimentalFsr3)
+			{
+				kzgs::TemporalDispatchResult(false);
+#ifdef KZGS_HAS_FSR3
+				s.active->approximation->PresentationComplete(false);
+#endif
+			}
 			kzgs::TemporalReset(KZGS_TEMPORAL_RESET_DISPATCH_FAILED);
 			LatchTerminalFailure(result);
 			Failure(result == KZGS_PROVIDER_ERROR_DEVICE_LOST ? KzgsUpscalerReason::DeviceLost :
 				KzgsUpscalerReason::DispatchFailed, result, &status);
 			return false;
 		}
+		if (data.experimentalFsr3)
+			kzgs::TemporalDispatchResult(true);
 		return true;
 	}
 
 	bool Upscale(void*, const GSPresentationUpscaleFrame& frame, GSPresentationUpscaleOutput& output)
 	{
 		s.vsyncAttempted = true;
-		// The production host cannot provide qualified, frame-matched temporal resources.
-		// Only the explicitly enabled SDK-free spatial mock may exercise the lifecycle.
-		if (!TestSpatialMockAllowed())
+		const bool experimentalFsr3 = s.prepared == KzgsUpscaler::FSR3 &&
+			s.fsr3InputMode == KzgsFsr3InputMode::Experimental &&
+			KZGS_PROVIDER_VERSION_MINOR(s.api.abi_version) >= 2 &&
+			(s.info.capabilities & KZGS_PROVIDER_CAP_APPROXIMATE_INPUTS);
+		if (!TestSpatialMockAllowed() && !experimentalFsr3)
 		{
 			kzgs::TemporalReset(KZGS_TEMPORAL_RESET_MISSING_INPUT);
 			Retire(KZGS_PROVIDER_RESET_DISCONTINUITY);
 			Failure(KzgsUpscalerReason::RequiredInputUnavailable, KZGS_PROVIDER_ERROR_INPUT, nullptr,
-				"Matched temporal inputs are not qualified.");
+				"Matched temporal inputs are not qualified for this provider and input policy.");
 			s.failure.providerReason = KZGS_PROVIDER_REASON_MISSING_INPUT;
 			Report(s.failure.reason);
 			return false;
@@ -561,9 +803,28 @@ namespace
 			Report(s.failure.reason);
 			return false;
 		}
+		if (experimentalFsr3)
+			PublishJitter(plan);
 
+		KzgsTemporalFrame temporal;
+		if (experimentalFsr3)
+		{
+			constexpr uint64_t hostRequired = KZGS_TEMPORAL_COLOR | KZGS_TEMPORAL_JITTER |
+				KZGS_TEMPORAL_CAMERA | KZGS_TEMPORAL_FRAME_TIME;
+			if (!kzgs::TemporalGetPendingFrame(temporal) ||
+				(temporal.validInputs & hostRequired) != hostRequired ||
+				!temporal.motionPreviousFrameId)
+			{
+				kzgs::TemporalReset(KZGS_TEMPORAL_RESET_MISSING_INPUT);
+				Failure(KzgsUpscalerReason::RequiredInputUnavailable, KZGS_PROVIDER_ERROR_INPUT,
+					nullptr, "Waiting for matched FSR 3 jitter, camera scalars, and game frame time.");
+				s.failure.providerReason = KZGS_PROVIDER_REASON_MISSING_INPUT;
+				Report(s.failure.reason);
+				return false;
+			}
+		}
 		s.failure = {};
-		const RecordData data{&frame, ++s.nextFrame};
+		const RecordData data{&frame, ++s.nextFrame, experimentalFsr3, temporal};
 		if (!s.device->ExecuteExternalCommands(frame.texture, s.active->output.get(), Record,
 				const_cast<RecordData*>(&data)))
 		{
@@ -585,14 +846,22 @@ namespace
 
 	void Presented(void*, uint64_t presentation, bool succeeded, bool used)
 	{
-		if (!s.device || !s.enabled || !used || !s.awaitingPresent || presentation != s.pendingPresentation)
+		if (!s.device || !s.enabled || !s.awaitingPresent || presentation != s.pendingPresentation)
 			return;
 		s.awaitingPresent = false;
+		const bool committed = succeeded && used;
+#ifdef KZGS_HAS_FSR3
+		if (s.active && s.active->approximation)
+			s.active->approximation->PresentationComplete(committed);
+#endif
+		if (s.prepared == KzgsUpscaler::FSR3 &&
+			s.fsr3InputMode == KzgsFsr3InputMode::Experimental)
+			kzgs::TemporalPresentationResult(presentation, committed);
 		// Presentation or CAS may have split recording across command buffers. The current
 		// counter after presentation conservatively covers all reads of the output image.
 		s.active->lastFence = std::max(s.active->lastFence, s.device->GetCurrentFenceCounter());
 		s.lastRecordedFence = std::max(s.lastRecordedFence, s.active->lastFence);
-		if (!succeeded)
+		if (!committed)
 		{
 			kzgs::TemporalReset(KZGS_TEMPORAL_RESET_PRESENT_FAILED);
 			Retire(KZGS_PROVIDER_RESET_PRESENT_FAILED);
@@ -608,10 +877,11 @@ namespace kzgs
 {
 	void ProviderPrepare(KzgsUpscaler requested, bool vulkan, ProviderReport report)
 	{
+		DisableJitter();
 		s = {};
 		s.report = report;
 		s.prepared = requested;
-		if (!vulkan || (requested != KzgsUpscaler::DLSS && requested != KzgsUpscaler::XeSS))
+		if (!vulkan || !kzgsIsTemporalUpscaler(requested))
 			return;
 		s.attemptedLoad = true;
 		if (s_unresolvedDeviceWork)
@@ -659,8 +929,7 @@ namespace kzgs
 		s.info.struct_size = sizeof(s.info);
 		status = EmptyStatus();
 		const KzgsProviderResult infoResult = s.api.query_info(&s.info, &status);
-		const KzgsProviderKind kind = requested == KzgsUpscaler::DLSS ?
-			KZGS_PROVIDER_KIND_DLSS : KZGS_PROVIDER_KIND_XESS;
+		const KzgsProviderKind kind = ProviderKind(requested);
 		if (infoResult != KZGS_PROVIDER_OK ||
 			!KZGS_PROVIDER_HAS_FIELD(&s.info, KzgsProviderInfo, supported_color_encodings) ||
 			s.info.kind != kind || !(s.info.capabilities & (KZGS_PROVIDER_CAP_SPATIAL | KZGS_PROVIDER_CAP_TEMPORAL)) ||
@@ -676,6 +945,7 @@ namespace kzgs
 
 	void ProviderRemove()
 	{
+		DisableJitter();
 		if (s.module && !s.retainModule)
 			FreeLibrary(s.module);
 		s = {};
@@ -908,7 +1178,8 @@ namespace kzgs
 		{
 			s.reconfigurePending = false;
 			s.resumeAfterDevice = false;
-			const ProviderStatus status = ProviderConfigure(s.prepared, true, s.sharpening);
+			const ProviderStatus status =
+				ProviderConfigure(s.prepared, true, s.sharpening, s.fsr3InputMode);
 			if (s.report)
 				s.report(status, false);
 		}
@@ -930,9 +1201,10 @@ namespace kzgs
 			ProviderBeginVsync();
 	}
 
-	ProviderStatus ProviderConfigure(KzgsUpscaler requested, bool vulkan, int sharpening)
+	ProviderStatus ProviderConfigure(KzgsUpscaler requested, bool vulkan, int sharpening,
+		KzgsFsr3InputMode fsr3InputMode)
 	{
-		if (requested != KzgsUpscaler::DLSS && requested != KzgsUpscaler::XeSS)
+		if (!kzgsIsTemporalUpscaler(requested))
 		{
 			ProviderStop();
 			return {KzgsUpscalerReason::Disabled};
@@ -958,7 +1230,9 @@ namespace kzgs
 			return s.failure;
 		}
 		const int previousSharpening = s.sharpening;
+		const KzgsFsr3InputMode previousInputMode = s.fsr3InputMode;
 		s.sharpening = sharpening;
+		s.fsr3InputMode = fsr3InputMode;
 		if (!s.loaded || !s.ready)
 		{
 			ProviderStop();
@@ -972,17 +1246,34 @@ namespace kzgs
 			s.wantsProvider = true;
 			return {KzgsUpscalerReason::NoSurface};
 		}
-		if (!TestSpatialMockAllowed())
+		const bool spatialMock = TestSpatialMockAllowed();
+		const bool experimentalFsr3 = requested == KzgsUpscaler::FSR3 &&
+			fsr3InputMode == KzgsFsr3InputMode::Experimental;
+		if (!spatialMock && !experimentalFsr3)
 		{
 			ProviderStop();
 			s.wantsProvider = true;
 			TemporalReset(KZGS_TEMPORAL_RESET_MISSING_INPUT);
 			Failure(KzgsUpscalerReason::RequiredInputUnavailable, KZGS_PROVIDER_ERROR_INPUT, nullptr,
-				"Matched temporal inputs are not qualified.");
+				requested == KzgsUpscaler::FSR3 ?
+					"Strict FSR 3 inputs are unavailable; enable the explicit experimental input mode to use approximations." :
+					"Matched temporal inputs are not qualified.");
 			s.failure.providerReason = KZGS_PROVIDER_REASON_MISSING_INPUT;
 			return s.failure;
 		}
-		if (!(s.info.supported_color_encodings & KZGS_PROVIDER_COLOR_BIT(KZGS_PROVIDER_COLOR_UNKNOWN)))
+		if (experimentalFsr3 &&
+			(KZGS_PROVIDER_VERSION_MINOR(s.api.abi_version) < 2 ||
+			 !(s.info.capabilities & KZGS_PROVIDER_CAP_APPROXIMATE_INPUTS)))
+		{
+			ProviderStop();
+			s.wantsProvider = true;
+			Failure(KzgsUpscalerReason::ProviderVersionMismatch, KZGS_PROVIDER_ERROR_VERSION, nullptr,
+				"The FSR 3 provider does not support ABI 1.2 approximation provenance.");
+			return s.failure;
+		}
+		const KzgsProviderColorEncoding requiredEncoding = experimentalFsr3 ?
+			KZGS_PROVIDER_COLOR_LINEAR_SDR : KZGS_PROVIDER_COLOR_UNKNOWN;
+		if (!(s.info.supported_color_encodings & KZGS_PROVIDER_COLOR_BIT(requiredEncoding)))
 		{
 			ProviderStop();
 			s.wantsProvider = true;
@@ -990,7 +1281,7 @@ namespace kzgs
 				"The source color encoding is not established.");
 			return s.failure;
 		}
-		if (s.enabled && previousSharpening != sharpening)
+		if (s.enabled && (previousSharpening != sharpening || previousInputMode != fsr3InputMode))
 			Retire(KZGS_PROVIDER_RESET_CONFIGURATION);
 		s.enabled = true;
 		s.wantsProvider = true;
@@ -1015,6 +1306,29 @@ namespace kzgs
 			return;
 		s.active->lastFence = std::max(s.active->lastFence, s.device->GetCurrentFenceCounter());
 		s.lastRecordedFence = std::max(s.lastRecordedFence, s.active->lastFence);
+	}
+
+	bool ProviderGetFsr3JitterState(KzgsFsr3JitterState& out)
+	{
+		for (int attempt = 0; attempt < 3; ++attempt)
+		{
+			const uint64_t generation = s_jitterGeneration.load(std::memory_order_acquire);
+			const uint64_t source = s_jitterSource.load(std::memory_order_acquire);
+			const uint64_t display = s_jitterDisplay.load(std::memory_order_acquire);
+			const bool enabled = s_jitterEnabled.load(std::memory_order_acquire);
+			if (generation != s_jitterGeneration.load(std::memory_order_acquire))
+				continue;
+			out.generation = generation;
+			out.sourceWidth = static_cast<uint32_t>(source >> 32);
+			out.sourceHeight = static_cast<uint32_t>(source);
+			out.displayWidth = static_cast<uint32_t>(display >> 32);
+			out.displayHeight = static_cast<uint32_t>(display);
+			out.enabled = enabled;
+			return enabled && out.sourceWidth && out.sourceHeight &&
+				out.displayWidth && out.displayHeight;
+		}
+		out = {};
+		return false;
 	}
 
 #ifdef KZGS_PROVIDER_TESTING

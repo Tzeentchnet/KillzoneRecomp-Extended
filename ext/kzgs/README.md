@@ -126,9 +126,9 @@ guest observations.
 New callers use `KzgsConfigV1` (derived from `KzgsConfig`) with `kzgsOpenEx` and `kzgsUpdateConfigEx`, passing
 `sizeof(config)` and `KZGS_CONFIG_VERSION_1`. `kzgsOpenV1`/`kzgsUpdateConfigV1` are convenience wrappers that pass
 those values. Unknown versions and truncated buffers are rejected before reading the configuration. V1 adds
-`upscaler`, `upscalerSharpening`, and `temporalDiagnostics`. The experimental presentation request defaults to
-Off/0 and is independent of integer `upscale` and `casSharpness`; FSR1 is implemented on Vulkan. No vendor binary
-is bundled; all DLSS/XeSS requests currently fail closed regardless of provider capabilities.
+`upscaler`, `upscalerSharpening`, `temporalDiagnostics`, and `fsr3InputMode`. The presentation request defaults to
+Off/0 with strict FSR 3 inputs and is independent of integer `upscale` and `casSharpness`; FSR1 and experimental
+FSR 3 SR are implemented on Vulkan. DLSS and XeSS requests remain fail-closed.
 
 Pass `hwnd = nullptr` to open without a window (a surfaceless device). This still renders and supports
 `kzgsReadback`, so it can be used for headless screenshot tests.
@@ -137,6 +137,10 @@ new status. A Vulkan FSR1 request reports `waiting_for_frame` until a successful
 preserves the cropped source and destination aspect; it reports `no_upscale_needed` if either destination axis is
 smaller than the source or both are equal. Initialization and dispatch failures fall back to normal presentation.
 FSR1 sharpening 0 skips RCAS; 1..100 maps linearly from 2 to 0 attenuation stops, independently of existing CAS.
+FSR 3 maps the same setting to SDK sharpness 0..1.
+FSR 3 uses one native bootstrap presentation after startup or resize to publish exact source/output jitter geometry;
+the next matched experimental frame can dispatch with reset history. History commits only after successful use by
+presentation.
 If a Vulkan idle wait fails for a reason other than device loss, FSR1 reports `idle_wait_failed` and abandons
 potentially in-flight child resources to device teardown rather than explicitly destroying them. Their C++ texture
 wrappers are intentionally leaked for process lifetime, so repeated failures can accumulate host allocations.
@@ -149,12 +153,12 @@ Surfaceless Vulkan retains the existing readback behavior and reports `no_surfac
 
 The [provider ABI](../../docs/upscaler-provider-abi.md) negotiates optional Vulkan extensions/features before device
 creation, records into a borrowed command buffer, and retires provider contexts only after actual GPU completion.
-Current frames supply composed color only and identify its encoding as unknown. Every DLSS/XeSS request falls back
-before provider context creation, even when a DLL claims spatial or color-only capability; the
-[temporal-input gate](../../docs/findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10) is
-FAIL/NO-GO. The in-tree mock is a test-only blit, enabled only by test hooks. The separate
-[local SDK adapters](../../docs/vendor-upscalers.md) are unqualified, and the current host provides no SDK
-initialization scope. Neither real SDKs nor vendor GPUs were tested.
+Strict frames supply qualified composed color only, so the
+[temporal-input gate](../../docs/findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10) remains
+FAIL/NO-GO for strict FSR 3, DLSS, and XeSS. ABI 1.2 experimental FSR 3 adds marked world jitter, scalar
+camera/timing, forward far depth, FidelityFX Optical Flow motion, and a residual reactive mask. The source-built
+FidelityFX FSR 3.1.6 provider and Optical Flow path are in tree; frame generation is not. The in-tree mock remains a
+test-only blit. See [vendor adapters](../../docs/vendor-upscalers.md) for provenance, limitations, and validation.
 
 The reviewed companion hook contract requires the original, pre-sharp-prescale source and its crop/aspect destination
 to reach EASU, optionally RCAS, then existing CAS/final presentation. Ordinary sharp prescale is used only when the
@@ -294,9 +298,11 @@ ext/kzgs/build/kzgs_replay.exe work/trace_full2.bin work/kzdbg/out --every 100 [
   `--sharp 0|1`, `--bilinear 0|1`, `--cas N`, `--filter N` set the final-scaling and texture-filter fields. `--skip-idle` skips
   vblanks without new GIF packets like the game does, `--single-circuit` applies the game's display-register rewrite
   (read circuit 2 := read circuit 1, see docs/findings.md "Menu jitter and blur").
-- `--upscaler off|fsr1|dlss|xess` and `--upscaler-sharpening 0..100` request the experimental presentation contract;
-  Vulkan FSR1 runs when upscaling is needed, while other providers/backends fall back. These do not change `--upscale`
-  or `--cas`. The game and both replay tools share the same strict CLI/environment parsing.
+- `--upscaler off|fsr1|fsr3|dlss|xess` and `--upscaler-sharpening 0..100` request the experimental presentation contract;
+  Vulkan FSR1 runs when upscaling is needed. FSR 3 additionally requires
+  `--fsr3-input-mode strict|experimental`; strict is the default and intentionally fails closed with current inputs.
+  Other providers/backends fall back. These do not change `--upscale` or `--cas`. The game and both replay tools
+  share the same strict CLI/environment parsing.
 - `--sleep MS [--sleep-from N]` waits between vsyncs, so the GS thread has idle time as in the game (a replay without
   pacing keeps the GS thread saturated and hides pacing-dependent renderer bugs).
 - `--dump-draws F:N` turns on PCSX2's own per-draw dumps (context registers, vertices, transfers) for N draws

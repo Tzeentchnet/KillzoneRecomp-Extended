@@ -24,7 +24,7 @@ extern "C" {
 #endif
 
 #define KZGS_PROVIDER_VERSION(major, minor) (((uint32_t)(major) << 16) | (uint32_t)(minor))
-#define KZGS_PROVIDER_ABI_VERSION KZGS_PROVIDER_VERSION(1, 1)
+#define KZGS_PROVIDER_ABI_VERSION KZGS_PROVIDER_VERSION(1, 2)
 #define KZGS_PROVIDER_VERSION_MAJOR(version) ((uint32_t)(version) >> 16)
 #define KZGS_PROVIDER_VERSION_MINOR(version) ((uint32_t)(version) & 0xffffu)
 #define KZGS_PROVIDER_FIELD_END(type, field) (offsetof(type, field) + sizeof(((type*)0)->field))
@@ -53,7 +53,8 @@ typedef uint32_t KzgsProviderKind;
 enum
 {
 	KZGS_PROVIDER_KIND_DLSS = 1,
-	KZGS_PROVIDER_KIND_XESS = 2
+	KZGS_PROVIDER_KIND_XESS = 2,
+	KZGS_PROVIDER_KIND_FSR3 = 3
 };
 
 typedef uint32_t KzgsProviderReason;
@@ -114,8 +115,9 @@ typedef struct KzgsProviderInfo
 	uint64_t supported_color_encodings;
 } KzgsProviderInfo;
 
-#define KZGS_PROVIDER_CAP_SPATIAL  (UINT64_C(1) << 0)
-#define KZGS_PROVIDER_CAP_TEMPORAL (UINT64_C(1) << 1)
+#define KZGS_PROVIDER_CAP_SPATIAL           (UINT64_C(1) << 0)
+#define KZGS_PROVIDER_CAP_TEMPORAL          (UINT64_C(1) << 1)
+#define KZGS_PROVIDER_CAP_APPROXIMATE_INPUTS (UINT64_C(1) << 2)
 
 /* A feature block names a Vulkan VkPhysicalDevice*Features struct. Values correspond
  * to its VkBool32 members in declaration order, excluding sType/pNext. V1 hosts may
@@ -189,9 +191,26 @@ typedef struct KzgsProviderCamera
 	uint32_t flags; /* KZGS_PROVIDER_CAMERA_* */
 	float world_to_view[16];
 	float previous_world_to_view[16];
+	/* ABI 1.2 trailing field; absent means the ABI 1.0/1.1 all-fields contract. */
+	uint32_t valid_fields; /* KZGS_PROVIDER_CAMERA_VALID_* */
 } KzgsProviderCamera;
 #define KZGS_PROVIDER_CAMERA_REVERSED_DEPTH (1u << 0)
 #define KZGS_PROVIDER_CAMERA_INFINITE_FAR  (1u << 1)
+#define KZGS_PROVIDER_CAMERA_VALID_NEAR_PLANE            (1u << 0)
+#define KZGS_PROVIDER_CAMERA_VALID_FAR_PLANE             (1u << 1)
+#define KZGS_PROVIDER_CAMERA_VALID_VERTICAL_FOV          (1u << 2)
+#define KZGS_PROVIDER_CAMERA_VALID_VIEW_TO_CLIP          (1u << 3)
+#define KZGS_PROVIDER_CAMERA_VALID_PREVIOUS_VIEW_TO_CLIP (1u << 4)
+#define KZGS_PROVIDER_CAMERA_VALID_WORLD_TO_VIEW         (1u << 5)
+#define KZGS_PROVIDER_CAMERA_VALID_PREVIOUS_WORLD_TO_VIEW (1u << 6)
+#define KZGS_PROVIDER_CAMERA_VALID_SCALARS \
+	(KZGS_PROVIDER_CAMERA_VALID_NEAR_PLANE | KZGS_PROVIDER_CAMERA_VALID_FAR_PLANE | \
+		KZGS_PROVIDER_CAMERA_VALID_VERTICAL_FOV)
+#define KZGS_PROVIDER_CAMERA_VALID_MATRICES \
+	(KZGS_PROVIDER_CAMERA_VALID_VIEW_TO_CLIP | KZGS_PROVIDER_CAMERA_VALID_PREVIOUS_VIEW_TO_CLIP | \
+		KZGS_PROVIDER_CAMERA_VALID_WORLD_TO_VIEW | KZGS_PROVIDER_CAMERA_VALID_PREVIOUS_WORLD_TO_VIEW)
+#define KZGS_PROVIDER_CAMERA_VALID_ALL \
+	(KZGS_PROVIDER_CAMERA_VALID_SCALARS | KZGS_PROVIDER_CAMERA_VALID_MATRICES)
 
 typedef uint32_t KzgsProviderDepthConvention;
 enum
@@ -265,6 +284,8 @@ typedef struct KzgsProviderFrame
 	float motion_scale_x, motion_scale_y;
 	float frame_time_ms;
 	const KzgsProviderCamera* camera;
+	/* ABI 1.2: subset of valid_inputs; requires KZGS_PROVIDER_CAP_APPROXIMATE_INPUTS. */
+	KzgsProviderInputs approximate_inputs;
 } KzgsProviderFrame;
 
 typedef uint32_t KzgsProviderResetReason;

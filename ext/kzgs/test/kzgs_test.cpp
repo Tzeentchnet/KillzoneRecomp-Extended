@@ -183,7 +183,7 @@ static const Box kWhite = {32, 320, 160, 416, 255, 255, 255, "white sprite"};
 // Yellow triangle (400,40)-(600,40)-(500,200); probe at its centroid.
 static const int kTriProbeX = 500, kTriProbeY = 93;
 
-static std::vector<uint8_t> BuildScene()
+static std::vector<uint8_t> BuildScene(int foregroundOffset = 0)
 {
 	GifBuilder g;
 	g.AD(REG_FRAME_1, (0ull) | (10ull << 16) | (0ull << 24)); // FBP=0, FBW=10, PSM=CT32
@@ -199,17 +199,18 @@ static std::vector<uint8_t> BuildScene()
 
 	for (const Box* b : {&kBackground, &kRed, &kGreen, &kWhite})
 	{
+		const int offset = b == &kBackground ? 0 : foregroundOffset;
 		g.AD(REG_PRIM, PRIM_SPRITE);
 		g.AD(REG_RGBAQ, RGBAQ(b->r, b->g, b->b));
-		g.AD(REG_XYZ2, XYZ(b->x0, b->y0));
-		g.AD(REG_XYZ2, XYZ(b->x1, b->y1));
+		g.AD(REG_XYZ2, XYZ(b->x0 + offset, b->y0));
+		g.AD(REG_XYZ2, XYZ(b->x1 + offset, b->y1));
 	}
 
 	g.AD(REG_PRIM, PRIM_TRIANGLE);
 	g.AD(REG_RGBAQ, RGBAQ(255, 255, 0));
-	g.AD(REG_XYZ2, XYZ(400, 40));
-	g.AD(REG_XYZ2, XYZ(600, 40));
-	g.AD(REG_XYZ2, XYZ(500, 200));
+	g.AD(REG_XYZ2, XYZ(400 + foregroundOffset, 40));
+	g.AD(REG_XYZ2, XYZ(600 + foregroundOffset, 40));
+	g.AD(REG_XYZ2, XYZ(500 + foregroundOffset, 200));
 	return g.Build();
 }
 
@@ -844,9 +845,11 @@ static void CheckProviderGateVulkan(HWND hwnd, const std::string& path, const st
 	kzgs::ProviderTestAllowSpatialMock(false);
 	kzgs::ProviderTestSetPath(dllPath.c_str());
 	ResizeTestWindowUnconstrained(hwnd, 1003, 757);
-	for (const KzgsUpscaler provider : {KzgsUpscaler::DLSS, KzgsUpscaler::XeSS})
+	for (const KzgsUpscaler provider :
+		{KzgsUpscaler::DLSS, KzgsUpscaler::XeSS, KzgsUpscaler::FSR3})
 	{
-		setMode(provider == KzgsUpscaler::XeSS ? MOCK_KIND_XESS : 0);
+		setMode(provider == KzgsUpscaler::XeSS ? MOCK_KIND_XESS :
+			provider == KzgsUpscaler::FSR3 ? MOCK_KIND_FSR3 : 0);
 		const KzgsMockStats before = stats();
 		KzgsConfigV1 cfg;
 		cfg.renderer = KzgsRenderer::Vulkan;
@@ -1126,11 +1129,19 @@ static void CheckTemporalObservations(HWND hwnd, const std::vector<uint8_t>& sce
 	guest.buildId = 7;
 	guest.cameraId = 11;
 	guest.flags = KZGS_TEMPORAL_GUEST_WORLD | KZGS_TEMPORAL_GUEST_2D |
-		KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE;
+		KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE |
+		KZGS_TEMPORAL_GUEST_CAMERA_MATRICES_CANDIDATE |
+		KZGS_TEMPORAL_GUEST_FRAME_TIME_CANDIDATE;
 	guest.nearPlane = 0.1f;
 	guest.farPlane = 1000.0f;
 	guest.verticalFovDegrees = 60.0f;
 	guest.aspect = 1.5f;
+	guest.gameFrameTimeMs = 1000.0f / 60.0f;
+	for (size_t i = 0; i < 16; ++i)
+	{
+		guest.renderCameraMatrix310[i] = i % 5 == 0 ? 1.0f : 0.0f;
+		guest.renderCameraMatrix400[i] = i % 5 == 0 ? 1.0f : 0.0f;
+	}
 	kzgsGifTransfer(3, scene.data(), static_cast<uint32_t>(scene.size() / 16));
 	const std::vector<uint8_t> depth = BuildDepthScene(0);
 	kzgsGifTransfer(3, depth.data(), static_cast<uint32_t>(depth.size() / 16));
@@ -1154,11 +1165,16 @@ static void CheckTemporalObservations(HWND hwnd, const std::vector<uint8_t>& sce
 		"synthetic depth is only a target candidate with unknown direction");
 	check(!first.temporalValid && first.validInputs == KZGS_TEMPORAL_COLOR &&
 		first.missingInputs == (KZGS_TEMPORAL_REQUIRED & ~KZGS_TEMPORAL_COLOR) &&
-		!first.sceneId && !first.worldResourceId && !first.motionResourceId &&
+		first.sceneId && first.qualifiedInputs == KZGS_TEMPORAL_COLOR &&
+		!first.approximateInputs && first.inputPolicy == KzgsTemporalInputPolicy::Strict &&
+		!first.worldResourceId && !first.motionResourceId &&
 		!first.reactiveResourceId && !first.compositionResourceId && !first.uiResourceId &&
 		!first.jitterAvailable && !first.matchedFrameTimeAvailable &&
-		!first.cameraParametersAvailable && !first.historyFrameId && !first.committedHistoryFrames,
-		"unmatched synthetic observations never become valid temporal inputs or history");
+		!first.cameraParametersAvailable && first.cameraParametersCandidateAvailable &&
+		first.cameraMatricesCandidateAvailable && first.gameFrameTimeCandidateAvailable &&
+		std::fabs(first.gameFrameTimeCandidateMs - 1000.0f / 60.0f) < 0.001f &&
+		!first.historyFrameId && !first.committedHistoryFrames,
+		"strict observations retain scene identity without promoting temporal candidates");
 
 	guest = {};
 	guest.guestVsync = 101;
@@ -1192,9 +1208,9 @@ static void CheckTemporalObservations(HWND hwnd, const std::vector<uint8_t>& sce
 	kzgsVsyncTemporal(1, false, false, &guest);
 	kzgsSync();
 	KzgsTemporalDiagnostics duplicate;
-	check(kzgsGetTemporalDiagnostics(duplicate) && (duplicate.resetReasons & KZGS_TEMPORAL_RESET_DUPLICATE) &&
+	check(kzgsGetTemporalDiagnostics(duplicate) &&
 		!duplicate.historyFrameId && !duplicate.committedHistoryFrames,
-		"duplicate presentation cannot advance temporal history");
+		"strict presentation without a provider handoff cannot advance temporal history");
 
 	cfg.crop[0] = 1;
 	cfg.aspect = KzgsAspect::Ratio16_9;
@@ -1236,6 +1252,213 @@ static void CheckTemporalObservations(HWND hwnd, const std::vector<uint8_t>& sce
 	kzgsClose();
 }
 
+static void CheckFsr3Experimental(HWND hwnd, const std::vector<uint8_t>& scene)
+{
+	auto check = [](bool ok, const char* message) {
+		std::printf("%s: %s\n", ok ? "PASS" : "FAIL", message);
+		g_failures += !ok;
+	};
+	std::printf("== Vulkan FSR 3 experimental integration\n");
+	ResizeTestWindow(hwnd, 960, 672);
+	KzgsConfigV1 cfg;
+	cfg.renderer = KzgsRenderer::Vulkan;
+	cfg.upscaler = KzgsUpscaler::FSR3;
+	cfg.fsr3InputMode = KzgsFsr3InputMode::Experimental;
+	cfg.temporalDiagnostics = true;
+	cfg.debugDevice = true;
+	cfg.vsync = false;
+	std::string error;
+	const auto checkCreationFailure = [&](const char* variable, const char* label) {
+		const uint32_t validationErrors = g_vulkan_validation_errors.load();
+		_putenv_s(variable, "1");
+		error.clear();
+		const bool opened = kzgsOpenV1(kz::host::NativeWindow::win32(hwnd), cfg, g_regs, &error);
+		KzgsUpscalerStatus failureStatus;
+		bool failedClosed = false;
+		if (opened)
+		{
+			kzgsGifTransfer(3, scene.data(), static_cast<uint32_t>(scene.size() / 16));
+			kzgsVsync(0, true, false);
+			kzgsSync();
+			failedClosed = kzgsGetUpscalerStatus(failureStatus) &&
+				failureStatus.effective == KzgsUpscaler::Off &&
+				failureStatus.reason == KzgsUpscalerReason::InitializationFailed;
+			kzgsClose();
+		}
+		_putenv_s(variable, "");
+		check(opened && failedClosed, label);
+		if (!g_vulkan_validation_unavailable.load())
+			check(g_vulkan_validation_errors.load() == validationErrors,
+				"partial FidelityFX initialization releases all Vulkan objects");
+	};
+	checkCreationFailure("KZGS_TEST_FFX_FAIL_FSR3_CONTEXT_CREATE",
+		"forced partial FSR 3 context creation fails closed");
+	checkCreationFailure("KZGS_TEST_FFX_FAIL_OPTICAL_FLOW_CONTEXT_CREATE",
+		"forced partial Optical Flow context creation fails closed");
+	error.clear();
+	if (!kzgsOpenV1(kz::host::NativeWindow::win32(hwnd), cfg, g_regs, &error))
+	{
+		std::printf("FAIL: FSR 3 renderer open: %s\n", error.c_str());
+		++g_failures;
+		return;
+	}
+
+	kzgsGifTransfer(3, scene.data(), static_cast<uint32_t>(scene.size() / 16));
+	kzgsVsync(0, true, false);
+	kzgsSync();
+	KzgsFsr3JitterState jitter;
+	check(kzgsGetFsr3JitterState(jitter) && jitter.enabled &&
+			jitter.sourceWidth && jitter.sourceHeight &&
+			jitter.displayWidth >= jitter.sourceWidth &&
+			jitter.displayHeight >= jitter.sourceHeight &&
+			(jitter.displayWidth > jitter.sourceWidth ||
+			 jitter.displayHeight > jitter.sourceHeight),
+		"FSR 3 publishes exact jitter geometry after the fallback bootstrap frame");
+	std::vector<uint8_t> fallback;
+	ReadPresented(fallback, 960, 672);
+
+	KzgsTemporalGuestObservation guest;
+	const auto configureGuest = [&](uint64_t id, const KzgsFsr3JitterState& geometry,
+			uint64_t resetReasons, bool matchedJitter = true) {
+		guest = {};
+		guest.guestVsync = id;
+		guest.buildId = id;
+		guest.cameraId = 1;
+		guest.flags = KZGS_TEMPORAL_GUEST_WORLD |
+			KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE |
+			KZGS_TEMPORAL_GUEST_FRAME_TIME_CANDIDATE |
+			(matchedJitter ? KZGS_TEMPORAL_GUEST_JITTER_APPLIED : 0);
+		guest.nearPlane = 0.1f;
+		guest.farPlane = 1000.0f;
+		guest.verticalFovDegrees = 60.0f;
+		guest.aspect = static_cast<float>(geometry.sourceWidth) /
+			static_cast<float>(geometry.sourceHeight);
+		guest.gameFrameTimeMs = 1000.0f / 60.0f;
+		guest.jitterPhaseCount = std::max(1u, static_cast<uint32_t>(
+			8.0f * std::pow(static_cast<float>(geometry.displayWidth) /
+				static_cast<float>(geometry.sourceWidth), 2.0f)));
+		guest.jitterSourceWidth = geometry.sourceWidth;
+		guest.jitterSourceHeight = geometry.sourceHeight;
+		guest.jitterDisplayWidth = geometry.displayWidth;
+		guest.jitterDisplayHeight = geometry.displayHeight;
+		guest.resetReasons = resetReasons;
+	};
+	const auto presentTemporal = [&](const std::vector<uint8_t>& packet, int field) {
+		kzgsGifTransfer(3, packet.data(), static_cast<uint32_t>(packet.size() / 16));
+		kzgsVsyncTemporal(field, true, false, &guest);
+		kzgsSync();
+	};
+
+	configureGuest(2, jitter, KZGS_TEMPORAL_RESET_SIZE);
+	presentTemporal(scene, 1);
+
+	KzgsUpscalerStatus status;
+	check(kzgsGetUpscalerStatus(status) &&
+			status.requested == KzgsUpscaler::FSR3 &&
+			status.effective == KzgsUpscaler::FSR3 &&
+			status.reason == KzgsUpscalerReason::Active,
+		"source-built FSR 3 records and presents an upscaled frame");
+	KzgsTemporalDiagnostics diagnostics;
+	const uint64_t required = KZGS_TEMPORAL_FSR3_EXPERIMENTAL_REQUIRED |
+		KZGS_TEMPORAL_REACTIVE;
+	check(kzgsGetTemporalDiagnostics(diagnostics) && diagnostics.temporalValid &&
+			(diagnostics.validInputs & required) == required &&
+			(diagnostics.approximateInputs &
+				(KZGS_TEMPORAL_DEPTH | KZGS_TEMPORAL_MOTION |
+				 KZGS_TEMPORAL_JITTER | KZGS_TEMPORAL_CAMERA |
+				 KZGS_TEMPORAL_FRAME_TIME | KZGS_TEMPORAL_REACTIVE)) ==
+				(KZGS_TEMPORAL_DEPTH | KZGS_TEMPORAL_MOTION |
+				 KZGS_TEMPORAL_JITTER | KZGS_TEMPORAL_CAMERA |
+				 KZGS_TEMPORAL_FRAME_TIME | KZGS_TEMPORAL_REACTIVE) &&
+			diagnostics.qualifiedInputs == KZGS_TEMPORAL_COLOR &&
+			diagnostics.historyFrameId == diagnostics.frameId &&
+			diagnostics.committedHistoryFrames == 1 &&
+			!diagnostics.compositionResourceId && !diagnostics.uiResourceId,
+		"FSR 3 commits only the marked approximation bundle and leaves absent masks absent");
+	std::vector<uint8_t> firstUpscale;
+	const bool firstReadback = ReadPresented(firstUpscale, 960, 672);
+	const auto hasColor = [](const std::vector<uint8_t>& pixels) {
+		for (size_t i = 0; i + 2 < pixels.size(); i += 4)
+			if (pixels[i] || pixels[i + 1] || pixels[i + 2])
+				return true;
+		return false;
+	};
+	check(firstReadback && hasColor(firstUpscale) && firstUpscale != fallback,
+		"FSR 3 produces a non-empty provider output distinct from native fallback");
+
+	const std::vector<uint8_t> translated = BuildScene(8);
+	configureGuest(3, jitter, 0);
+	presentTemporal(translated, 0);
+	check(kzgsGetTemporalDiagnostics(diagnostics) && diagnostics.temporalValid &&
+			diagnostics.historyFrameId == diagnostics.frameId &&
+			diagnostics.committedHistoryFrames == 2,
+		"FSR 3 advances committed Optical Flow and SR history on a translated frame");
+	const uint64_t committedBeforeFailure = diagnostics.committedHistoryFrames;
+	std::vector<uint8_t> translatedUpscale;
+	const bool translatedReadback = ReadPresented(translatedUpscale, 960, 672);
+	check(translatedReadback && hasColor(translatedUpscale) &&
+			translatedUpscale != firstUpscale,
+		"FSR 3 presents changed output for translated source content");
+
+	configureGuest(4, jitter, 0, false);
+	presentTemporal(scene, 1);
+	check(kzgsGetUpscalerStatus(status) &&
+			status.effective == KzgsUpscaler::Off &&
+			status.reason == KzgsUpscalerReason::RequiredInputUnavailable &&
+			kzgsGetTemporalDiagnostics(diagnostics) &&
+			!diagnostics.temporalValid && !diagnostics.historyFrameId &&
+			diagnostics.committedHistoryFrames == committedBeforeFailure,
+		"a missing matched jitter input falls back and discards speculative history");
+	std::vector<uint8_t> missingInputFallback;
+	const bool fallbackReadback = ReadPresented(missingInputFallback, 960, 672);
+	check(fallbackReadback && missingInputFallback == fallback,
+		"FSR 3 input rejection preserves the ordinary presentation output");
+
+	configureGuest(5, jitter, KZGS_TEMPORAL_RESET_MISSING_INPUT);
+	presentTemporal(translated, 0);
+	check(kzgsGetUpscalerStatus(status) &&
+			status.effective == KzgsUpscaler::FSR3 &&
+			status.reason == KzgsUpscalerReason::Active &&
+			kzgsGetTemporalDiagnostics(diagnostics) &&
+			diagnostics.temporalValid &&
+			diagnostics.committedHistoryFrames == committedBeforeFailure + 1,
+		"FSR 3 recovers from rejected input with reset history");
+
+	const uint64_t previousGeneration = jitter.generation;
+	ResizeTestWindow(hwnd, 1024, 720);
+	kzgsResize(1024, 720);
+	kzgsGifTransfer(3, scene.data(), static_cast<uint32_t>(scene.size() / 16));
+	kzgsVsync(1, true, false);
+	kzgsSync();
+	KzgsFsr3JitterState resizedJitter;
+	check(kzgsGetFsr3JitterState(resizedJitter) && resizedJitter.enabled &&
+			resizedJitter.generation != previousGeneration &&
+			(resizedJitter.displayWidth != jitter.displayWidth ||
+			 resizedJitter.displayHeight != jitter.displayHeight) &&
+			resizedJitter.displayWidth <= 1024 && resizedJitter.displayHeight <= 720 &&
+			resizedJitter.displayWidth > resizedJitter.sourceWidth &&
+			resizedJitter.displayHeight > resizedJitter.sourceHeight,
+		"FSR 3 resize publishes new jitter geometry after one fallback frame");
+	configureGuest(6, resizedJitter, KZGS_TEMPORAL_RESET_SIZE);
+	presentTemporal(scene, 0);
+	check(kzgsGetUpscalerStatus(status) &&
+			status.effective == KzgsUpscaler::FSR3 &&
+			status.reason == KzgsUpscalerReason::Active &&
+			kzgsGetTemporalDiagnostics(diagnostics) &&
+			diagnostics.temporalValid &&
+			diagnostics.committedHistoryFrames == committedBeforeFailure + 2,
+		"FSR 3 recreates for resized output and restarts committed history");
+	std::vector<uint8_t> resizedUpscale;
+	check(ReadPresented(resizedUpscale, 1024, 720) && hasColor(resizedUpscale),
+		"resized FSR 3 output is readable and non-empty");
+	if (g_vulkan_validation_unavailable.load())
+		std::printf("SKIP: Vulkan validation layers unavailable\n");
+	else
+		check(g_vulkan_validation_seen.load() && g_vulkan_validation_errors.load() == 0,
+			"FSR 3 dispatch passes standard Vulkan validation");
+	kzgsClose();
+}
+
 int main(int argc, char** argv)
 {
 	KzgsConfigV1 cfg;
@@ -1244,6 +1467,7 @@ int main(int argc, char** argv)
 	bool golden_only = false;
 	bool fsr1_validation = false;
 	bool temporal_validation = false;
+	bool fsr3_validation = false;
 	std::string synthetic_trace;
 	std::string provider_validation;
 	std::string provider_gate_validation;
@@ -1266,6 +1490,8 @@ int main(int argc, char** argv)
 			fsr1_validation = true;
 		else if (a == "--temporal-validation")
 			temporal_validation = true;
+		else if (a == "--fsr3-validation")
+			fsr3_validation = true;
 		else if (a == "--provider-validation" && i + 1 < argc)
 			provider_validation = argv[++i];
 		else if (a == "--provider-gate-validation" && i + 1 < argc)
@@ -1331,6 +1557,13 @@ int main(int argc, char** argv)
 		CheckTemporalObservations(hwnd, BuildScene(), cfg.renderer, cfg.useWarp);
 		DestroyWindow(hwnd);
 		std::printf("%s: temporal observer integration\n", g_failures ? "FAIL" : "PASS");
+		return g_failures ? 1 : 0;
+	}
+	if (fsr3_validation)
+	{
+		CheckFsr3Experimental(hwnd, BuildScene());
+		DestroyWindow(hwnd);
+		std::printf("%s: FSR 3 experimental integration\n", g_failures ? "FAIL" : "PASS");
 		return g_failures ? 1 : 0;
 	}
 	if (!provider_validation.empty())
@@ -1416,7 +1649,8 @@ int main(int argc, char** argv)
 		kzgsSync();
 		capture_backbuffer(baseline_backbuffer);
 	}
-	for (const KzgsUpscaler provider : {KzgsUpscaler::FSR1, KzgsUpscaler::DLSS, KzgsUpscaler::XeSS})
+	for (const KzgsUpscaler provider :
+		{KzgsUpscaler::FSR1, KzgsUpscaler::FSR3, KzgsUpscaler::DLSS, KzgsUpscaler::XeSS})
 	{
 		cfg.upscaler = provider;
 		cfg.upscalerSharpening = 100;

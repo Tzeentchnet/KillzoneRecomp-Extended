@@ -17,6 +17,7 @@ function(run_case name expect_success expected_text)
 	execute_process(
 		COMMAND "${CMAKE_COMMAND}" -S "${KZGS_SOURCE}/ext/kzgs/test/vendor_config" -B "${KZGS_TEST_WORK}/${name}"
 			-G "${KZGS_GENERATOR}" "-DKZGS_SOURCE=${KZGS_SOURCE}"
+			"-DKZGS_BUILD_FSR3_PROVIDER=OFF"
 			"-DCMAKE_MAKE_PROGRAM=${KZGS_MAKE_PROGRAM}" "-DCMAKE_CXX_COMPILER=${KZGS_CXX_COMPILER}" ${ARGN}
 		RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
 	set(combined "${output}\n${error}")

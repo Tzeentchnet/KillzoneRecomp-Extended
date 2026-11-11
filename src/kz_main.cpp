@@ -1,7 +1,7 @@
 // Killzone runner entry point. Replaces ps2xRuntime/src/main.cpp so we control boot paths.
 //
 // Usage: killzone.exe [--elf <path to SCUS_974.02 or SCES_528.93>] [--iso <path to Killzone ISO>] [--sample <seconds>]
-//                     [--upscaler off|fsr1|dlss|xess] [--upscaler-sharpening 0..100]
+//                     [--upscaler off|fsr1|fsr3|dlss|xess] [--upscaler-sharpening 0..100]
 // Defaults: the ELF extracted from the disc image (killzone.ini [Paths] ISO, or --iso) into the region-specific
 // boot folder next to the settings file. The disc or explicit ELF selects US SCUS-97402 or PAL SCES-52893.
 // With an ISO, its extracted boot files are mounted as cdrom0: and the image backs raw sceCdRead sector reads.
@@ -425,7 +425,7 @@ int main(int argc, char *argv[])
         const KzgsUpscaler requestedUpscaler = cfg.upscalerOverrides.provider.value_or(cfg.upscaler);
         const char *temporalEnv = std::getenv("KZGS_TEMPORAL_DIAGNOSTICS");
         const bool temporalDiagnostics = (temporalEnv && std::strcmp(temporalEnv, "1") == 0) ||
-            requestedUpscaler == KzgsUpscaler::DLSS || requestedUpscaler == KzgsUpscaler::XeSS;
+            kzgsIsTemporalUpscaler(requestedUpscaler);
         if (wide || cfg.fov > 0.0f || cfg.weaponFov > 0.0f || temporalDiagnostics)
             kzWideInstall(runtime, temporalDiagnostics);
         kzPromptsInstall(runtime); // after kzWideInstall: wraps the same text function

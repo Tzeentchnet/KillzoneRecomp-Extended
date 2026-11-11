@@ -4,6 +4,7 @@
 #include "kzgs_vendor_conventions.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -28,6 +29,9 @@ namespace
 	using namespace kzgs::vendor;
 	constexpr KzgsProviderInputs RequiredInputs = KZGS_PROVIDER_INPUT_COLOR | KZGS_PROVIDER_INPUT_DEPTH |
 		KZGS_PROVIDER_INPUT_MOTION | KZGS_PROVIDER_INPUT_JITTER | KZGS_PROVIDER_INPUT_CAMERA;
+	constexpr KzgsProviderInputs Fsr3RequiredInputs = RequiredInputs | KZGS_PROVIDER_INPUT_FRAME_TIME;
+	constexpr KzgsProviderInputs Fsr3OptionalInputs =
+		KZGS_PROVIDER_INPUT_REACTIVE_MASK | KZGS_PROVIDER_INPUT_COMPOSITION_MASK;
 
 	struct Context
 	{
@@ -149,7 +153,7 @@ namespace
 		return format == VK_FORMAT_D16_UNORM || format == VK_FORMAT_D32_SFLOAT;
 	}
 
-	bool validCamera(const KzgsProviderCamera* camera)
+	bool validCamera(const KzgsProviderCamera* camera, bool scalarOnly)
 	{
 		if (!KZGS_PROVIDER_HAS_FIELD(camera, KzgsProviderCamera, previous_world_to_view) ||
 			!std::isfinite(camera->near_plane) || camera->near_plane <= 0.0f ||
@@ -164,6 +168,13 @@ namespace
 		}
 		else if (!std::isfinite(camera->far_plane) || camera->far_plane <= camera->near_plane)
 			return false;
+		if (scalarOnly)
+		{
+			return KZGS_PROVIDER_HAS_FIELD(camera, KzgsProviderCamera, valid_fields) &&
+				(camera->valid_fields & KZGS_PROVIDER_CAMERA_VALID_SCALARS) ==
+					KZGS_PROVIDER_CAMERA_VALID_SCALARS &&
+				!(camera->valid_fields & ~KZGS_PROVIDER_CAMERA_VALID_ALL);
+		}
 		for (const float* matrix : {camera->view_to_clip, camera->previous_view_to_clip,
 			camera->world_to_view, camera->previous_world_to_view})
 		{
@@ -201,9 +212,22 @@ namespace
 
 	Result validateFrame(const Context& context, const KzgsProviderFrame* frame)
 	{
+		const bool fsr3 = backend().kind == KZGS_PROVIDER_KIND_FSR3;
+		const KzgsProviderInputs required = fsr3 ? Fsr3RequiredInputs : RequiredInputs;
 		if (!KZGS_PROVIDER_HAS_FIELD(frame, KzgsProviderFrame, camera) ||
-			(frame->valid_inputs & RequiredInputs) != RequiredInputs)
-			return missing("Matched color, depth, motion, jitter, and camera inputs are required.");
+			(frame->valid_inputs & required) != required)
+			return missing(fsr3 ?
+				"Color, depth, motion, jitter, scalar camera, and frame-time inputs are required." :
+				"Matched color, depth, motion, jitter, and camera inputs are required.");
+		const KzgsProviderInputs approximate = KZGS_PROVIDER_HAS_FIELD(
+			frame, KzgsProviderFrame, approximate_inputs) ? frame->approximate_inputs : 0;
+		if ((approximate & ~frame->valid_inputs) || (!fsr3 && approximate) ||
+			(fsr3 && !KZGS_PROVIDER_HAS_FIELD(frame, KzgsProviderFrame, approximate_inputs)))
+			return invalid("Input approximation provenance is invalid for this provider.");
+		if (frame->valid_inputs & ~(fsr3 ? Fsr3RequiredInputs | Fsr3OptionalInputs : RequiredInputs))
+			return invalid("The frame advertises inputs unsupported by this provider.");
+		if (fsr3 && (!std::isfinite(frame->frame_time_ms) || frame->frame_time_ms <= 0.0f))
+			return missing("The FSR 3 frame time is invalid.");
 		if (!KZGS_PROVIDER_HAS_FIELD(frame->sync, KzgsProviderSync, completed_token) ||
 			!frame->sync->command_buffer || frame->sync->queue != context.info.queue ||
 			frame->sync->queue_family != context.info.queue_family ||
@@ -213,13 +237,27 @@ namespace
 				frame->presentation_id < context.lastPresentation ||
 				(frame->presentation_id == context.lastPresentation && !context.reset))))
 			return invalid("Invalid command-buffer, completion token, camera, or frame identity.");
-		if (!validCamera(frame->camera))
+		if (!validCamera(frame->camera, fsr3 && (approximate & KZGS_PROVIDER_INPUT_CAMERA)))
 			return missing("The matched camera descriptor or depth convention is invalid.");
+		const bool approximateDepth = fsr3 && (approximate & KZGS_PROVIDER_INPUT_DEPTH);
+		const VkImageAspectFlags depthAspect =
+			approximateDepth ? VK_IMAGE_ASPECT_COLOR_BIT : VK_IMAGE_ASPECT_DEPTH_BIT;
 		if (!validImage(frame->color, context.info.queue_family, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_USAGE_SAMPLED_BIT) ||
-			!validImage(frame->depth, context.info.queue_family, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_USAGE_SAMPLED_BIT) ||
+			!validImage(frame->depth, context.info.queue_family, depthAspect, VK_IMAGE_USAGE_SAMPLED_BIT) ||
 			!validImage(frame->motion, context.info.queue_family, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_USAGE_SAMPLED_BIT) ||
 			!validImage(frame->output, context.info.queue_family, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_USAGE_STORAGE_BIT))
 			return missing("A complete, queue-owned sampled depth/motion/color and storage output is required.");
+		for (const auto& optional : {
+				std::pair{KZGS_PROVIDER_INPUT_REACTIVE_MASK, frame->reactive_mask},
+				std::pair{KZGS_PROVIDER_INPUT_COMPOSITION_MASK, frame->composition_mask}})
+		{
+			if ((frame->valid_inputs & optional.first) &&
+				(!validImage(optional.second, context.info.queue_family, VK_IMAGE_ASPECT_COLOR_BIT,
+					 VK_IMAGE_USAGE_SAMPLED_BIT) ||
+				 optional.second->format != VK_FORMAT_R8_UNORM ||
+				 !sameExtent(optional.second->extent, context.info.source_extent)))
+				return format("An optional temporal mask has an invalid format or extent.");
+		}
 		if (frame->output->layout != VK_IMAGE_LAYOUT_GENERAL ||
 			frame->color->image == frame->output->image || frame->color->image == frame->depth->image ||
 			frame->color->image == frame->motion->image || frame->depth->image == frame->motion->image ||
@@ -230,7 +268,9 @@ namespace
 			!sameExtent(frame->output->extent, context.info.destination_extent) ||
 			frame->color->format != context.info.source_format ||
 			frame->output->format != context.info.destination_format ||
-			!depthFormat(frame->depth->format) || frame->motion->format != VK_FORMAT_R16G16_SFLOAT ||
+			(!approximateDepth && !depthFormat(frame->depth->format)) ||
+			(approximateDepth && frame->depth->format != VK_FORMAT_R32_SFLOAT) ||
+			frame->motion->format != VK_FORMAT_R16G16_SFLOAT ||
 			frame->color_encoding != context.info.color_encoding ||
 			frame->sharpening != context.info.sharpening ||
 			!sameRect(frame->source_rect, context.info.source_rect) ||
@@ -249,22 +289,27 @@ namespace
 
 	void barriers(const Context& context, const KzgsProviderFrame& frame, bool before)
 	{
-		const KzgsProviderImage* images[] = {frame.color, frame.depth, frame.motion, frame.output};
-		VkImageMemoryBarrier imageBarriers[4]{};
+		const KzgsProviderImage* images[] = {
+			frame.color, frame.depth, frame.motion, frame.reactive_mask, frame.composition_mask, frame.output};
+		std::array<VkImageMemoryBarrier, 6> imageBarriers{};
 		VkMemoryBarrier memory{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
 		memory.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
 		memory.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
 		VkPipelineStageFlags sourceStages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-		for (size_t i = 0; i < 4; ++i)
+		uint32_t barrierCount = 0;
+		for (const KzgsProviderImage* imagePointer : images)
 		{
-			const KzgsProviderImage& image = *images[i];
-			const VkImageLayout sdkLayout = (i == 3) ? VK_IMAGE_LAYOUT_GENERAL : backend().inputLayout;
-			VkImageMemoryBarrier& barrier = imageBarriers[i];
+			if (!imagePointer)
+				continue;
+			const KzgsProviderImage& image = *imagePointer;
+			const bool output = imagePointer == frame.output;
+			const VkImageLayout sdkLayout = output ? VK_IMAGE_LAYOUT_GENERAL : backend().inputLayout;
+			VkImageMemoryBarrier& barrier = imageBarriers[barrierCount++];
 			barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
 			barrier.srcAccessMask = before ? image.available_access :
-				(i == 3 ? VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT : VK_ACCESS_MEMORY_READ_BIT);
+				(output ? VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT : VK_ACCESS_MEMORY_READ_BIT);
 			barrier.dstAccessMask = before ?
-				(i == 3 ? VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT : VK_ACCESS_MEMORY_READ_BIT) :
+				(output ? VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT : VK_ACCESS_MEMORY_READ_BIT) :
 				image.available_access;
 			barrier.oldLayout = before ? image.layout : sdkLayout;
 			barrier.newLayout = before ? sdkLayout : image.layout;
@@ -277,7 +322,7 @@ namespace
 		}
 		context.barrier(frame.sync->command_buffer, sourceStages,
 			VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-			0, 1, &memory, 0, nullptr, 4, imageBarriers);
+			0, 1, &memory, 0, nullptr, barrierCount, imageBarriers.data());
 	}
 
 	KzgsProviderResult KZGS_PROVIDER_CALL queryInfo(KzgsProviderInfo* out, KzgsProviderStatus* status)
@@ -289,10 +334,20 @@ namespace
 		info.kind = backend().kind;
 		info.name = backend().name;
 		info.capabilities = KZGS_PROVIDER_CAP_TEMPORAL;
-		info.supported_inputs = RequiredInputs;
-		info.required_inputs = RequiredInputs;
-		info.supported_color_encodings = KZGS_PROVIDER_COLOR_BIT(KZGS_PROVIDER_COLOR_LINEAR_SDR) |
-			KZGS_PROVIDER_COLOR_BIT(KZGS_PROVIDER_COLOR_LINEAR_HDR);
+		if (backend().kind == KZGS_PROVIDER_KIND_FSR3)
+		{
+			info.capabilities |= KZGS_PROVIDER_CAP_APPROXIMATE_INPUTS;
+			info.supported_inputs = Fsr3RequiredInputs | Fsr3OptionalInputs;
+			info.required_inputs = Fsr3RequiredInputs;
+			info.supported_color_encodings = KZGS_PROVIDER_COLOR_BIT(KZGS_PROVIDER_COLOR_LINEAR_SDR);
+		}
+		else
+		{
+			info.supported_inputs = RequiredInputs;
+			info.required_inputs = RequiredInputs;
+			info.supported_color_encodings = KZGS_PROVIDER_COLOR_BIT(KZGS_PROVIDER_COLOR_LINEAR_SDR) |
+				KZGS_PROVIDER_COLOR_BIT(KZGS_PROVIDER_COLOR_LINEAR_HDR);
+		}
 		copyOutput(out, out->struct_size, &info, sizeof(info));
 		return report(status);
 	}

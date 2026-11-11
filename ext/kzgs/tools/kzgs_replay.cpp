@@ -4,7 +4,7 @@
 //   type 1 = GIF packet (arg = PATH 1..3), type 2 = vsync (arg = field, payload = 0x2000-byte GSPrivRegSet block)
 //
 // Usage: kzgs_replay <trace> <outdir> [--every N] [--upscale N] [--renderer d3d11|d3d12|vulkan|sw]
-//                    [--upscaler off|fsr1|dlss|xess] [--upscaler-sharpening 0..100]
+//                    [--upscaler off|fsr1|fsr3|dlss|xess] [--upscaler-sharpening 0..100]
 //                    [--vram FBP:FBW[,FBP:FBW...]] [--pcrtc] [--last N]
 //   --vram   at every sampled frame, also decode these CT32 buffers from GS local memory (after a texture-cache
 //            readback on HW renderers) to <outdir>/vram_<fbp>_<frame>.png
@@ -238,7 +238,7 @@ int main(int argc, char** argv)
 	SetUnhandledExceptionFilter(CrashFilter);
 	if (argc < 3)
 	{
-		std::fprintf(stderr, "usage: kzgs_replay <trace> <outdir> [--every N] [--upscale N] [--upscaler off|fsr1|dlss|xess] [--upscaler-sharpening 0..100] [--renderer d3d11|d3d12|vulkan|sw] [--vram FBP:FBW,...] [--pcrtc] [--last N]\n");
+		std::fprintf(stderr, "usage: kzgs_replay <trace> <outdir> [--every N] [--upscale N] [--upscaler off|fsr1|fsr3|dlss|xess] [--upscaler-sharpening 0..100] [--renderer d3d11|d3d12|vulkan|sw] [--vram FBP:FBW,...] [--pcrtc] [--last N]\n");
 		return 2;
 	}
 	const std::string trace = argv[1];

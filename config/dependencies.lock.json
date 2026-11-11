@@ -179,6 +179,73 @@
       }
     },
     {
+      "id": "fidelityfx-sdk",
+      "kind": "archive",
+      "source_url": "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/archive/refs/tags/v2.4.0.zip",
+      "revision": "7539ae8b6568ad29ed78a753404351daf3b5cca7",
+      "size": 254235565,
+      "sha256": "27120e3bbe0d0b30213825ad40f19077563f04f04572e252109a392d5fb522cb",
+      "license": "AMD FSR SDK License with permissive per-source notices",
+      "redistribution": "Build only the required FidelityFX sources carrying their permissive notices; reproduce AMD and third-party notices. Do not redistribute the source archive as a runtime asset.",
+      "acquisition": "Run tools/scripts/provision_fidelityfx.ps1 to download, verify, and extract the exact v2.4.0 source archive under ext/kzgs/deps.",
+      "local": {
+        "archive": "ext/kzgs/deps/FidelityFX-SDK-v2.4.0.zip",
+        "directory": "ext/kzgs/deps/FidelityFX-SDK-2.4.0",
+        "markers": [
+          "Kits/FidelityFX/backend/vk/ffx_vk.cpp",
+          "Kits/FidelityFX/upscalers/fsr3/include/ffx_fsr3upscaler.h",
+          "Kits/FidelityFX/upscalers/fsr3/internal/ffx_fsr3upscaler.cpp",
+          "Kits/FidelityFX/framegeneration/fsr3/include/ffx_opticalflow.h",
+          "Kits/FidelityFX/docs/license.md",
+          "3rdpartynotice.md"
+        ],
+        "required_in_strict": true
+      }
+    },
+    {
+      "id": "fidelityfx-shader-tools",
+      "kind": "archive",
+      "source_url": "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/archive/c6efa6bf7f2027b3ec94f28578bb5965eabb9e55.zip",
+      "revision": "c6efa6bf7f2027b3ec94f28578bb5965eabb9e55",
+      "size": 199789617,
+      "sha256": "b5bba71656e18f4c813fda4eb364dcb5e9b8491efd6abb66fdc8a2b530bfcedd",
+      "license": "MIT",
+      "redistribution": "Build-time only. Do not redistribute the archived SDK or shader compiler binaries as runtime assets.",
+      "acquisition": "Run tools/scripts/provision_fidelityfx.ps1 to download and verify AMD's last published FidelityFX shader compiler, used only to generate Vulkan shader permutations from the pinned v2.4.0 sources.",
+      "local": {
+        "archive": "ext/kzgs/deps/FidelityFX-SDK-c6efa6bf.zip",
+        "directory": "ext/kzgs/deps/FidelityFX-SDK-c6efa6bf",
+        "markers": [
+          "sdk/tools/binary_store/FidelityFX_SC.exe",
+          "sdk/tools/binary_store/dxcompiler.dll",
+          "sdk/tools/binary_store/glslangValidator.exe"
+        ],
+        "required_in_strict": true
+      }
+    },
+    {
+      "id": "miniz",
+      "kind": "archive",
+      "source_url": "https://github.com/richgel999/miniz/archive/77d0dce8627735138c51770d1799a1ef48f2117d.zip",
+      "revision": "77d0dce8627735138c51770d1799a1ef48f2117d",
+      "size": 314935,
+      "sha256": "dafc25ba2b722970ca9b41f8103bf04a61d23dcc7a082905138946a318ff0bfb",
+      "license": "Unlicense",
+      "redistribution": "Public-domain-equivalent Unlicense; reproduce the notice with packaged third-party licenses.",
+      "acquisition": "Run tools/scripts/provision_fidelityfx.ps1 to download and verify the source used by FidelityFX shader-blob decompression.",
+      "local": {
+        "archive": "ext/kzgs/deps/miniz-3.1.2.zip",
+        "directory": "ext/kzgs/deps/miniz-3.1.2",
+        "markers": [
+          "miniz.h",
+          "miniz.c",
+          "miniz_tinfl.c",
+          "LICENSE"
+        ],
+        "required_in_strict": true
+      }
+    },
+    {
       "id": "sdl3-vc",
       "kind": "archive",
       "source_url": "https://github.com/libsdl-org/SDL/releases/download/release-3.4.16/SDL3-devel-3.4.16-VC.zip",

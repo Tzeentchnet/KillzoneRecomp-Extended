@@ -51,9 +51,32 @@ companion PCSX2 `61570a47840d2f14e802456eb4524ae5b0a597c7`. It was ISO-free exce
 | Generated sources | Resume-table verification passed with **132,656 dispatch entries** and **100,661 resume cases**. `inventory_generated.py --check` failed with **35 legacy unused-hook findings**, reproduced identically with no extras on clean pre-upscaler `7f4f8263cc94d953d6a5ef8f3ff702e4a51fdb1a` and PCSX2 `d3e6982a3e36647d642bcd805d3ca5b442d0975c`. This is a known failing baseline, not a passed gate. |
 
 Vulkan BYOD A/B was **skipped**, not passed: neither `KZ_ISO` nor `KZ_BYOD_ISO` named an explicitly authorized image.
-The PAL generated tree was unavailable, so PAL hook execution was not tested. No real DLSS/XeSS SDK, vendor
-runtime, or vendor-GPU integration was qualified. The measured temporal gate remains **FAIL/NO-GO**; see
+The PAL generated tree was unavailable, so PAL hook execution was not tested. At that recorded baseline there was no
+FSR 3 provider; no real DLSS/XeSS SDK, vendor runtime, or vendor-GPU integration was qualified. The strict measured
+temporal gate remains **FAIL/NO-GO**; see
 [GFX-04 and the temporal observations](findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10).
+
+### Source-built FSR 3 validation
+
+Provision and build the locked FidelityFX path, then run its focused test:
+
+```powershell
+.\tools\scripts\provision_fidelityfx.ps1
+.\tools\scripts\vsenv.bat cmake --build .\build\win-msvc-rel --target kzgs_test kzgs_upscaler_fsr3
+.\tools\scripts\vsenv.bat ctest --test-dir .\build\win-msvc-rel -C RelWithDebInfo `
+  -R kzgs_fsr3_vulkan_validation --output-on-failure
+```
+
+`kzgs_fsr3_vulkan_validation` runs the real source-built FidelityFX FSR 3.1.6 and Optical Flow code against an
+ISO-free synthetic GS scene. It verifies native bootstrap fallback and exact jitter geometry, non-empty active
+output distinct from fallback, a translated second frame and committed history, missing-input fallback, recovery,
+resize/recreation, absent composition/UI masks, and forced partial FSR/Optical Flow context-creation cleanup.
+The latter two failure probes must release every Vulkan object under validation.
+
+The test passes **standard** Vulkan validation on the checked NVIDIA GeForce RTX 5070. It sets
+`VK_LAYER_VALIDATE_SYNC=0` because the baseline synthetic GS index-buffer upload/read hazard occurs before FSR work;
+do not report this full integration test as synchronization-validation clean. The scene is not evidence of gameplay
+image quality, and experimental approximation support does not change the strict temporal FAIL/NO-GO result.
 
 ## Headless BYOD runs
 
@@ -141,12 +164,13 @@ SDK-free vendor-adapter checks use independently authored test doubles and do no
 ctest --test-dir .\build\win-msvc-rel -R 'kzgs_vendor_conventions|kzgs_vendor_shim|kzgs_dlss_adapter|kzgs_xess_requirements' --output-on-failure
 ```
 
-They cover 1.0/1.1 sized buffers and initialization failures, SDK-free motion/jitter/depth conversion vectors,
+They cover 1.0/1.1/1.2 sized buffers, approximation provenance, scalar-camera validity, and initialization failures,
+SDK-free motion/jitter/depth conversion vectors,
 missing/invalid temporal data, explicit conventions, reset/lifetime and failure handling,
 XeSS requirements, initialization and evaluation, and configure tests for disabled/invalid/partial SDKs, unsupported
 targets, missing lifecycle symbols, independent vendor targets, exclusion from default builds, and explicit isolated
 DLL targets. The successful fake-SDK build does not constitute a real SDK build or runtime qualification.
-The current host does not provide the initialization scope; see [vendor SDK adapters](vendor-upscalers.md).
+See [vendor SDK adapters](vendor-upscalers.md) for the separate source-built FSR 3 path and DLSS/XeSS restrictions.
 
 Run the dependency, capture, and image self-tests and the packaging checks with:
 
@@ -203,8 +227,9 @@ For an ISO-free, synthetic replay using the targets built above:
   --cas 30 --bilinear 1 --present 1003x757 --every 3 --backbuffer
 ```
 
-`--upscale` controls internal GS scaling, `--upscaler-sharpening` controls FSR1 RCAS, and `--cas` controls the
-separate later pass. Compare a separate `--upscaler off` run under otherwise identical settings. `kz_gs_replay`
+`--upscale` controls internal GS scaling, `--upscaler-sharpening` controls provider sharpening, and `--cas` controls
+the separate later pass. FSR 3 additionally requires `--fsr3-input-mode experimental` to allow marked
+approximations. Compare a separate `--upscaler off` run under otherwise identical settings. `kz_gs_replay`
 creates a hidden window; the optional `kzgs_replay` debug tool needs `--window --present WxH` for a surface.
 Both print initial and final requested/effective status and accept the same one-run environment/CLI controls without
 reading the INI. Synthetic traces are not gameplay qualification; keep any authorized retail trace or capture private.

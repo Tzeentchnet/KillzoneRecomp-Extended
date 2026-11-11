@@ -8,6 +8,13 @@ components.
 The port supports Direct3D 11, Direct3D 12, and Vulkan rendering, high-refresh gameplay, ultrawide displays,
 mouse-and-keyboard controls, gamepads, internal resolution scaling, and optional AMD FidelityFX FSR 1.
 
+> [!IMPORTANT]
+> **NEW FEATURE: AMD FidelityFX FSR 3.1.6 Super Resolution**
+>
+> Vulkan now includes source-built FSR 3 Super Resolution through the explicit experimental-input mode. This is
+> Super Resolution only, not frame generation, and its approximate temporal inputs can produce HUD or disocclusion
+> ghosting. See the [experimental upscaler configuration](docs/configuration.md#experimental-presentation-upscaler).
+
 > **Bring your own disc.** This repository contains no game code or data. You need a supported Killzone NTSC-U
 > (`SCUS-97402`) or PAL (`SCES-52893`, English/Russian/Greek) disc image.
 
@@ -26,6 +33,8 @@ Windows x64.
 - Anisotropic filtering, FXAA, D3D11 SMAA, sharp scaling, CAS sharpening, and bounded 2x view distance.
 - Default-off Vulkan FSR 1 spatial presentation, available through
   [experimental configuration](docs/configuration.md#experimental-presentation-upscaler).
+- Default-off Vulkan FSR 3.1.6 Super Resolution in explicit experimental-input mode. This is SR only, not frame
+  generation, and its synthetic depth/Optical Flow inputs can produce HUD or disocclusion ghosting.
 - Launcher-managed display, graphics, controls, audio, disc, and isolated testing settings.
 - US and PAL runtime support from separately generated code sets in one executable.
 
@@ -67,8 +76,9 @@ This is a test build, not an official release.
 Not implemented:
 
 - Killzone Online, DNAS, network login, lobby, or multiplayer gameplay.
-- DLSS, XeSS, FSR 2+, or other temporal reconstruction. The GS boundary does not expose a reliable gameplay depth,
-  motion-vector, or separate HUD/reactive contract.
+- DLSS, XeSS, FSR 2, or production-qualified temporal reconstruction. FSR 3 SR is available only as an explicit
+  experiment using marked approximations; strict mode still fails closed because reliable gameplay depth, motion,
+  and separate HUD/composition inputs are unavailable.
 - HDR output; the current renderer presents composed SDR color.
 - Distribution of retail assets, generated game code, saves, or memory-card images.
 
@@ -119,6 +129,8 @@ reproducible, protected-content-safe provenance.
   foundation.
 - [PCSX2](https://github.com/PCSX2/pcsx2) contributors provide the renderer, microVU, IPU, and SPU2 foundations.
 - [AMD FidelityFX FSR 1](ext/kzgs/third_party/fsr1/README.md) provides the MIT-licensed spatial upscaling source.
+- [AMD FidelityFX SDK](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK) provides the source-built FSR 3
+  Super Resolution and Optical Flow implementation under its included notices.
 
 Developed with AI assistance.
 

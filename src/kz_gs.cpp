@@ -184,6 +184,8 @@ namespace
         renderer.upscaler = config.upscalerOverrides.provider.value_or(config.upscaler);
         renderer.upscalerSharpening =
             config.upscalerOverrides.sharpening.value_or(config.upscalerSharpening);
+        renderer.fsr3InputMode =
+            config.fsr3InputModeOverride.value_or(config.fsr3InputMode);
     }
 
     KzgsConfigV1 toKzgs(
@@ -370,7 +372,8 @@ namespace
             upscaler.effective == KzgsUpscaler::FSR1 ?
                 (upscaler.effectiveSharpening > 0 ? "\"fsr1_easu\",\"fsr1_rcas\"," : "\"fsr1_easu\",") :
             upscaler.effective == KzgsUpscaler::DLSS ? "\"provider_dlss\"," :
-            upscaler.effective == KzgsUpscaler::XeSS ? "\"provider_xess\"," : "";
+            upscaler.effective == KzgsUpscaler::XeSS ? "\"provider_xess\"," :
+            upscaler.effective == KzgsUpscaler::FSR3 ? "\"provider_fsr3\"," : "";
         const bool preSharpHook = kzgsHasPreSharpPresentationHook();
         const char *fallbackPrescale = !preSharpHook || upscaler.effective == KzgsUpscaler::Off
                                            ? "\"sharp_prescale_if_upscaling\"," : "";
@@ -1352,16 +1355,47 @@ int kzGsSelfTest()
     renderer.casSharpness = 30;
     applyUpscalerConfig(legacy, renderer);
     check(renderer.upscaler == KzgsUpscaler::Off && renderer.upscalerSharpening == 0 &&
+              renderer.fsr3InputMode == KzgsFsr3InputMode::Strict &&
               renderer.upscale == 3 && renderer.casSharpness == 30,
-          "legacy presentation settings leave integer upscale and CAS unchanged");
+          "legacy presentation settings use strict FSR 3 inputs and leave integer upscale and CAS unchanged");
     legacy.upscaler = KzgsUpscaler::FSR1;
     legacy.upscalerSharpening = 25;
+    legacy.fsr3InputMode = KzgsFsr3InputMode::Experimental;
     legacy.upscalerOverrides.provider = KzgsUpscaler::DLSS;
     legacy.upscalerOverrides.sharpening = 80;
+    legacy.fsr3InputModeOverride = KzgsFsr3InputMode::Strict;
     applyUpscalerConfig(legacy, renderer);
     check(renderer.upscaler == KzgsUpscaler::DLSS && renderer.upscalerSharpening == 80 &&
+              renderer.fsr3InputMode == KzgsFsr3InputMode::Strict &&
               renderer.upscale == 3 && renderer.casSharpness == 30,
-          "presentation request and one-run overrides preserve integer upscale and CAS");
+          "presentation request and one-run overrides map into V1 without changing integer upscale or CAS");
+    legacy.fsr3InputModeOverride.reset();
+    applyUpscalerConfig(legacy, renderer);
+    check(renderer.fsr3InputMode == KzgsFsr3InputMode::Experimental,
+          "configured experimental FSR 3 input mode maps into V1 without an override");
+    struct LegacyConfigV1 : KzgsConfig
+    {
+        KzgsUpscaler upscaler = KzgsUpscaler::Off;
+        int upscalerSharpening = 0;
+        bool temporalDiagnostics = false;
+    };
+    LegacyConfigV1 legacyV1;
+    std::string abiError;
+    check(!kzgsOpenEx({}, &legacyV1, sizeof(legacyV1), KZGS_CONFIG_VERSION_1, nullptr, &abiError) &&
+              abiError.find("privRegs") != std::string::npos,
+          "legacy V1 struct size remains accepted");
+    abiError.clear();
+    check(!kzgsOpenEx({}, &renderer, sizeof(renderer) - 1, KZGS_CONFIG_VERSION_1, nullptr, &abiError) &&
+              abiError.find("too small") != std::string::npos,
+          "partial current V1 struct size remains rejected");
+    KzgsConfigV1 invalidPolicy;
+    invalidPolicy.fsr3InputMode = static_cast<KzgsFsr3InputMode>(2);
+    std::array<uint8_t, 0x2000> registers{};
+    abiError.clear();
+    check(!kzgsOpenEx({}, &invalidPolicy, sizeof(invalidPolicy), KZGS_CONFIG_VERSION_1,
+                      registers.data(), &abiError) &&
+              abiError.find("FSR 3 input mode") != std::string::npos,
+          "invalid renderer FSR 3 input mode fails closed");
     TemporalDelivery delivery;
     KzgsTemporalGuestObservation observation;
     observation.resetReasons = KZGS_TEMPORAL_RESET_MOVIE;

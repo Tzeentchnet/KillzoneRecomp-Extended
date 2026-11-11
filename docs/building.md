@@ -32,6 +32,13 @@ repository does not contain game code or data.
      `feature/kzgs-upscaler-foundation` and can be acquired by a clean remote clone. Do not substitute upstream PCSX2.
    - The locked PCSX2 Windows dependency archive retained and extracted under `ext\kzgs\deps`.
    - The locked SDL3 VC development archive retained and extracted under `ext\sdl3`.
+   - FidelityFX SDK `v2.4.0`, the locked AMD shader toolchain, generated Vulkan shader headers, and miniz `3.1.2`
+     provisioned for the source-built FSR 3 provider:
+
+     ```powershell
+     .\tools\scripts\provision_fidelityfx.ps1
+     ```
+
    - For macOS experiments, the locked SDL3 source archive extracted as `ext\sdl3\SDL3-3.4.16-source`.
 
 3. Verify the dependency set:

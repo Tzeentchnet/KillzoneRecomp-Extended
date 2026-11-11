@@ -85,9 +85,69 @@ namespace
 		}
 	};
 
-	Validation Validate(const KzgsTemporalFrame& frame)
+	enum class ValidationMode
+	{
+		Strict,
+		FSR3Experimental
+	};
+
+	void ValidateProvenance(const KzgsTemporalFrame& frame, ValidationMode mode, Validation& result)
+	{
+		uint64_t invalid = (frame.validInputs & ~KZGS_TEMPORAL_REQUIRED) |
+			(frame.qualifiedInputs & ~frame.validInputs) |
+			(frame.approximateInputs & ~frame.validInputs) |
+			(frame.qualifiedInputs & frame.approximateInputs);
+		if (mode == ValidationMode::Strict)
+		{
+			if (frame.inputPolicy != KzgsTemporalInputPolicy::Strict)
+				result.reasons |= KZGS_TEMPORAL_INVALID_POLICY;
+			invalid |= frame.approximateInputs;
+		}
+		else
+		{
+			if (frame.inputPolicy != KzgsTemporalInputPolicy::FSR3Experimental)
+				result.reasons |= KZGS_TEMPORAL_INVALID_POLICY;
+			invalid |= frame.validInputs & ~(frame.qualifiedInputs | frame.approximateInputs);
+		}
+		if (invalid)
+			result.Add(invalid, KZGS_TEMPORAL_INVALID_PROVENANCE);
+	}
+
+	bool InvalidCameraScalars(const KzgsTemporalCamera& camera, const KzgsTemporalFrame& frame)
+	{
+		return camera.frameId != frame.frameId || camera.sceneId != frame.sceneId || !camera.cameraId ||
+			camera.previousFrameId != frame.motionPreviousFrameId ||
+			(camera.depthDirection != KzgsTemporalDepthDirection::Forward &&
+				camera.depthDirection != KzgsTemporalDepthDirection::Reversed) ||
+			camera.depthDirection != frame.depthDirection || !std::isfinite(camera.nearPlane) ||
+			!std::isfinite(camera.farPlane) || camera.nearPlane <= 0.0f ||
+			(!camera.infiniteFar && camera.farPlane <= camera.nearPlane) ||
+			!std::isfinite(camera.verticalFovRadians) || camera.verticalFovRadians <= 0.0f ||
+			camera.verticalFovRadians >= 3.141592654f;
+	}
+
+	bool InvalidExperimentalCamera(const KzgsTemporalCamera& camera, const KzgsTemporalFrame& frame)
+	{
+		if (InvalidCameraScalars(camera, frame) ||
+			(camera.validFields & KZGS_TEMPORAL_CAMERA_VALID_SCALARS) !=
+				KZGS_TEMPORAL_CAMERA_VALID_SCALARS ||
+			(camera.validFields & ~KZGS_TEMPORAL_CAMERA_VALID_ALL))
+			return true;
+		return ((camera.validFields & KZGS_TEMPORAL_CAMERA_VALID_WORLD_TO_VIEW) &&
+				!ValidMatrix(camera.worldToView)) ||
+			((camera.validFields & KZGS_TEMPORAL_CAMERA_VALID_PREVIOUS_WORLD_TO_VIEW) &&
+				!ValidMatrix(camera.previousWorldToView)) ||
+			((camera.validFields & KZGS_TEMPORAL_CAMERA_VALID_VIEW_TO_CLIP) &&
+				!ValidMatrix(camera.viewToClip)) ||
+			((camera.validFields & KZGS_TEMPORAL_CAMERA_VALID_PREVIOUS_VIEW_TO_CLIP) &&
+				!ValidMatrix(camera.previousViewToClip));
+	}
+
+	Validation Validate(const KzgsTemporalFrame& frame, ValidationMode mode)
 	{
 		Validation result;
+		const bool experimental = mode == ValidationMode::FSR3Experimental;
+		ValidateProvenance(frame, mode, result);
 		if (!frame.frameId || !frame.presentationId || !frame.sceneId || !frame.deviceId || !frame.providerId)
 			result.reasons |= KZGS_TEMPORAL_INVALID_IDENTITY;
 		if (!frame.outputWidth || !frame.outputHeight || !frame.aspectId)
@@ -98,17 +158,21 @@ namespace
 			result.Add(KZGS_TEMPORAL_WORLD_COLOR, ValidateImage(frame.worldColor, frame, &frame.mergedColor));
 		if (frame.validInputs & KZGS_TEMPORAL_DEPTH)
 		{
-			uint64_t invalid = ValidateImage(frame.depth, frame, &frame.worldColor);
+			const KzgsTemporalImage& reference = experimental ? frame.mergedColor : frame.worldColor;
+			uint64_t invalid = ValidateImage(frame.depth, frame, &reference);
+			const bool validFormat = frame.depth.nativeFormat == VK_FORMAT_D16_UNORM ||
+				frame.depth.nativeFormat == VK_FORMAT_D32_SFLOAT ||
+				(experimental && frame.depth.nativeFormat == VK_FORMAT_R32_SFLOAT);
 			if ((frame.depthDirection != KzgsTemporalDepthDirection::Forward &&
 					frame.depthDirection != KzgsTemporalDepthDirection::Reversed) ||
-				frame.depth.backend != KzgsTemporalBackend::Vulkan ||
-				(frame.depth.nativeFormat != VK_FORMAT_D16_UNORM && frame.depth.nativeFormat != VK_FORMAT_D32_SFLOAT))
+				frame.depth.backend != KzgsTemporalBackend::Vulkan || !validFormat)
 				invalid |= KZGS_TEMPORAL_INVALID_DEPTH;
 			result.Add(KZGS_TEMPORAL_DEPTH, invalid);
 		}
 		if (frame.validInputs & KZGS_TEMPORAL_MOTION)
 		{
-			uint64_t invalid = ValidateImage(frame.motion, frame, &frame.worldColor);
+			const KzgsTemporalImage& reference = experimental ? frame.mergedColor : frame.worldColor;
+			uint64_t invalid = ValidateImage(frame.motion, frame, &reference);
 			if (frame.motionUnits != KzgsTemporalMotionUnits::Pixels ||
 				frame.motionDirection != KzgsTemporalMotionDirection::PreviousMinusCurrent ||
 				frame.motionIncludesJitter || !frame.motionPreviousFrameId ||
@@ -129,7 +193,8 @@ namespace
 		{
 			if (frame.validInputs & pair.first)
 			{
-				const uint64_t imageInvalid = ValidateImage(*pair.second, frame, &frame.worldColor);
+				const KzgsTemporalImage& reference = experimental ? frame.mergedColor : frame.worldColor;
+				const uint64_t imageInvalid = ValidateImage(*pair.second, frame, &reference);
 				if (imageInvalid || pair.second->backend != KzgsTemporalBackend::Vulkan ||
 					pair.second->nativeFormat != VK_FORMAT_R8_UNORM)
 					result.Add(pair.first, imageInvalid | KZGS_TEMPORAL_INVALID_MASK);
@@ -138,17 +203,11 @@ namespace
 		if (frame.validInputs & KZGS_TEMPORAL_CAMERA)
 		{
 			const KzgsTemporalCamera& camera = frame.camera;
-			if (camera.frameId != frame.frameId || camera.sceneId != frame.sceneId || !camera.cameraId ||
-				camera.previousFrameId != frame.motionPreviousFrameId ||
-				(camera.depthDirection != KzgsTemporalDepthDirection::Forward &&
-					camera.depthDirection != KzgsTemporalDepthDirection::Reversed) ||
-				camera.depthDirection != frame.depthDirection || !std::isfinite(camera.nearPlane) ||
-				!std::isfinite(camera.farPlane) || camera.nearPlane <= 0.0f ||
-				(!camera.infiniteFar && camera.farPlane <= camera.nearPlane) ||
-				!std::isfinite(camera.verticalFovRadians) || camera.verticalFovRadians <= 0.0f ||
-				camera.verticalFovRadians >= 3.141592654f || !ValidMatrix(camera.worldToView) ||
-				!ValidMatrix(camera.previousWorldToView) || !ValidMatrix(camera.viewToClip) ||
-				!ValidMatrix(camera.previousViewToClip))
+			const bool invalid = experimental ? InvalidExperimentalCamera(camera, frame) :
+				InvalidCameraScalars(camera, frame) || !ValidMatrix(camera.worldToView) ||
+					!ValidMatrix(camera.previousWorldToView) || !ValidMatrix(camera.viewToClip) ||
+					!ValidMatrix(camera.previousViewToClip);
+			if (invalid)
 				result.Add(KZGS_TEMPORAL_CAMERA, KZGS_TEMPORAL_INVALID_CAMERA);
 		}
 		if (frame.validInputs & KZGS_TEMPORAL_FRAME_TIME)
@@ -164,12 +223,14 @@ namespace
 				(frame.mergedColor.nativeFormat != VK_FORMAT_R8G8B8A8_UNORM &&
 					frame.mergedColor.nativeFormat != VK_FORMAT_R16G16B16A16_SFLOAT))
 				result.Add(KZGS_TEMPORAL_COLOR, KZGS_TEMPORAL_INVALID_FORMAT);
+			const KzgsTemporalImage& encoded = experimental ? frame.mergedColor : frame.worldColor;
 			const bool linearSdr = frame.colorEncoding == KzgsTemporalColorEncoding::LinearSDR &&
-				frame.worldColor.nativeFormat == VK_FORMAT_R8G8B8A8_UNORM;
+				encoded.nativeFormat == VK_FORMAT_R8G8B8A8_UNORM;
 			const bool linearHdr = frame.colorEncoding == KzgsTemporalColorEncoding::LinearHDR &&
-				frame.worldColor.nativeFormat == VK_FORMAT_R16G16B16A16_SFLOAT;
-			if (frame.worldColor.backend != KzgsTemporalBackend::Vulkan || (!linearSdr && !linearHdr))
-				result.Add(frame.validInputs & (KZGS_TEMPORAL_COLOR | KZGS_TEMPORAL_WORLD_COLOR),
+				encoded.nativeFormat == VK_FORMAT_R16G16B16A16_SFLOAT;
+			if (encoded.backend != KzgsTemporalBackend::Vulkan || (!linearSdr && !linearHdr))
+				result.Add(experimental ? KZGS_TEMPORAL_COLOR :
+						frame.validInputs & (KZGS_TEMPORAL_COLOR | KZGS_TEMPORAL_WORLD_COLOR),
 					KZGS_TEMPORAL_INVALID_COLOR_ENCODING);
 		}
 		return result;
@@ -178,6 +239,32 @@ namespace
 
 namespace kzgs::temporal
 {
+	Decision ValidateStrict(const KzgsTemporalFrame& frame)
+	{
+		Decision result;
+		result.missingInputs = KZGS_TEMPORAL_REQUIRED & ~frame.validInputs;
+		const Validation validation = Validate(frame, ValidationMode::Strict);
+		result.invalidInputs = validation.inputs;
+		result.invalidReasons = validation.reasons;
+		result.ready = !result.missingInputs && !result.invalidReasons;
+		result.resetReasons = frame.resetReasons |
+			(result.ready ? 0 : KZGS_TEMPORAL_RESET_MISSING_INPUT);
+		return result;
+	}
+
+	Decision ValidateFSR3Experimental(const KzgsTemporalFrame& frame)
+	{
+		Decision result;
+		result.missingInputs = KZGS_TEMPORAL_FSR3_EXPERIMENTAL_REQUIRED & ~frame.validInputs;
+		const Validation validation = Validate(frame, ValidationMode::FSR3Experimental);
+		result.invalidInputs = validation.inputs;
+		result.invalidReasons = validation.reasons;
+		result.ready = !result.missingInputs && !result.invalidReasons;
+		result.resetReasons = frame.resetReasons |
+			(result.ready ? 0 : KZGS_TEMPORAL_RESET_MISSING_INPUT);
+		return result;
+	}
+
 	void Tracker::Invalidate(uint64_t reasons)
 	{
 		if (!reasons)
@@ -227,11 +314,8 @@ namespace kzgs::temporal
 		if (frame.frameId > m_lastFrame)
 			m_lastFrame = frame.frameId;
 
-		Decision result;
-		result.missingInputs = KZGS_TEMPORAL_REQUIRED & ~frame.validInputs;
-		const Validation validation = Validate(frame);
-		result.invalidInputs = validation.inputs;
-		result.invalidReasons = validation.reasons;
+		Decision result = frame.inputPolicy == KzgsTemporalInputPolicy::FSR3Experimental ?
+			ValidateFSR3Experimental(frame) : ValidateStrict(frame);
 		if (m_historyFrame && (frame.motionPreviousFrameId != m_historyFrame ||
 			frame.sceneId != m_historyScene || frame.presentationId != m_historyPresentation + 1))
 		{
@@ -240,7 +324,8 @@ namespace kzgs::temporal
 		}
 		if (duplicate || outOfOrder)
 			result.invalidReasons |= KZGS_TEMPORAL_INVALID_IDENTITY;
-		if (result.missingInputs || result.invalidReasons)
+		result.ready = false;
+		if (result.missingInputs || result.invalidReasons || duplicate || outOfOrder)
 			Invalidate(KZGS_TEMPORAL_RESET_MISSING_INPUT);
 		else
 		{

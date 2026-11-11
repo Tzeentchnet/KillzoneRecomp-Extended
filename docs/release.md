@@ -23,14 +23,21 @@ packaging stages the headers, license and provenance notice in `resources/shader
 Drobot (float-approximation concepts); retain that notice as well. Review the combined GPL distribution obligations
 separately. No proprietary upscaler SDK is bundled.
 
+The experimental FSR 3 provider is built from locked FidelityFX SDK `v2.4.0` and miniz `3.1.2` sources. Ordinary
+build/test staging places the provider beside the executable and reproduces
+`Kits\FidelityFX\docs\license.md`, `3rdpartynotice.md`, and the miniz license under `upscalers\licenses`.
+Those staged files are development artifacts, not automatic release approval. The audited player-package plan still
+excludes every provider DLL, including FSR 3, until a deliberate GPL/SDK notice, corresponding-source, binary-import,
+and redistribution review updates that plan and its tests.
+
 The renderer also builds the [Tzeentchnet/pcsx2](https://github.com/Tzeentchnet/pcsx2) companion at
 `1fb920189c12766af55bdc9178619c0c66eb1a5e`, pinned in
 [`config/dependencies.lock.json`](../config/dependencies.lock.json). It is GPL-3.0-or-later; provide the
 corresponding source and notices for the exact distributed build, not just a link to unmodified upstream PCSX2.
 The companion revision is published on `feature/kzgs-upscaler-foundation`; retain that exact revision and its
 corresponding source when preparing a release.
-Optional local vendor builds have separate [license and provenance records](vendor-upscalers.md); their
-redistribution, including any combined binary, is not approved by this work.
+Vendor providers have separate [license and provenance records](vendor-upscalers.md). DLSS/XeSS redistribution and
+distribution of the source-built FSR 3 combined binary are not approved by this work.
 
 ## Protected content
 
@@ -70,7 +77,7 @@ Dry-run both stages without creating a destination:
 An actual package requires a **new or empty** destination. The script refuses to update a nonempty player folder
 and never deletes saves, settings, or caches; use a fresh staging directory, then back up player data before any
 manual update. `-WithPdb` explicitly adds only `killzone.pdb` to a private staging folder; it is absent by default
-and never included by the release ZIP script. Local SDK roots, import libraries, provider/vendor DLLs, symbols,
+and never included by the release ZIP script. Local SDK roots, import libraries, provider/vendor DLLs (including the staged FSR 3 provider), symbols,
 shader caches, and unlisted files are excluded even when present in the input tree. Release archiving uses the same
 file plan rather than recursively zipping the stage.
 

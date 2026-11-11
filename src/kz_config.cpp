@@ -1,3 +1,4 @@
+#define KZ_CONFIG_IMPLEMENTATION
 #include "kz_config.h"
 #include "kz_input.h"
 #include "kz_host/core.h"
@@ -40,6 +41,8 @@ namespace
         {KzWindowMode::Windowed, "windowed"}, {KzWindowMode::Borderless, "borderless"}, {KzWindowMode::Fullscreen, "fullscreen"}};
     constexpr EnumName<KzRenderer> kRenderers[] = {
         {KzRenderer::D3D11, "d3d11"}, {KzRenderer::D3D12, "d3d12"}, {KzRenderer::Vulkan, "vulkan"}};
+    constexpr EnumName<KzgsFsr3InputMode> kFsr3InputModes[] = {
+        {KzgsFsr3InputMode::Strict, "strict"}, {KzgsFsr3InputMode::Experimental, "experimental"}};
     constexpr EnumName<KzAspect> kAspects[] = {
         {KzAspect::Widescreen16x9, "16:9"},
         {KzAspect::Classic4x3, "4:3"},
@@ -83,6 +86,71 @@ namespace
             }
         return false;
     }
+
+    bool parseFsr3InputMode(std::string_view text, KzgsFsr3InputMode &mode)
+    {
+        return fromName(kFsr3InputModes, std::string(text), mode);
+    }
+
+    std::optional<KzgsFsr3InputMode> fsr3InputModeEnvironmentOverride(
+        const char *value, std::ostream &diagnostics)
+    {
+        if (!value)
+            return std::nullopt;
+        KzgsFsr3InputMode parsed;
+        if (parseFsr3InputMode(value, parsed))
+            return parsed;
+        diagnostics << "[kz-config] error: KZ_FSR3_INPUT_MODE rejected value '" << value
+                    << "': expected strict or experimental\n";
+        return KzgsFsr3InputMode::Strict;
+    }
+
+    KzgsUpscalerOptionResult parseFsr3InputModeOption(
+        std::string_view argument, const char *next, std::optional<KzgsFsr3InputMode> &override,
+        bool &consumeNext, std::ostream &diagnostics)
+    {
+        consumeNext = false;
+        constexpr std::string_view option = "--fsr3-input-mode";
+        const bool recognized = argument == option || argument.starts_with("--fsr3-input-mode=");
+        if (!recognized)
+        {
+            if (!argument.starts_with(option))
+                return KzgsUpscalerOptionResult::NotHandled;
+            override = KzgsFsr3InputMode::Strict;
+            diagnostics << "[kz-config] error: unknown FSR 3 input mode option '" << argument << "'\n";
+            return KzgsUpscalerOptionResult::Error;
+        }
+
+        std::string_view value;
+        if (argument == option)
+        {
+            if (!next)
+            {
+                override = KzgsFsr3InputMode::Strict;
+                diagnostics << "[kz-config] error: " << option << " requires a value\n";
+                return KzgsUpscalerOptionResult::Error;
+            }
+            value = next;
+            consumeNext = true;
+        }
+        else
+        {
+            value = argument.substr(option.size() + 1);
+        }
+
+        KzgsFsr3InputMode parsed;
+        if (!parseFsr3InputMode(value, parsed))
+        {
+            override = KzgsFsr3InputMode::Strict;
+            diagnostics << "[kz-config] error: " << option << " rejected value '" << value
+                        << "': expected strict or experimental\n";
+            return KzgsUpscalerOptionResult::Error;
+        }
+        override = parsed;
+        return KzgsUpscalerOptionResult::Parsed;
+    }
+
+    std::optional<KzgsFsr3InputMode> s_fsr3InputModeCommandLineOverride;
 
     enum class DiagnosticLevel
     {
@@ -435,10 +503,12 @@ namespace
         c.renderer = reader.enumeration("Graphics", "Renderer", c.renderer, kRenderers);
         c.upscale = reader.integer("Graphics", "Upscale", c.upscale, 0, 8);
         c.upscaler = reader.validated("Graphics", "Upscaler", c.upscaler, &kzgsParseUpscaler,
-                                      "expected off, fsr1, dlss or xess");
+                                      "expected off, fsr1, fsr3, dlss or xess");
         c.upscalerSharpening = reader.validated("Graphics", "UpscalerSharpening", c.upscalerSharpening,
                                                 &kzgsParseUpscalerSharpening,
                                                 "expected an integer from 0 to 100");
+        c.fsr3InputMode = reader.validated("Graphics", "FSR3InputMode", c.fsr3InputMode,
+                                           &parseFsr3InputMode, "expected strict or experimental");
         c.aspect = reader.enumeration("Graphics", "Aspect", c.aspect, kAspects);
         c.anisotropy = reader.integer("Graphics", "Anisotropy", c.anisotropy, 0, 16);
         c.mipmapMode = reader.enumeration("Graphics", "Mipmapping", c.mipmapMode, kMipmapModes);
@@ -578,6 +648,7 @@ namespace
         o << "\n[Graphics]\nRenderer=" << toName(kRenderers, c.renderer) << "\nUpscale=" << c.upscale
           << "\nUpscaler=" << kzgsUpscalerName(c.upscaler)
           << "\nUpscalerSharpening=" << c.upscalerSharpening
+          << "\nFSR3InputMode=" << toName(kFsr3InputModes, c.fsr3InputMode)
           << "\nAspect=" << toName(kAspects, c.aspect) << "\nAnisotropy=" << c.anisotropy
           << "\nMipmapping=" << toName(kMipmapModes, c.mipmapMode)
           << "\nFXAA=" << (c.fxaa ? 1 : 0) << "\nSMAA=" << (c.smaa ? 1 : 0)
@@ -649,8 +720,10 @@ namespace
                a.fpsLimit == b.fpsLimit && a.showFps == b.showFps &&
                a.threadedGraphics == b.threadedGraphics && a.renderer == b.renderer && a.upscale == b.upscale &&
                a.upscaler == b.upscaler && a.upscalerSharpening == b.upscalerSharpening &&
+               a.fsr3InputMode == b.fsr3InputMode &&
                a.upscalerOverrides.provider == b.upscalerOverrides.provider &&
                a.upscalerOverrides.sharpening == b.upscalerOverrides.sharpening &&
+               a.fsr3InputModeOverride == b.fsr3InputModeOverride &&
                a.aspect == b.aspect && a.anisotropy == b.anisotropy && a.mipmapMode == b.mipmapMode &&
                a.fxaa == b.fxaa && a.smaa == b.smaa &&
                a.smaaThreshold == b.smaaThreshold && a.textureReplacement == b.textureReplacement &&
@@ -719,6 +792,10 @@ KzConfig kzLoadConfig(const std::filesystem::path &path)
     KzConfig &config = result.config;
     config.upscalerOverrides = kzgsUpscalerEnvironmentOverrides(
         std::getenv("KZ_UPSCALER"), std::getenv("KZ_UPSCALER_SHARPENING"), std::cerr);
+    config.fsr3InputModeOverride =
+        fsr3InputModeEnvironmentOverride(std::getenv("KZ_FSR3_INPUT_MODE"), std::cerr);
+    if (s_fsr3InputModeCommandLineOverride)
+        config.fsr3InputModeOverride = s_fsr3InputModeCommandLineOverride;
     if (const char *value = std::getenv("KZ_ASPECT"); value && *value && !fromName(kAspects, value, config.aspect))
         std::cerr << "[kz-config] error: KZ_ASPECT rejected value '" << value
                   << "': expected 16:9, 4:3, stretch, auto, 21:9 or 32:9\n";
@@ -748,9 +825,23 @@ bool kzRendererSupportsSmaa(KzRenderer renderer)
     return renderer == KzRenderer::D3D11;
 }
 
+KzgsUpscalerOptionResult kzParseGraphicsOption(
+    std::string_view argument, const char *next, KzgsUpscalerOverrides &overrides,
+    bool &consumeNext, std::ostream &diagnostics)
+{
+    const KzgsUpscalerOptionResult inputMode = parseFsr3InputModeOption(
+        argument, next, s_fsr3InputModeCommandLineOverride, consumeNext, diagnostics);
+    if (inputMode != KzgsUpscalerOptionResult::NotHandled)
+        return inputMode;
+    return kzgsParseUpscalerOption(argument, next, overrides, consumeNext, diagnostics);
+}
+
 int kzConfigSelfTest()
 {
     int failures = 0;
+    const std::optional<KzgsFsr3InputMode> processCommandLineMode =
+        s_fsr3InputModeCommandLineOverride;
+    s_fsr3InputModeCommandLineOverride.reset();
     auto check = [&](bool ok, const char *what) {
         if (!ok)
         {
@@ -771,6 +862,7 @@ int kzConfigSelfTest()
     if (error)
     {
         std::cerr << "[kz-config selftest] FAIL: create fixture directory: " << error.message() << '\n';
+        s_fsr3InputModeCommandLineOverride = processCommandLineMode;
         return 1;
     }
 
@@ -804,8 +896,9 @@ int kzConfigSelfTest()
     check(baselineBindings == kzInputBindingPairs(baselinePath), "baseline bindings round-trip");
     check(readText(baselinePath).find("[Config]\nVersion=3") != std::string::npos,
           "baseline schema version round-trip");
-    check(readText(baselinePath).find("\nUpscaler=off\nUpscalerSharpening=0\n") != std::string::npos,
-          "default upscaler canonical serialization");
+    check(readText(baselinePath).find(
+              "\nUpscaler=off\nUpscalerSharpening=0\nFSR3InputMode=strict\n") != std::string::npos,
+          "default upscaler and FSR 3 input mode canonical serialization");
     KzConfig editedBaseline = baselineRoundTrip.config;
     editedBaseline.vsync = false;
     editedBaseline.sharpen = 45;
@@ -829,8 +922,10 @@ int kzConfigSelfTest()
     check(sameConfig(missing.config, KzConfig{}), "missing file defaults");
     check(missing.document.diagnostics.empty(), "missing file diagnostics");
     check(missing.config.upscaler == KzgsUpscaler::Off && missing.config.upscalerSharpening == 0 &&
-              !missing.config.upscalerOverrides.provider && !missing.config.upscalerOverrides.sharpening,
-          "presentation upscaler defaults to off with no one-run overrides");
+              missing.config.fsr3InputMode == KzgsFsr3InputMode::Strict &&
+              !missing.config.upscalerOverrides.provider && !missing.config.upscalerOverrides.sharpening &&
+              !missing.config.fsr3InputModeOverride,
+          "presentation upscaler defaults to off and FSR 3 inputs default to strict with no one-run overrides");
 
     struct UpscalerCase
     {
@@ -844,6 +939,7 @@ int kzConfigSelfTest()
         {"FsR1", "fsr1", KzgsUpscaler::FSR1, 100},
         {"DlSs", "dlss", KzgsUpscaler::DLSS, 37},
         {"XESS", "xess", KzgsUpscaler::XeSS, 1},
+        {"fSr3", "fsr3", KzgsUpscaler::FSR3, 15},
     };
     for (const UpscalerCase &test : upscalerCases)
     {
@@ -865,15 +961,44 @@ int kzConfigSelfTest()
         check(sameConfig(loadConfigFile(path).config, loaded.config), "presentation provider round-trip");
     }
 
+    struct Fsr3InputModeCase
+    {
+        const char *input;
+        const char *canonical;
+        KzgsFsr3InputMode mode;
+    };
+    const Fsr3InputModeCase fsr3InputModeCases[] = {
+        {"STRICT", "strict", KzgsFsr3InputMode::Strict},
+        {"ExPeRiMeNtAl", "experimental", KzgsFsr3InputMode::Experimental},
+    };
+    for (const Fsr3InputModeCase &test : fsr3InputModeCases)
+    {
+        const std::filesystem::path path = root / (std::string("fsr3-input-") + test.canonical + ".ini");
+        check(writeText(path, std::string("[Config]\nVersion=3\n[Graphics]\nUpscaler=fsr3\nFSR3InputMode=") +
+                                  test.input + "\n"),
+              "write FSR 3 input mode fixture");
+        const ConfigLoadResult loaded = loadConfigFile(path);
+        check(loaded.document.diagnostics.empty() && loaded.config.upscaler == KzgsUpscaler::FSR3 &&
+                  loaded.config.fsr3InputMode == test.mode,
+              "FSR 3 input mode parsing");
+        check(saveConfigFile(path, loaded.config, false), "save FSR 3 input mode fixture");
+        check(readText(path).find(std::string("\nFSR3InputMode=") + test.canonical + "\n") != std::string::npos,
+              "FSR 3 input mode canonical serialization");
+        check(sameConfig(loadConfigFile(path).config, loaded.config), "FSR 3 input mode round-trip");
+    }
+
     const std::filesystem::path invalidUpscalerPath = root / "invalid-upscaler.ini";
     check(writeText(invalidUpscalerPath,
-                    "[Config]\nVersion=3\n[Graphics]\nUpscaler=fsr2\nUpscalerSharpening=-1\n"),
+                    "[Config]\nVersion=3\n[Graphics]\nUpscaler=fsr2\nUpscalerSharpening=-1\n"
+                    "FSR3InputMode=automatic\n"),
           "write invalid presentation fixture");
     const ConfigLoadResult invalidUpscaler = loadConfigFile(invalidUpscalerPath);
     check(invalidUpscaler.config.upscaler == KzgsUpscaler::Off && invalidUpscaler.config.upscalerSharpening == 0 &&
+              invalidUpscaler.config.fsr3InputMode == KzgsFsr3InputMode::Strict &&
               hasDiagnostic(invalidUpscaler, DiagnosticLevel::Error, "Graphics", "Upscaler", "fsr2") &&
-              hasDiagnostic(invalidUpscaler, DiagnosticLevel::Error, "Graphics", "UpscalerSharpening", "-1"),
-          "invalid presentation INI values are rejected and diagnosed");
+              hasDiagnostic(invalidUpscaler, DiagnosticLevel::Error, "Graphics", "UpscalerSharpening", "-1") &&
+              hasDiagnostic(invalidUpscaler, DiagnosticLevel::Error, "Graphics", "FSR3InputMode", "automatic"),
+          "invalid presentation INI values fail closed and are diagnosed");
     for (const char *value : {"101", "12junk", "", "999999999999999999999"})
     {
         check(writeText(invalidUpscalerPath, std::string("[Config]\nVersion=3\n[Graphics]\nUpscalerSharpening=") +
@@ -884,18 +1009,31 @@ int kzConfigSelfTest()
                   hasDiagnostic(invalid, DiagnosticLevel::Error, "Graphics", "UpscalerSharpening", value),
               "out-of-range or malformed sharpening is rejected");
     }
+    for (const char *value : {"", "approximate", "experimental trailing"})
+    {
+        check(writeText(invalidUpscalerPath,
+                        std::string("[Config]\nVersion=3\n[Graphics]\nFSR3InputMode=") + value + "\n"),
+              "write invalid FSR 3 input mode fixture");
+        const ConfigLoadResult invalid = loadConfigFile(invalidUpscalerPath);
+        check(invalid.config.fsr3InputMode == KzgsFsr3InputMode::Strict &&
+                  hasDiagnostic(invalid, DiagnosticLevel::Error, "Graphics", "FSR3InputMode", value),
+              "invalid FSR 3 input mode fails closed");
+    }
 
     const std::filesystem::path precedenceUpscalerPath = root / "precedence-upscaler.ini";
     check(writeText(precedenceUpscalerPath,
                     "[Config]\nVersion=3\n[Graphics]\nUpscale=5\nUpscaler=FSR1\nUpscalerSharpening=10\n"
-                    "Sharpen=40\nFutureFilter=quincunx\n"),
+                    "FSR3InputMode=experimental\nSharpen=40\nFutureFilter=quincunx\n"),
           "write presentation precedence fixture");
     KzConfig upscalerConfig = loadConfigFile(precedenceUpscalerPath).config;
     std::ostringstream overrideDiagnostics;
     upscalerConfig.upscalerOverrides = kzgsUpscalerEnvironmentOverrides("DLSS", "45", overrideDiagnostics);
+    upscalerConfig.fsr3InputModeOverride =
+        fsr3InputModeEnvironmentOverride("strict", overrideDiagnostics);
     check(overrideDiagnostics.str().empty() &&
               upscalerConfig.upscalerOverrides.provider.value_or(upscalerConfig.upscaler) == KzgsUpscaler::DLSS &&
-              upscalerConfig.upscalerOverrides.sharpening.value_or(upscalerConfig.upscalerSharpening) == 45,
+              upscalerConfig.upscalerOverrides.sharpening.value_or(upscalerConfig.upscalerSharpening) == 45 &&
+              upscalerConfig.fsr3InputModeOverride == KzgsFsr3InputMode::Strict,
           "environment overrides INI independently");
     KzgsUpscalerOverrides cliOverrides;
     bool consumeNext = false;
@@ -913,16 +1051,23 @@ int kzConfigSelfTest()
     check(upscalerConfig.upscalerOverrides.provider.value_or(upscalerConfig.upscaler) == KzgsUpscaler::XeSS &&
               upscalerConfig.upscalerOverrides.sharpening.value_or(upscalerConfig.upscalerSharpening) == 0,
           "CLI overrides environment and INI per setting");
+    check(parseFsr3InputModeOption("--fsr3-input-mode", "experimental", upscalerConfig.fsr3InputModeOverride,
+                                  consumeNext, overrideDiagnostics) == KzgsUpscalerOptionResult::Parsed &&
+              consumeNext && upscalerConfig.fsr3InputModeOverride == KzgsFsr3InputMode::Experimental,
+          "CLI FSR 3 input mode overrides environment and INI");
     check(kzSaveConfig(precedenceUpscalerPath, upscalerConfig), "launcher save with one-run overrides active");
     const std::string precedenceUpscalerSaved = readText(precedenceUpscalerPath);
-    check(precedenceUpscalerSaved.find("\nUpscale=5\nUpscaler=fsr1\nUpscalerSharpening=10\n") !=
+    check(precedenceUpscalerSaved.find(
+              "\nUpscale=5\nUpscaler=fsr1\nUpscalerSharpening=10\nFSR3InputMode=experimental\n") !=
                   std::string::npos &&
               precedenceUpscalerSaved.find("\nSharpen=40\n") != std::string::npos &&
               precedenceUpscalerSaved.find("FutureFilter=quincunx") != std::string::npos,
           "launcher save ignores one-run overrides and retains unknown settings");
     const KzConfig afterOverrides = loadConfigFile(precedenceUpscalerPath).config;
     check(afterOverrides.upscaler == KzgsUpscaler::FSR1 && afterOverrides.upscalerSharpening == 10 &&
-              !afterOverrides.upscalerOverrides.provider && !afterOverrides.upscalerOverrides.sharpening,
+              afterOverrides.fsr3InputMode == KzgsFsr3InputMode::Experimental &&
+              !afterOverrides.upscalerOverrides.provider && !afterOverrides.upscalerOverrides.sharpening &&
+              !afterOverrides.fsr3InputModeOverride,
           "one-run overrides do not survive a fresh INI load");
 
     const auto savedEnvironment = [](const char *name) -> std::optional<std::string> {
@@ -931,21 +1076,27 @@ int kzConfigSelfTest()
     };
     const auto oldProvider = savedEnvironment("KZ_UPSCALER");
     const auto oldSharpening = savedEnvironment("KZ_UPSCALER_SHARPENING");
+    const auto oldFsr3InputMode = savedEnvironment("KZ_FSR3_INPUT_MODE");
     kz::host::setEnvironment("KZ_UPSCALER", "dlss");
     kz::host::setEnvironment("KZ_UPSCALER_SHARPENING", "60");
+    kz::host::setEnvironment("KZ_FSR3_INPUT_MODE", "experimental");
     const std::filesystem::path environmentPath = root / "upscaler-fsr1.ini";
     KzConfig actualEnvironment = kzLoadConfig(environmentPath);
     check(actualEnvironment.upscaler == KzgsUpscaler::FSR1 && actualEnvironment.upscalerSharpening == 100 &&
+              actualEnvironment.fsr3InputMode == KzgsFsr3InputMode::Strict &&
               actualEnvironment.upscalerOverrides.provider == KzgsUpscaler::DLSS &&
-              actualEnvironment.upscalerOverrides.sharpening == 60,
+              actualEnvironment.upscalerOverrides.sharpening == 60 &&
+              actualEnvironment.fsr3InputModeOverride == KzgsFsr3InputMode::Experimental,
           "config loader reads real environment into one-run overrides");
     kzgsMergeUpscalerOverrides(actualEnvironment.upscalerOverrides, cliOverrides);
     check(kzSaveConfig(environmentPath, actualEnvironment), "launcher save with real environment and CLI overrides");
     const KzConfig environmentSaved = loadConfigFile(environmentPath).config;
-    check(environmentSaved.upscaler == KzgsUpscaler::FSR1 && environmentSaved.upscalerSharpening == 100,
+    check(environmentSaved.upscaler == KzgsUpscaler::FSR1 && environmentSaved.upscalerSharpening == 100 &&
+              environmentSaved.fsr3InputMode == KzgsFsr3InputMode::Strict,
           "real environment and CLI overrides are not persisted");
     kz::host::setEnvironment("KZ_UPSCALER", oldProvider.value_or(""));
     kz::host::setEnvironment("KZ_UPSCALER_SHARPENING", oldSharpening.value_or(""));
+    kz::host::setEnvironment("KZ_FSR3_INPUT_MODE", oldFsr3InputMode.value_or(""));
 
     for (const char *value : {"", "fsr2", "fsr1 trailing"})
     {
@@ -961,6 +1112,15 @@ int kzConfigSelfTest()
         check(!invalid.sharpening &&
                   errors.str().find("KZ_UPSCALER_SHARPENING rejected value") != std::string::npos,
               "invalid environment sharpening is diagnosed and ignored");
+    }
+    for (const char *value : {"", "approximate", "experimental trailing"})
+    {
+        std::ostringstream errors;
+        const std::optional<KzgsFsr3InputMode> invalid =
+            fsr3InputModeEnvironmentOverride(value, errors);
+        check(invalid == KzgsFsr3InputMode::Strict &&
+                  errors.str().find("KZ_FSR3_INPUT_MODE rejected value") != std::string::npos,
+              "invalid environment FSR 3 input mode fails closed");
     }
     struct InvalidUpscalerOption
     {
@@ -986,6 +1146,35 @@ int kzConfigSelfTest()
                   errors.str().find("[kz-config] error:") != std::string::npos,
               "invalid or incomplete upscaler CLI option is rejected and diagnosed");
     }
+    const InvalidUpscalerOption invalidInputModeOptions[] = {
+        {"--fsr3-input-mode", nullptr},
+        {"--fsr3-input-mode=approximate", nullptr},
+        {"--fsr3-input-mode-unknown", nullptr},
+    };
+    for (const InvalidUpscalerOption &test : invalidInputModeOptions)
+    {
+        std::ostringstream errors;
+        std::optional<KzgsFsr3InputMode> invalid = KzgsFsr3InputMode::Experimental;
+        check(parseFsr3InputModeOption(test.argument, test.next, invalid, consumeNext, errors) ==
+                      KzgsUpscalerOptionResult::Error &&
+                  invalid == KzgsFsr3InputMode::Strict &&
+                  errors.str().find("[kz-config] error:") != std::string::npos,
+              "invalid or incomplete FSR 3 input mode CLI option fails closed");
+    }
+
+    const std::optional<KzgsFsr3InputMode> previousCommandLineMode =
+        s_fsr3InputModeCommandLineOverride;
+    s_fsr3InputModeCommandLineOverride.reset();
+    KzgsUpscalerOverrides combinedOverrides;
+    check(kzParseGraphicsOption("--fsr3-input-mode=experimental", nullptr, combinedOverrides,
+                                consumeNext, overrideDiagnostics) == KzgsUpscalerOptionResult::Parsed &&
+              !consumeNext && s_fsr3InputModeCommandLineOverride == KzgsFsr3InputMode::Experimental,
+          "combined graphics CLI parser accepts inline FSR 3 input mode");
+    const KzConfig commandLineMapped = kzLoadConfig(baselinePath);
+    check(commandLineMapped.fsr3InputMode == KzgsFsr3InputMode::Strict &&
+              commandLineMapped.fsr3InputModeOverride == KzgsFsr3InputMode::Experimental,
+          "command-line FSR 3 input mode maps to a one-run config override");
+    s_fsr3InputModeCommandLineOverride = previousCommandLineMode;
 
     const std::filesystem::path canonicalFovPath = root / "canonical-fov.ini";
     check(writeText(canonicalFovPath,
@@ -1120,6 +1309,7 @@ int kzConfigSelfTest()
 
     std::filesystem::remove_all(root, error);
     check(!error, "remove fixture directory");
+    s_fsr3InputModeCommandLineOverride = processCommandLineMode;
     return failures;
 }
 

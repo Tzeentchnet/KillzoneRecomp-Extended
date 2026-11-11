@@ -2,22 +2,24 @@
 
 `ext/kzgs/include/kzgs_upscaler_provider.h` is the C ABI for an **optional, trusted native DLL**. It uses C fixed-width
 values and Vulkan C types only; no STL, PCSX2 types, vendor SDK, or C++ runtime objects cross the boundary. The current
-host is Windows x64 and looks only for the selected provider in `<exe>/upscalers/kzgs_upscaler_dlss.dll` or
-`<exe>/upscalers/kzgs_upscaler_xess.dll`. A provider executes native code in the game process; install only trusted
-DLLs and their dependencies. Optional in-tree adapter source requires explicit local SDK paths; no proprietary SDK
-or provider binary is bundled or automatically staged. See [local vendor adapters](vendor-upscalers.md).
+host is Windows x64 and looks only for the selected provider in `<exe>/upscalers/kzgs_upscaler_fsr3.dll`,
+`<exe>/upscalers/kzgs_upscaler_dlss.dll`, or `<exe>/upscalers/kzgs_upscaler_xess.dll`. A provider executes native
+code in the game process; install only trusted DLLs and their dependencies. Optional in-tree DLSS/XeSS adapter source
+requires explicit local SDK paths. The source-built FSR 3.1.6 provider is staged with builds that enable
+`KZGS_BUILD_FSR3_PROVIDER`; it uses locked FidelityFX/miniz sources and carries their notices. See
+[local vendor adapters](vendor-upscalers.md).
 
 The host loads a selected DLL before Vulkan instance/device creation, obtains `kzgs_upscaler_get_api`, and negotiates
-ABI major 1, minor 1. The provider returns a version with the same major and a minor no greater than the requested
+ABI major 1, minor 2. The provider returns a version with the same major and a minor no greater than the requested
 minor. Major mismatch, a missing entry point, missing mandatory API functions, or an incompatible provider kind
 causes native presentation fallback. The `off`, FSR1, D3D11, D3D12, software, and surfaceless paths remain independent.
 Changing to a provider not negotiated at KzGS open requires closing/reopening KzGS (normally a game or replay
 restart); switching off and back to the provider already negotiated for that device is allowed.
 
-**Current production gate:** both DLSS and XeSS are rejected before context creation even if the DLL claims
-spatial or color-only capabilities. ABI negotiation and the test-only spatial mock are not temporal support.
-The [measured input gate](findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10) is FAIL/NO-GO,
-the host provides no vendor initialization scope, and no real SDK or vendor GPU was qualified.
+**Current production gate:** strict FSR 3 Super Resolution, DLSS, and XeSS requests remain fail-closed because the
+[measured input gate](findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10) is FAIL/NO-GO.
+Only FSR 3 may opt into ABI 1.2 approximations through the explicit `experimental` policy. DLSS/XeSS never accept
+those approximations. ABI negotiation and the test-only spatial mock are not temporal qualification.
 
 ## Sizes, versioning, and calls
 
@@ -33,7 +35,10 @@ the host provides no vendor initialization scope, and no real SDK or vendor GPU 
   immediately. Strings are UTF-8. Status messages are borrowed only until the next call and copied before then.
   A status may be null; when provided, its size must be honored.
 - `query_info` identifies the provider kind, spatial/temporal capabilities, supported and required input flags, and
-  supported color encodings. Required inputs must also be supported. The host checks these before context creation.
+  supported color encodings. Kind values 1, 2, and 3 identify DLSS, XeSS, and FSR 3 respectively; recognizing a kind
+  does not qualify an implementation. Required inputs must also be supported. ABI 1.2 providers that intentionally
+  accept provenance-marked substitutes advertise `KZGS_PROVIDER_CAP_APPROXIMATE_INPUTS`; this capability alone never
+  enables them. The host checks these fields before context creation.
 - `instance_requirements` returns all required instance extension names. `device_requirements` runs after physical
   device selection, before logical device creation, and returns all required device extension names, core
   `VkPhysicalDeviceFeatures`, and optional feature blocks. The host verifies availability, enables the requirements
@@ -51,7 +56,8 @@ the host provides no vendor initialization scope, and no real SDK or vendor GPU 
 - `create` receives the actual instance, physical device, logical device, graphics queue/family, Vulkan proc-address
   functions, image formats, extents, crop, encoding, and sharpening. ABI 1.0 permits allocation but forbids GPU
   submission and recording in `create`. ABI 1.1 optionally provides the strictly scoped initialization contract
-  below; without it the 1.0 prohibition still applies. If `create` returns an error with a non-null context, the host
+  below; ABI 1.2 adds input provenance and partial camera validity without changing that rule. If `create` returns
+  an error with a non-null context, the host
   destroys that context except when completion is unresolved, in which case it abandons the context.
   `reset` is called on a fresh context before its first evaluation with the reason for the discontinuity.
   `evaluate` records commands; `destroy` releases provider-owned resources.
@@ -94,8 +100,22 @@ hosts cannot initiate queue-submitting SDK initialization.
 The flags also require explicit qualification of the exact SDK/runtime, device and driver for its execution and
 synchronization behavior. NGX additionally requires qualification of the adapter's `GENERAL` input/output layout,
 access masks and cross-dispatch dependencies. These flags are assertions backed by independent validation, not a way
-to request an unsafe override. The current host supplies **no initialization scope or qualification flags**.
-The synthetic tests' assertions apply only to their test doubles and are not vendor qualification.
+to request an unsafe override. The host supplies the exclusive scope and SDK-execution qualification used by the
+pinned source-built FidelityFX path. It does not assert NGX's separate `GENERAL`-layout qualification, and those
+flags do not make the DLSS/XeSS test doubles into vendor qualification.
+
+### ABI 1.2 approximation provenance and camera validity
+
+ABI 1.2 appends `KzgsProviderFrame::approximate_inputs` and
+`KzgsProviderCamera::valid_fields`. `approximate_inputs` must be a subset of `valid_inputs`; a provider may accept
+nonzero bits only when it advertises `KZGS_PROVIDER_CAP_APPROXIMATE_INPUTS`. Strict policy requires the mask to be
+zero. The in-tree FSR 3 provider is the only implementation that advertises this capability; DLSS and XeSS reject
+all approximation bits.
+
+Camera validity is field-specific. `KZGS_PROVIDER_CAMERA_VALID_SCALARS` covers finite near plane, far plane, and
+vertical FOV; `KZGS_PROVIDER_CAMERA_VALID_MATRICES` covers matched current/previous view-to-clip and world-to-view
+matrices. Strict DLSS/XeSS validation requires the full matrix set. Experimental FSR 3 requires only scalar validity
+and marks those scalars approximate. Older providers negotiate minor 0/1 and never read these trailing fields.
 
 ## Frame and resource contract
 
@@ -118,12 +138,13 @@ extents, half-open pixel rectangles, subresource ranges, layouts, guaranteed usa
 are explicit. The output rectangle starts at `(0,0)` and is distinct from the window-coordinate presentation
 rectangle. Currently both images are `VK_FORMAT_R8G8B8A8_UNORM`, enter in `VK_IMAGE_LAYOUT_GENERAL`, and are on the
 graphics queue. The color encoding is **unknown**; an otherwise eligible provider must explicitly support unknown
-encoding. This does not bypass the production vendor gate above. `usage` lists guaranteed usage bits, not necessarily
-every bit used at image creation.
+encoding. Experimental FSR 3 first normalizes that source into a host-owned
+`VK_FORMAT_R8G8B8A8_UNORM` linear-SDR image and passes the normalized image instead; the original composed image is
+not relabeled. `usage` lists guaranteed usage bits, not necessarily every bit used at image creation.
 
-### Temporal qualification (host-internal; frame input contract unchanged)
+### Temporal qualification (host-internal)
 
-`kzgs_temporal.h` defines a stricter GS-thread observation/qualification contract, not additional ABI 1.0 fields.
+`kzgs_temporal.h` defines a stricter GS-thread observation/qualification contract.
 It requires nonzero frame, presentation, scene, device, provider, and resource identities; matching frame/scene IDs,
 pixel grids, and source rectangles for merged/world color, depth, motion, and reactive/composition/UI masks; and
 known image formats. The current synthetic validator accepts Vulkan linear SDR `R8G8B8A8_UNORM` or linear HDR
@@ -131,21 +152,22 @@ known image formats. The current synthetic validator accepts Vulkan linear SDR `
 `R16G16_SFLOAT` motion, and `R8_UNORM` masks. Unknown or packed formats fail closed.
 
 Motion is previous-minus-current in **source pixels**, with the previous frame explicitly identified and a
-jitter-inclusion flag. ABI 1.0 requires motion excluding jitter; jitter-inclusive vectors must not be submitted
-without an independently validated conversion. Jitter is current-frame source pixels, positive right/down, and must
-affect world rendering only. Camera data must contain finite, nonsingular current/previous view/projection matrices, valid
-near/far and FOV, matching previous/current frame and scene IDs, and a depth convention consistent with the depth
-image. Frame delta must be finite, positive, and matched to those frames. Extra world-color and UI bits are
-host-internal and are not ABI input bits.
+jitter-inclusion flag. Motion passed to a provider excludes jitter; jitter-inclusive vectors must not be submitted
+without a validated conversion. Jitter is current-frame source pixels, positive right/down. Strict camera data must
+contain finite, nonsingular current/previous view/projection matrices, valid near/far and FOV, matching
+previous/current frame and scene IDs, and a depth convention consistent with the depth image. ABI 1.2 experimental
+FSR 3 instead accepts provenance-marked scalar camera fields. Frame delta must be finite, positive, and matched to
+those frames. Extra world-color and UI bits are host-internal and are not ABI input bits.
 
 History is speculative until both dispatch and the matching presentation succeed. Missing or unmatched resources,
 unqualified formats, duplicate/out-of-order presentations, discontinuities, and failed dispatch/presentation reset
-history; a duplicate successful presentation ID cannot be reused after a reset. Production currently marks only
-observed composed color, never promotes guest/GS candidates, and reports temporal validity false. **Every DLSS or
-XeSS request is rejected before `create`/`evaluate`**, independently of the DLL's claimed capabilities or required
-inputs. A missing DLL, unsupported device, or failed negotiation can be the primary fallback reason instead; the
-temporal diagnostic fields remain available. No estimated or zero motion is substituted. See
-[the measured no-go and instrumentation limits](findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10).
+history; a duplicate successful presentation ID cannot be reused after a reset. Strict policy marks only observed,
+qualified inputs and rejects FSR 3 SR, DLSS, and XeSS before `create`/`evaluate`. Experimental FSR 3 is a separate
+policy: it requires matched color, world jitter, scalar camera data, and game-frame time, then the Vulkan
+approximation stage supplies forward far depth, FidelityFX Optical Flow motion, and a residual-derived reactive
+mask. Every substitute is marked in both the host diagnostics and ABI 1.2 `approximate_inputs`; composition/UI masks
+remain absent. No approximation is exposed to DLSS or XeSS. A missing DLL, unsupported device, or failed negotiation
+can still be the primary fallback reason. See [the measured strict-mode no-go and instrumentation limits](findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10).
 
 `kzgsGetUpscalerStatus` and capture metadata report whether a frame was observed, its ID, temporal validity,
 `valid_inputs`, `missing_inputs`, `invalid_inputs`, and `invalid_reasons`. Before the first observation, a vendor
@@ -179,12 +201,17 @@ negotiated; it is not retried on the lost device.
 
 ## Optional matched inputs
 
-Validity bits in `valid_inputs` are authoritative. `COLOR` is currently the **only** bit supplied: depth, motion,
-jitter, reactive/composition masks, camera, and frame time are absent, with null pointers or zeroed values, and must
-not be inferred from their storage. A provider requiring any of these inputs is rejected. Future producers may set a bit only when
-that input is matched to the same source frame and its size-tagged image/camera descriptor is complete. Optional
-images share the color image's pixel grid and `source_rect`; their descriptors still provide explicit extents and
-formats.
+Validity bits in `valid_inputs` are authoritative; storage without its bit is absent. Under strict policy, composed
+`COLOR` is currently the only qualified bit, so a temporal provider is rejected. Under experimental FSR 3 policy,
+the host promotes a matched candidate only with explicit approximation provenance and constructs the remaining
+images before ABI dispatch.
+
+The guest observation path carries bounded camera near/far/FOV/aspect, raw current render-camera matrices copied
+from game-object offsets `+0x310` and `+0x400`, simulation delta, and the matched jitter state. They are
+double-buffered with the game's build, latched at its kick, and copied with the ordered VSync command. Matrix
+layout/coordinate semantics and previous-frame pairing are still not proven, so the matrices remain diagnostic and
+multiple incompatible candidates fail closed. Experimental FSR 3 uses only the bounded scalar camera values and
+frame time, marking them approximate.
 
 When supplied, depth is Vulkan's zero-to-one normalized device depth with the camera's reverse-depth/infinite-far flags; motion RG values
 times `motion_scale_x/y` are current-to-previous displacement in source pixels, excluding jitter; jitter is the
@@ -194,12 +221,19 @@ respectively. Camera matrices are column-major, multiply column vectors, and con
 world-to-view and view-to-clip transforms. `frame_time_ms` is positive elapsed time since the prior source frame.
 Providers must still check image formats, extents, subresources, and conventions before accepting a frame.
 
+For the in-tree FSR 3 provider, generated motion is full-resolution `R16G16_SFLOAT`, generated depth is forward
+`R32_SFLOAT`, and the optional reactive mask is `R8_UNORM`. The raw Optical Flow field is current-to-previous
+`R16G16_SINT` at 8x8 block resolution; the host expands it and applies
+`rawFlow + currentJitter - previousJitter` so the ABI motion excludes jitter. The composition and UI pointers remain
+null because no trustworthy masks exist.
+
 The in-tree `kzgs_mock_provider` is a test-only C DLL which uses a Vulkan blit; it is not an upscaler adapter and is
 not staged with the game. Separate test-only C++ hooks explicitly permit this named spatial mock to exercise ABI
 command recording and fences, failures, redraw/reset/resize/device-loss handling, and unload. Those hooks are never
 enabled by configuration, reject temporal-capability providers, and are not vendor qualification; the gate tests run
 without them.
 
-Both optional adapters have only been exercised with fake SDKs, not real vendor headers, runtimes or GPUs. Their
-conditional initialization paths require the ABI 1.1 exclusive scope and explicit qualification; 1.0 hosts and the
-current host do not provide it. Neither is currently usable with the renderer's color-only inputs.
+Both optional DLSS/XeSS adapters have only been exercised with fake SDKs, not real vendor headers, runtimes or GPUs.
+Their conditional initialization paths require the ABI 1.1 exclusive scope and explicit qualification, and neither
+is usable with the current strict color-only input set. The source-built FSR 3 provider is exercised with its real
+FidelityFX source and Vulkan implementation, but only its explicit ABI 1.2 experimental policy can dispatch.

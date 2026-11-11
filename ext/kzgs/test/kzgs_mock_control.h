@@ -30,7 +30,10 @@ enum
 	MOCK_ABI_1_0 = 1u << 23,
 	MOCK_RESET_UNRESOLVED_SYNC = 1u << 24,
 	MOCK_QUERY_FAILURE = 1u << 25,
-	MOCK_UNSUPPORTED_DEVICE = 1u << 26
+	MOCK_UNSUPPORTED_DEVICE = 1u << 26,
+	MOCK_KIND_FSR3 = 1u << 27,
+	MOCK_ABI_1_1 = 1u << 28,
+	MOCK_APPROXIMATE_CAPABILITY = 1u << 29
 };
 
 typedef struct KzgsMockStats
@@ -43,6 +46,9 @@ typedef struct KzgsMockStats
 	uint32_t last_sharpening;
 	uint64_t last_frame_id, last_presentation_id, last_submission_token, last_completed_token;
 	uint64_t last_valid_inputs;
+	uint64_t last_approximate_inputs;
+	uint32_t negotiated_version;
+	uint32_t last_frame_struct_size;
 } KzgsMockStats;
 
 typedef void (__cdecl *KzgsMockSetMode)(uint32_t mode);

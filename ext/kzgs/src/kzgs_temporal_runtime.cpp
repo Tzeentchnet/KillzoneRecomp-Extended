@@ -13,6 +13,7 @@
 
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -23,6 +24,11 @@ namespace
 	using namespace kzgs::temporal;
 	constexpr size_t kMaxTargets = 256;
 	constexpr size_t kMaxDisplays = 4;
+	constexpr uint64_t kSceneResetReasons = KZGS_TEMPORAL_RESET_CAMERA_CHANGE |
+		KZGS_TEMPORAL_RESET_CAMERA_CUT | KZGS_TEMPORAL_RESET_LOAD |
+		KZGS_TEMPORAL_RESET_SCENE | KZGS_TEMPORAL_RESET_MOVIE |
+		KZGS_TEMPORAL_RESET_WORLD_TRANSITION;
+	constexpr float kPi = 3.14159265358979323846f;
 
 	struct ImageObservation
 	{
@@ -42,12 +48,14 @@ namespace
 	struct State
 	{
 		bool enabled = false, log = false, inVsync = false, gotPresent = false, presentSucceeded = false;
-		bool overflow = false, hasPreviousGuest = false;
-		uint64_t frameSequence = 0, deviceId = 0, providerId = 0;
+		bool overflow = false, hasPreviousGuest = false, sceneResetPending = true;
+		bool dispatchAttempted = false, dispatchBegan = false, dispatchRecorded = false;
+		uint64_t frameSequence = 0, sceneId = 0, deviceId = 0, providerId = 0;
 		KzgsConfigV1 config{};
 		KzgsTemporalGuestObservation guest{}, previousGuest{};
 		KzgsTemporalFrame frame{};
 		Tracker tracker{};
+		Decision decision{};
 		std::array<Draws, kMaxTargets> draws{};
 		size_t drawTargets = 0;
 		std::array<ImageObservation, kMaxDisplays> displays{};
@@ -67,6 +75,33 @@ namespace
 	{
 		const char* value = std::getenv("KZGS_TEMPORAL_DIAGNOSTICS");
 		return value && std::strcmp(value, "1") == 0;
+	}
+
+	bool ValidGuestCameraParameters(const KzgsTemporalGuestObservation& guest)
+	{
+		return std::isfinite(guest.nearPlane) && std::isfinite(guest.farPlane) &&
+			std::isfinite(guest.verticalFovDegrees) && std::isfinite(guest.aspect) &&
+			guest.nearPlane > 0.0f && guest.farPlane > guest.nearPlane &&
+			guest.verticalFovDegrees > 0.0f && guest.verticalFovDegrees < 170.0f &&
+			guest.aspect > 0.0f;
+	}
+
+	bool ValidGuestMatrix(const float (&matrix)[16])
+	{
+		bool nonzero = false;
+		for (const float value : matrix)
+		{
+			if (!std::isfinite(value))
+				return false;
+			nonzero |= value != 0.0f;
+		}
+		return nonzero;
+	}
+
+	bool ValidGuestFrameTime(const KzgsTemporalGuestObservation& guest)
+	{
+		return std::isfinite(guest.gameFrameTimeMs) &&
+			guest.gameFrameTimeMs > 0.0f && guest.gameFrameTimeMs <= 1000.0f;
 	}
 
 	void ClearSnapshot()
@@ -186,6 +221,7 @@ namespace
 			return;
 		KzgsTemporalImage& image = s.frame.mergedColor;
 		image.frameId = s.frame.frameId;
+		image.sceneId = s.frame.sceneId;
 		image.resourceId = color.resource;
 		image.width = color.width;
 		image.height = color.height;
@@ -194,9 +230,66 @@ namespace
 		image.backend = color.backend;
 		image.nativeFormat = color.nativeFormat;
 		image.rendererFormat = color.rendererFormat;
-		s.frame.outputWidth = static_cast<uint32_t>(g_gs_device->GetWindowWidth());
-		s.frame.outputHeight = static_cast<uint32_t>(g_gs_device->GetWindowHeight());
+		const float destinationWidth = observation.destination_rect.z - observation.destination_rect.x;
+		const float destinationHeight = observation.destination_rect.w - observation.destination_rect.y;
+		if (std::isfinite(destinationWidth) && std::isfinite(destinationHeight) &&
+			destinationWidth > 0.0f && destinationHeight > 0.0f)
+		{
+			s.frame.outputWidth = static_cast<uint32_t>(std::ceil(destinationWidth));
+			s.frame.outputHeight = static_cast<uint32_t>(std::ceil(destinationHeight));
+		}
 		s.frame.validInputs |= KZGS_TEMPORAL_COLOR;
+		s.frame.qualifiedInputs |= KZGS_TEMPORAL_COLOR;
+		if (color.backend == KzgsTemporalBackend::Vulkan &&
+			color.nativeFormat == VK_FORMAT_R8G8B8A8_UNORM)
+			s.frame.colorEncoding = KzgsTemporalColorEncoding::LinearSDR;
+
+		if (s.frame.inputPolicy != KzgsTemporalInputPolicy::FSR3Experimental)
+			return;
+		const bool cameraAmbiguous = s.guest.flags & KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA;
+		if ((s.guest.flags & KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE) &&
+			!cameraAmbiguous && ValidGuestCameraParameters(s.guest))
+		{
+			s.frame.camera.frameId = s.frame.frameId;
+			s.frame.camera.sceneId = s.frame.sceneId;
+			s.frame.camera.cameraId = s.guest.cameraId;
+			s.frame.camera.nearPlane = s.guest.nearPlane;
+			s.frame.camera.farPlane = s.guest.farPlane;
+			s.frame.camera.verticalFovRadians = s.guest.verticalFovDegrees * kPi / 180.0f;
+			s.frame.camera.depthDirection = KzgsTemporalDepthDirection::Forward;
+			s.frame.camera.validFields = KZGS_TEMPORAL_CAMERA_VALID_SCALARS;
+			s.frame.validInputs |= KZGS_TEMPORAL_CAMERA;
+			s.frame.approximateInputs |= KZGS_TEMPORAL_CAMERA;
+		}
+		if ((s.guest.flags & KZGS_TEMPORAL_GUEST_FRAME_TIME_CANDIDATE) &&
+			ValidGuestFrameTime(s.guest))
+		{
+			s.frame.timeFrameId = s.frame.frameId;
+			s.frame.timeSceneId = s.frame.sceneId;
+			s.frame.frameTimeMs = s.guest.gameFrameTimeMs;
+			s.frame.validInputs |= KZGS_TEMPORAL_FRAME_TIME;
+			s.frame.approximateInputs |= KZGS_TEMPORAL_FRAME_TIME;
+		}
+		const uint32_t sourceWidth =
+			static_cast<uint32_t>(std::max(0, image.rect.right - image.rect.left));
+		const uint32_t sourceHeight =
+			static_cast<uint32_t>(std::max(0, image.rect.bottom - image.rect.top));
+		if ((s.guest.flags & KZGS_TEMPORAL_GUEST_JITTER_APPLIED) &&
+			std::isfinite(s.guest.jitterX) && std::isfinite(s.guest.jitterY) &&
+			s.guest.jitterPhaseCount &&
+			s.guest.jitterSourceWidth == sourceWidth &&
+			s.guest.jitterSourceHeight == sourceHeight &&
+			s.guest.jitterDisplayWidth == s.frame.outputWidth &&
+			s.guest.jitterDisplayHeight == s.frame.outputHeight)
+		{
+			s.frame.jitterFrameId = s.frame.frameId;
+			s.frame.jitterSceneId = s.frame.sceneId;
+			s.frame.jitterX = s.guest.jitterX;
+			s.frame.jitterY = s.guest.jitterY;
+			s.frame.jitterWorldOnly = true;
+			s.frame.validInputs |= KZGS_TEMPORAL_JITTER;
+			s.frame.approximateInputs |= KZGS_TEMPORAL_JITTER;
+		}
 	}
 
 	void OnPresented(void*, uint64_t, bool succeeded, bool skipped, bool redraw)
@@ -237,6 +330,7 @@ namespace kzgs
 	void TemporalStart(const KzgsConfigV1& config)
 	{
 		s = {};
+		s.sceneResetPending = true;
 		s.deviceId = ++s_deviceSequence;
 		ClearSnapshot();
 		TemporalConfigure(config);
@@ -245,7 +339,7 @@ namespace kzgs
 	void TemporalConfigure(const KzgsConfigV1& config)
 	{
 		const bool enabled = config.temporalDiagnostics || EnvironmentEnabled() ||
-			config.upscaler == KzgsUpscaler::DLSS || config.upscaler == KzgsUpscaler::XeSS;
+			kzgsIsTemporalUpscaler(config.upscaler);
 		if (s.enabled && !enabled)
 		{
 			GSSetTemporalObservationHooks({});
@@ -270,6 +364,8 @@ namespace kzgs
 			TemporalReset(KZGS_TEMPORAL_RESET_CROP);
 		if (s.enabled && s.config.renderer != config.renderer)
 			TemporalReset(KZGS_TEMPORAL_RESET_DEVICE);
+		if (s.enabled && s.config.fsr3InputMode != config.fsr3InputMode)
+			TemporalReset(KZGS_TEMPORAL_RESET_PROVIDER);
 		s.providerId = ProviderIdentity(config.upscaler);
 		s.config = config;
 		s.log = EnvironmentEnabled();
@@ -288,6 +384,8 @@ namespace kzgs
 		if (!s.enabled || !reasons)
 			return;
 		s.tracker.Invalidate(reasons);
+		if (reasons & kSceneResetReasons)
+			s.sceneResetPending = true;
 		{
 			std::lock_guard lock(s_snapshotMutex);
 			if (s_hasSnapshot)
@@ -325,6 +423,8 @@ namespace kzgs
 			return;
 		s.inVsync = true;
 		s.gotPresent = s.presentSucceeded = false;
+		s.dispatchAttempted = s.dispatchBegan = s.dispatchRecorded = false;
+		s.decision = {};
 		s.displayTargets = 0;
 		s.guest = guest;
 		s.frame = {};
@@ -333,6 +433,11 @@ namespace kzgs
 		s.frame.providerId = s.providerId;
 		s.frame.aspectId = aspectId;
 		s.frame.resetReasons = guest.resetReasons;
+		s.frame.inputPolicy =
+			s.config.renderer == KzgsRenderer::Vulkan &&
+				s.config.upscaler == KzgsUpscaler::FSR3 &&
+				s.config.fsr3InputMode == KzgsFsr3InputMode::Experimental ?
+			KzgsTemporalInputPolicy::FSR3Experimental : KzgsTemporalInputPolicy::Strict;
 		if (guest.buildId && s.hasPreviousGuest && guest.buildId != s.previousGuest.buildId)
 		{
 			if ((guest.flags & KZGS_TEMPORAL_GUEST_WORLD) !=
@@ -346,9 +451,17 @@ namespace kzgs
 			s.previousGuest = guest;
 			s.hasPreviousGuest = true;
 		}
+		if (s.sceneResetPending || (s.frame.resetReasons & kSceneResetReasons))
+		{
+			++s.sceneId;
+			s.sceneResetPending = false;
+		}
+		if (!s.sceneId)
+			s.sceneId = 1;
+		s.frame.sceneId = s.sceneId;
 		if (s.frame.resetReasons)
 		{
-			TemporalReset(s.frame.resetReasons);
+			s.tracker.Invalidate(s.frame.resetReasons);
 			ProviderReset(KZGS_PROVIDER_RESET_DISCONTINUITY);
 		}
 		const auto now = std::chrono::steady_clock::now();
@@ -365,7 +478,15 @@ namespace kzgs
 			s.frame.resetReasons |= KZGS_TEMPORAL_RESET_SKIPPED;
 		if (s.overflow)
 			s.frame.resetReasons |= KZGS_TEMPORAL_RESET_MISSING_INPUT;
-		const Decision decision = s.tracker.Begin(s.frame);
+		if (s.dispatchBegan)
+		{
+			s.tracker.PresentResult(s.frame.presentationId, false);
+			s.dispatchBegan = s.dispatchRecorded = false;
+		}
+		Decision decision = s.dispatchAttempted ? s.decision :
+			(s.frame.inputPolicy == KzgsTemporalInputPolicy::FSR3Experimental ?
+				ValidateFSR3Experimental(s.frame) : ValidateStrict(s.frame));
+		decision.resetReasons |= s.tracker.PendingResetReasons();
 
 		KzgsTemporalDiagnostics snapshot;
 		snapshot.frameId = s.frame.frameId;
@@ -385,6 +506,9 @@ namespace kzgs
 		snapshot.rendererFormat = s.frame.mergedColor.rendererFormat;
 		snapshot.backend = s.frame.mergedColor.backend;
 		snapshot.validInputs = s.frame.validInputs;
+		snapshot.qualifiedInputs = s.frame.qualifiedInputs;
+		snapshot.approximateInputs = s.frame.approximateInputs;
+		snapshot.inputPolicy = s.frame.inputPolicy;
 		snapshot.missingInputs = decision.missingInputs;
 		snapshot.invalidInputs = decision.invalidInputs;
 		snapshot.invalidReasons = decision.invalidReasons;
@@ -396,6 +520,26 @@ namespace kzgs
 		snapshot.observationOverflow = s.overflow;
 		snapshot.presentSucceeded = s.presentSucceeded;
 		snapshot.deliveryDeltaMs = s.deliveryDeltaMs;
+		snapshot.depthResourceId = s.frame.depth.resourceId;
+		snapshot.depthWidth = s.frame.depth.width;
+		snapshot.depthHeight = s.frame.depth.height;
+		snapshot.depthNativeFormat = s.frame.depth.nativeFormat;
+		snapshot.depthDirection = s.frame.depthDirection;
+		snapshot.motionResourceId = s.frame.motion.resourceId;
+		snapshot.motionNativeFormat = s.frame.motion.nativeFormat;
+		snapshot.motionUnits = s.frame.motionUnits;
+		snapshot.motionDirection = s.frame.motionDirection;
+		snapshot.motionJitterInclusionKnown = s.frame.validInputs & KZGS_TEMPORAL_MOTION;
+		snapshot.motionIncludesJitter = s.frame.motionIncludesJitter;
+		snapshot.reactiveResourceId = s.frame.reactive.resourceId;
+		snapshot.reactiveNativeFormat = s.frame.reactive.nativeFormat;
+		snapshot.compositionResourceId = s.frame.composition.resourceId;
+		snapshot.compositionNativeFormat = s.frame.composition.nativeFormat;
+		snapshot.uiResourceId = s.frame.ui.resourceId;
+		snapshot.uiNativeFormat = s.frame.ui.nativeFormat;
+		snapshot.jitterAvailable = s.frame.validInputs & KZGS_TEMPORAL_JITTER;
+		snapshot.matchedFrameTimeAvailable = s.frame.validInputs & KZGS_TEMPORAL_FRAME_TIME;
+		snapshot.cameraParametersAvailable = s.frame.validInputs & KZGS_TEMPORAL_CAMERA;
 		for (size_t i = 0; i < s.displayTargets; ++i)
 		{
 			const ImageObservation& display = s.displays[i];
@@ -436,9 +580,30 @@ namespace kzgs
 				}
 			}
 		}
-		// Metadata correlations and guest camera candidates are deliberately not
-		// promoted to matched temporal resources or sent to a provider.
-		snapshot.temporalValid = false;
+		const bool cameraAmbiguous = s.guest.flags & KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA;
+		const bool matricesAmbiguous =
+			s.guest.flags & KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA_MATRICES;
+		snapshot.cameraParametersCandidateAvailable =
+			(s.guest.flags & KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE) &&
+			!cameraAmbiguous && ValidGuestCameraParameters(s.guest);
+		snapshot.cameraMatricesCandidateAvailable =
+			(s.guest.flags & KZGS_TEMPORAL_GUEST_CAMERA_MATRICES_CANDIDATE) &&
+			!cameraAmbiguous && !matricesAmbiguous &&
+			ValidGuestMatrix(s.guest.renderCameraMatrix310) &&
+			ValidGuestMatrix(s.guest.renderCameraMatrix400);
+		snapshot.gameFrameTimeCandidateAvailable =
+			(s.guest.flags & KZGS_TEMPORAL_GUEST_FRAME_TIME_CANDIDATE) &&
+			ValidGuestFrameTime(s.guest);
+		snapshot.gameFrameTimeCandidateMs = snapshot.gameFrameTimeCandidateAvailable ?
+			s.guest.gameFrameTimeMs : 0.0f;
+		snapshot.candidateAmbiguous |= cameraAmbiguous || matricesAmbiguous ||
+			((s.guest.flags & KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE) &&
+				!snapshot.cameraParametersCandidateAvailable) ||
+			((s.guest.flags & KZGS_TEMPORAL_GUEST_CAMERA_MATRICES_CANDIDATE) &&
+				!snapshot.cameraMatricesCandidateAvailable) ||
+			((s.guest.flags & KZGS_TEMPORAL_GUEST_FRAME_TIME_CANDIDATE) &&
+				!snapshot.gameFrameTimeCandidateAvailable);
+		snapshot.temporalValid = decision.ready;
 		{
 			std::lock_guard lock(s_snapshotMutex);
 			s_snapshot = snapshot;
@@ -454,8 +619,9 @@ namespace kzgs
 				"depth=%llu/%llu depth_psm=%u depth_format=%u size=%ux%u depth_direction=%u ztest_mask=0x%x "
 				"world=%llu/%u motion=%llu/%u units=%u direction=%u jitter_inclusion_known=%u "
 				"masks=%llu/%u,%llu/%u,%llu/%u jitter_available=%u matched_delta_available=%u camera_parameters_available=%u "
-				"camera=%llu guest_flags=0x%x delivery_ms=%.3f valid=0x%llx missing=0x%llx "
-				"invalid_inputs=0x%llx invalid=0x%llx reset=0x%llx history=%llu/%llu temporal_valid=0 presented=%u overflow=%u\n",
+				"guest_camera_candidate=%u guest_matrix_candidate=%u guest_delta_candidate=%u/%.3f "
+				"camera=%llu guest_flags=0x%x delivery_ms=%.3f valid=0x%llx qualified=0x%llx approximate=0x%llx policy=%u missing=0x%llx "
+				"invalid_inputs=0x%llx invalid=0x%llx reset=0x%llx history=%llu/%llu temporal_valid=%u presented=%u overflow=%u\n",
 				static_cast<unsigned long long>(snapshot.frameId),
 				static_cast<unsigned long long>(snapshot.presentationId),
 				static_cast<unsigned long long>(snapshot.sceneId),
@@ -482,19 +648,86 @@ namespace kzgs
 				static_cast<unsigned long long>(snapshot.compositionResourceId), snapshot.compositionNativeFormat,
 				static_cast<unsigned long long>(snapshot.uiResourceId), snapshot.uiNativeFormat, snapshot.jitterAvailable ? 1u : 0u,
 				snapshot.matchedFrameTimeAvailable ? 1u : 0u, snapshot.cameraParametersAvailable ? 1u : 0u,
+				snapshot.cameraParametersCandidateAvailable ? 1u : 0u,
+				snapshot.cameraMatricesCandidateAvailable ? 1u : 0u,
+				snapshot.gameFrameTimeCandidateAvailable ? 1u : 0u, snapshot.gameFrameTimeCandidateMs,
 				static_cast<unsigned long long>(snapshot.cameraId),
 				snapshot.guestFlags, snapshot.deliveryDeltaMs, static_cast<unsigned long long>(snapshot.validInputs),
+				static_cast<unsigned long long>(snapshot.qualifiedInputs),
+				static_cast<unsigned long long>(snapshot.approximateInputs),
+				static_cast<unsigned>(snapshot.inputPolicy),
 				static_cast<unsigned long long>(snapshot.missingInputs),
 				static_cast<unsigned long long>(snapshot.invalidInputs),
 				static_cast<unsigned long long>(snapshot.invalidReasons),
 				static_cast<unsigned long long>(snapshot.resetReasons),
 				static_cast<unsigned long long>(snapshot.historyFrameId),
-				static_cast<unsigned long long>(snapshot.committedHistoryFrames), snapshot.presentSucceeded ? 1u : 0u,
+				static_cast<unsigned long long>(snapshot.committedHistoryFrames), snapshot.temporalValid ? 1u : 0u,
+				snapshot.presentSucceeded ? 1u : 0u,
 				snapshot.observationOverflow ? 1u : 0u);
 		}
 		s.inVsync = false;
 		s.drawTargets = s.displayTargets = s.drawCount = 0;
 		s.overflow = false;
+	}
+
+	bool TemporalGetPendingFrame(KzgsTemporalFrame& out)
+	{
+		if (!s.enabled || !s.inVsync || !s.gotPresent ||
+			s.frame.inputPolicy != KzgsTemporalInputPolicy::FSR3Experimental ||
+			s.dispatchAttempted)
+			return false;
+		out = s.frame;
+		const uint64_t previous = s.tracker.HistoryFrame() ?
+			s.tracker.HistoryFrame() : (out.frameId > 1 ? out.frameId - 1 : 0);
+		out.motionPreviousFrameId = previous;
+		out.camera.previousFrameId = previous;
+		out.timePreviousFrameId = previous;
+		return true;
+	}
+
+	temporal::Decision TemporalBeginDispatch(const KzgsTemporalFrame& frame)
+	{
+		s.dispatchAttempted = true;
+		if (!s.enabled || !s.inVsync || !s.gotPresent ||
+			frame.frameId != s.frame.frameId ||
+			frame.presentationId != s.frame.presentationId ||
+			frame.sceneId != s.frame.sceneId ||
+			frame.deviceId != s.frame.deviceId ||
+			frame.providerId != s.frame.providerId ||
+			frame.inputPolicy != KzgsTemporalInputPolicy::FSR3Experimental)
+		{
+			s.tracker.Invalidate(KZGS_TEMPORAL_RESET_FRAME_ORDER);
+			s.decision = {};
+			s.decision.invalidReasons = KZGS_TEMPORAL_INVALID_IDENTITY |
+				KZGS_TEMPORAL_INVALID_POLICY;
+			s.decision.resetReasons = s.tracker.PendingResetReasons();
+			return s.decision;
+		}
+		s.frame = frame;
+		s.decision = s.tracker.Begin(s.frame);
+		s.dispatchBegan = s.decision.ready;
+		s.dispatchRecorded = false;
+		return s.decision;
+	}
+
+	void TemporalDispatchResult(bool succeeded)
+	{
+		if (!s.dispatchBegan)
+			return;
+		s.tracker.DispatchResult(succeeded);
+		s.dispatchRecorded = succeeded;
+		if (!succeeded)
+			s.dispatchBegan = false;
+		s.decision.resetReasons |= s.tracker.PendingResetReasons();
+	}
+
+	void TemporalPresentationResult(uint64_t presentationId, bool succeeded)
+	{
+		if (!s.dispatchBegan)
+			return;
+		s.tracker.PresentResult(presentationId, succeeded && s.dispatchRecorded);
+		s.dispatchBegan = s.dispatchRecorded = false;
+		s.decision.resetReasons |= s.tracker.PendingResetReasons();
 	}
 
 	bool TemporalGetDiagnostics(KzgsTemporalDiagnostics& out)

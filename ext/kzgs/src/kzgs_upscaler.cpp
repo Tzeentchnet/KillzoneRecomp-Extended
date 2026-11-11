@@ -18,8 +18,9 @@ namespace
 		{KzgsUpscaler::FSR1, "fsr1"},
 		{KzgsUpscaler::DLSS, "dlss"},
 		{KzgsUpscaler::XeSS, "xess"},
+		{KzgsUpscaler::FSR3, "fsr3"},
 	};
-	constexpr const char* kProviderExpected = "expected off, fsr1, dlss or xess";
+	constexpr const char* kProviderExpected = "expected off, fsr1, fsr3, dlss or xess";
 	constexpr const char* kSharpeningExpected = "expected an integer from 0 to 100";
 
 	char asciiLower(char c)
@@ -88,6 +89,13 @@ bool kzgsIsValidUpscaler(KzgsUpscaler provider)
 		if (entry.provider == provider)
 			return true;
 	return false;
+}
+
+bool kzgsIsTemporalUpscaler(KzgsUpscaler provider)
+{
+	return provider == KzgsUpscaler::FSR3 ||
+		provider == KzgsUpscaler::DLSS ||
+		provider == KzgsUpscaler::XeSS;
 }
 
 bool kzgsParseUpscaler(std::string_view text, KzgsUpscaler& provider)

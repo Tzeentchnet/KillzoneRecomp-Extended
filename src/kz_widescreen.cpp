@@ -56,7 +56,10 @@ namespace
     KzgsTemporalGuestObservation g_temporalBuilding{}, g_temporalBuffers[2]{}, g_temporalLatched{};
     bool g_temporalBufferValid[2] = {false, false};
     uint64_t g_temporalNextBuild = 0, g_temporalCameraId = 0;
-    uint32_t g_temporalCameraAddress = 0;
+    uint32_t g_temporalCameraAddress = 0, g_temporalViewBuildOutput = 0;
+    uint64_t g_jitterGeneration = 0, g_jitterBuildingGeneration = 0;
+    uint32_t g_jitterNextPhase = 0;
+    bool g_jitterNeedsZero = true;
     std::mutex g_temporalLatchMutex;
     bool g_built = false; // something was drawn since the last limiter call
     std::atomic<bool> g_latched{false};
@@ -85,6 +88,8 @@ namespace
     std::atomic<float> g_weaponFovScale{1.0f};
     uint32_t g_pendCamFovOn = 0; // the pending camera also has its fov (+0x70) changed
     float g_pendCamFov = 0.0f;
+    uint32_t g_pendViewWindow = 0;
+    float g_pendViewWindowValues[4]{};
     bool g_vmWide = false;   // the weapon pass belongs to a widened frame (its aspect is widened)
     bool g_vmLogged = false;
     constexpr float kPi = 3.14159265358979f;
@@ -121,6 +126,201 @@ namespace
     void wrF(uint8_t *rdram, uint32_t a, float v) { std::memcpy(rdram + (a & kRamMask), &v, 4); }
     bool ramPtr(uint32_t a) { return a >= 0x00100000u && a < 0x02000000u; }
 
+    float halton(uint32_t index, uint32_t base)
+    {
+        float result = 0.0f;
+        float fraction = 1.0f / static_cast<float>(base);
+        while (index)
+        {
+            result += fraction * static_cast<float>(index % base);
+            index /= base;
+            fraction /= static_cast<float>(base);
+        }
+        return result;
+    }
+
+    uint32_t jitterPhaseCount(uint32_t sourceWidth, uint32_t displayWidth)
+    {
+        if (!sourceWidth || !displayWidth)
+            return 0;
+        const float ratio = static_cast<float>(displayWidth) / static_cast<float>(sourceWidth);
+        return std::max(1u, static_cast<uint32_t>(8.0f * ratio * ratio));
+    }
+
+    void restorePendingViewWindow(uint8_t *rdram)
+    {
+        if (!g_pendViewWindow)
+            return;
+        for (uint32_t i = 0; i < 4; ++i)
+            wrF(rdram, g_pendViewWindow + 0x30u + i * sizeof(float), g_pendViewWindowValues[i]);
+        g_pendViewWindow = 0;
+    }
+
+    bool prepareJitter()
+    {
+        if (g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_JITTER_APPLIED)
+            return true;
+        KzgsFsr3JitterState state;
+        if (!kzgsGetFsr3JitterState(state) || !state.enabled)
+        {
+            g_jitterGeneration = 0;
+            g_jitterBuildingGeneration = 0;
+            g_jitterNextPhase = 0;
+            g_jitterNeedsZero = true;
+            return false;
+        }
+        const uint32_t phaseCount = jitterPhaseCount(state.sourceWidth, state.displayWidth);
+        if (!phaseCount)
+            return false;
+        if (state.generation != g_jitterGeneration)
+        {
+            g_jitterGeneration = state.generation;
+            g_jitterNextPhase = 0;
+            g_jitterNeedsZero = true;
+        }
+        g_temporalBuilding.jitterX =
+            g_jitterNeedsZero ? 0.0f : halton((g_jitterNextPhase % phaseCount) + 1, 2) - 0.5f;
+        g_temporalBuilding.jitterY =
+            g_jitterNeedsZero ? 0.0f : halton((g_jitterNextPhase % phaseCount) + 1, 3) - 0.5f;
+        g_temporalBuilding.jitterPhase = g_jitterNextPhase;
+        g_temporalBuilding.jitterPhaseCount = phaseCount;
+        g_temporalBuilding.jitterSourceWidth = state.sourceWidth;
+        g_temporalBuilding.jitterSourceHeight = state.sourceHeight;
+        g_temporalBuilding.jitterDisplayWidth = state.displayWidth;
+        g_temporalBuilding.jitterDisplayHeight = state.displayHeight;
+        g_temporalBuilding.flags |= KZGS_TEMPORAL_GUEST_JITTER_APPLIED;
+        if (g_jitterNeedsZero)
+            g_temporalBuilding.resetReasons |= KZGS_TEMPORAL_RESET_SIZE;
+        g_jitterBuildingGeneration = state.generation;
+        return true;
+    }
+
+    void rejectCameraCandidate()
+    {
+        g_temporalBuilding.flags |= KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA |
+            KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA_MATRICES;
+        g_temporalBuilding.flags &= ~(KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE |
+            KZGS_TEMPORAL_GUEST_CAMERA_MATRICES_CANDIDATE);
+        std::memset(g_temporalBuilding.renderCameraMatrix310, 0,
+            sizeof(g_temporalBuilding.renderCameraMatrix310));
+        std::memset(g_temporalBuilding.renderCameraMatrix400, 0,
+            sizeof(g_temporalBuilding.renderCameraMatrix400));
+    }
+
+    void rejectCameraMatrices()
+    {
+        g_temporalBuilding.flags |= KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA_MATRICES;
+        g_temporalBuilding.flags &= ~KZGS_TEMPORAL_GUEST_CAMERA_MATRICES_CANDIDATE;
+        std::memset(g_temporalBuilding.renderCameraMatrix310, 0,
+            sizeof(g_temporalBuilding.renderCameraMatrix310));
+        std::memset(g_temporalBuilding.renderCameraMatrix400, 0,
+            sizeof(g_temporalBuilding.renderCameraMatrix400));
+    }
+
+    bool validMatrix(const float (&matrix)[16])
+    {
+        double values[4][4]{};
+        double scale = 1.0;
+        for (size_t row = 0; row < 4; ++row)
+            for (size_t column = 0; column < 4; ++column)
+            {
+                const float value = matrix[row * 4 + column];
+                if (!std::isfinite(value))
+                    return false;
+                values[row][column] = value;
+                scale = std::max(scale, std::fabs(static_cast<double>(value)));
+            }
+        for (size_t column = 0; column < 4; ++column)
+        {
+            size_t pivot = column;
+            for (size_t row = column + 1; row < 4; ++row)
+                if (std::fabs(values[row][column]) > std::fabs(values[pivot][column]))
+                    pivot = row;
+            if (std::fabs(values[pivot][column]) <= scale * 1.0e-10)
+                return false;
+            if (pivot != column)
+                for (size_t i = 0; i < 4; ++i)
+                    std::swap(values[pivot][i], values[column][i]);
+            for (size_t row = column + 1; row < 4; ++row)
+            {
+                const double factor = values[row][column] / values[column][column];
+                for (size_t i = column + 1; i < 4; ++i)
+                    values[row][i] -= factor * values[column][i];
+            }
+        }
+        return true;
+    }
+
+    bool sameMatrix(const float (&left)[16], const float (&right)[16])
+    {
+        for (size_t i = 0; i < 16; ++i)
+        {
+            const float tolerance = 1.0e-5f * std::max({1.0f, std::fabs(left[i]), std::fabs(right[i])});
+            if (std::fabs(left[i] - right[i]) > tolerance)
+                return false;
+        }
+        return true;
+    }
+
+    void observeCameraMatrices(const uint8_t *rdram, uint32_t renderCamera)
+    {
+        if (!g_temporalDiagnostics)
+            return;
+        if (!(g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE) ||
+            (g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA) ||
+            !ramPtr(renderCamera) || renderCamera > 0x02000000u - 0x440u)
+        {
+            rejectCameraMatrices();
+            return;
+        }
+        float matrix310[16], matrix400[16];
+        for (size_t i = 0; i < 16; ++i)
+        {
+            matrix310[i] = rdF(rdram, renderCamera + 0x310u + static_cast<uint32_t>(i * sizeof(float)));
+            matrix400[i] = rdF(rdram, renderCamera + 0x400u + static_cast<uint32_t>(i * sizeof(float)));
+        }
+        if (!validMatrix(matrix310) || !validMatrix(matrix400) ||
+            ((g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_CAMERA_MATRICES_CANDIDATE) &&
+             (!sameMatrix(matrix310, g_temporalBuilding.renderCameraMatrix310) ||
+              !sameMatrix(matrix400, g_temporalBuilding.renderCameraMatrix400))))
+        {
+            rejectCameraMatrices();
+            return;
+        }
+        if (!(g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA_MATRICES))
+        {
+            std::memcpy(g_temporalBuilding.renderCameraMatrix310, matrix310, sizeof(matrix310));
+            std::memcpy(g_temporalBuilding.renderCameraMatrix400, matrix400, sizeof(matrix400));
+            g_temporalBuilding.flags |= KZGS_TEMPORAL_GUEST_CAMERA_MATRICES_CANDIDATE;
+        }
+    }
+
+    void capturePendingCameraMatrices(const uint8_t *rdram)
+    {
+        if (!g_temporalViewBuildOutput)
+            return;
+        const uint32_t renderCamera = g_temporalViewBuildOutput;
+        g_temporalViewBuildOutput = 0;
+        observeCameraMatrices(rdram, renderCamera);
+    }
+
+    void observeFrameTime(const uint8_t *rdram, uint32_t timer)
+    {
+        if (!g_temporalDiagnostics || !ramPtr(timer) || timer > 0x02000000u - 0x68u)
+            return;
+        const float secondsPerTick = rdF(rdram, timer + 0x50u);
+        const float timeScale = rdF(rdram, timer + 0x54u);
+        const uint32_t elapsedTicks = rd32(rdram, timer + 0x64u);
+        const double milliseconds = static_cast<double>(elapsedTicks) * secondsPerTick * timeScale * 1000.0;
+        if (!std::isfinite(secondsPerTick) || !std::isfinite(timeScale) ||
+            !std::isfinite(milliseconds) || secondsPerTick <= 0.0f || secondsPerTick > 1.0f ||
+            timeScale <= 0.0f || timeScale > 100.0f || !elapsedTicks ||
+            milliseconds <= 0.0 || milliseconds > 1000.0)
+            return;
+        g_temporalBuilding.gameFrameTimeMs = static_cast<float>(milliseconds);
+        g_temporalBuilding.flags |= KZGS_TEMPORAL_GUEST_FRAME_TIME_CANDIDATE;
+    }
+
     void observeCamera(const uint8_t *rdram, uint32_t cam)
     {
         if (!g_temporalDiagnostics)
@@ -128,8 +328,7 @@ namespace
         g_temporalBuilding.flags |= KZGS_TEMPORAL_GUEST_WORLD;
         if (!ramPtr(cam) || cam > 0x02000000u - 0x78u)
         {
-            g_temporalBuilding.flags |= KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA;
-            g_temporalBuilding.flags &= ~KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE;
+            rejectCameraCandidate();
             return;
         }
         if (cam != g_temporalCameraAddress)
@@ -139,8 +338,7 @@ namespace
         }
         if (g_temporalBuilding.cameraId && g_temporalBuilding.cameraId != g_temporalCameraId)
         {
-            g_temporalBuilding.flags |= KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA;
-            g_temporalBuilding.flags &= ~KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE;
+            rejectCameraCandidate();
             return;
         }
         g_temporalBuilding.cameraId = g_temporalCameraId;
@@ -156,8 +354,7 @@ namespace
              fov != g_temporalBuilding.verticalFovDegrees || aspect != g_temporalBuilding.aspect);
         if (!valid || changed)
         {
-            g_temporalBuilding.flags |= KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA;
-            g_temporalBuilding.flags &= ~KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE;
+            rejectCameraCandidate();
         }
         else if (!(g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA))
         {
@@ -174,6 +371,16 @@ namespace
         g_temporalBuilding.buildId = ++g_temporalNextBuild;
         g_temporalBuffers[idx] = g_temporalBuilding;
         g_temporalBufferValid[idx] = true;
+        if ((g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_JITTER_APPLIED) &&
+            g_jitterBuildingGeneration == g_jitterGeneration)
+        {
+            if (g_jitterNeedsZero)
+                g_jitterNeedsZero = false;
+            else if (g_temporalBuilding.jitterPhaseCount)
+                g_jitterNextPhase =
+                    (g_jitterNextPhase + 1) % g_temporalBuilding.jitterPhaseCount;
+        }
+        g_jitterBuildingGeneration = 0;
         g_temporalBuilding = {};
     }
 
@@ -188,6 +395,8 @@ namespace
 
     void flushPending(uint8_t *rdram)
     {
+        capturePendingCameraMatrices(rdram);
+        restorePendingViewWindow(rdram);
         if (g_pendCam)
         {
             wrF(rdram, g_pendCam + 0x74, g_pendCamAspect);
@@ -280,14 +489,61 @@ namespace
 
     void viewBuild(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
     {
+        const bool worldCamera = ctx->pc == kzAddrs().viewBuild &&
+            getRegU32(ctx, 31) == kzAddrs().viewBuildFromWorld;
+        const uint32_t returnAddress = getRegU32(ctx, 31);
         const uint32_t s = getRegU32(ctx, 5);
-        if (g_log && ctx->pc == kzAddrs().viewBuild && getRegU32(ctx, 31) == kzAddrs().viewBuildFromWorld && ramPtr(s))
+        float savedWindow[4]{};
+        bool jittered = false;
+        if (worldCamera && g_temporalDiagnostics)
+        {
+            capturePendingCameraMatrices(rdram);
+            restorePendingViewWindow(rdram);
+            g_temporalViewBuildOutput = getRegU32(ctx, 4);
+            if (ramPtr(s) && s <= 0x02000000u - 0x40u)
+            {
+                for (uint32_t i = 0; i < 4; ++i)
+                    savedWindow[i] = rdF(rdram, s + 0x30u + i * sizeof(float));
+                const float width = savedWindow[1] - savedWindow[0];
+                const float height = savedWindow[2] - savedWindow[3];
+                if (std::isfinite(width) && std::isfinite(height) &&
+                    width > 0.0f && height > 0.0f && prepareJitter())
+                {
+                    const float shiftX = -g_temporalBuilding.jitterX * width /
+                        static_cast<float>(g_temporalBuilding.jitterSourceWidth);
+                    const float shiftY = g_temporalBuilding.jitterY * height /
+                        static_cast<float>(g_temporalBuilding.jitterSourceHeight);
+                    wrF(rdram, s + 0x30u, savedWindow[0] + shiftX);
+                    wrF(rdram, s + 0x34u, savedWindow[1] + shiftX);
+                    wrF(rdram, s + 0x38u, savedWindow[2] + shiftY);
+                    wrF(rdram, s + 0x3Cu, savedWindow[3] + shiftY);
+                    jittered = true;
+                }
+            }
+        }
+        if (g_log && worldCamera && ramPtr(s))
         {
             // struct +0x30..0x3C = left, right, top, bottom of the view window at the near plane: (right - left) / (top - bottom) is the aspect
             const float w = rdF(rdram, s + 0x34) - rdF(rdram, s + 0x30), h = rdF(rdram, s + 0x38) - rdF(rdram, s + 0x3C);
             std::printf("[kz-wide] viewbuild wide=%d aspect=%.4f\n", g_worldWide ? 1 : 0, h != 0.0f ? w / h : 0.0f);
         }
         g_origViewBuild(rdram, ctx, rt);
+        if (jittered)
+        {
+            if (ctx->pc == returnAddress || !g_defer)
+            {
+                for (uint32_t i = 0; i < 4; ++i)
+                    wrF(rdram, s + 0x30u + i * sizeof(float), savedWindow[i]);
+            }
+            else
+            {
+                g_pendViewWindow = s;
+                std::copy(std::begin(savedWindow), std::end(savedWindow),
+                    std::begin(g_pendViewWindowValues));
+            }
+        }
+        if (worldCamera && ctx->pc == returnAddress)
+            capturePendingCameraMatrices(rdram);
     }
 
     void viewmodel(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
@@ -397,6 +653,7 @@ namespace
             logEv("limiter", (rd32(rdram, a.bufferIndex) & 1u) | (g_built ? 0x10u : 0u) | (g_worldWide ? 0x100u : 0u));
         if (ctx->pc == a.frameLimiter && g_temporalDiagnostics && (g_built || g_temporalBuilding.flags))
         {
+            observeFrameTime(rdram, getRegU32(ctx, 4));
             const uint32_t idx = rd32(rdram, a.bufferIndex) & 1u;
             captureTemporalBuild(idx);
         }
@@ -574,20 +831,33 @@ int kzWideSelfTest()
     check(near(scaleFov(56.25f, 1.0f), 56.25f, 0.00001f) &&
               near(scaleFov(zoomRadians, 1.0f), zoomRadians, 0.00001f),
           "unit FOV scale is a no-op");
+    check(jitterPhaseCount(1280, 1920) == 18 && jitterPhaseCount(1920, 1920) == 8,
+          "FSR 3 jitter phase count");
+    check(near(halton(1, 2) - 0.5f, 0.0f, 0.00001f) &&
+              near(halton(1, 3) - 0.5f, -1.0f / 6.0f, 0.00001f) &&
+              near(halton(2, 2) - 0.5f, -0.25f, 0.00001f) &&
+              near(halton(2, 3) - 0.5f, 1.0f / 6.0f, 0.00001f),
+          "FSR 3 Halton offsets");
+    constexpr float testWindowWidth = 2.0f, testWindowHeight = 1.0f;
+    constexpr float testJitterX = 0.25f, testJitterY = -0.25f;
+    check(near(-testJitterX * testWindowWidth / 100.0f, -0.005f, 0.00001f) &&
+              near(testJitterY * testWindowHeight / 50.0f, -0.005f, 0.00001f),
+          "FSR 3 view-window jitter signs");
 
     const bool savedDiagnostics = g_temporalDiagnostics;
     const auto savedBuilding = g_temporalBuilding, savedBuffer0 = g_temporalBuffers[0];
     const auto savedBuffer1 = g_temporalBuffers[1], savedLatched = g_temporalLatched;
     const bool savedValid0 = g_temporalBufferValid[0], savedValid1 = g_temporalBufferValid[1];
     const uint64_t savedBuild = g_temporalNextBuild, savedCamera = g_temporalCameraId;
-    const uint32_t savedAddress = g_temporalCameraAddress;
+    const uint32_t savedAddress = g_temporalCameraAddress, savedViewOutput = g_temporalViewBuildOutput;
     g_temporalDiagnostics = true;
     g_temporalBuilding = g_temporalBuffers[0] = g_temporalBuffers[1] = g_temporalLatched = {};
     g_temporalBufferValid[0] = g_temporalBufferValid[1] = false;
     g_temporalNextBuild = g_temporalCameraId = 0;
-    g_temporalCameraAddress = 0;
-    std::vector<uint8_t> ram(0x00100200);
+    g_temporalCameraAddress = g_temporalViewBuildOutput = 0;
+    std::vector<uint8_t> ram(0x00101000);
     constexpr uint32_t camera1 = 0x00100000, camera2 = 0x00100100;
+    constexpr uint32_t renderCamera = 0x00100200, timer = 0x00100800;
     for (uint32_t camera : {camera1, camera2})
     {
         wrF(ram.data(), camera + 0x68, 0.1f);
@@ -595,23 +865,55 @@ int kzWideSelfTest()
         wrF(ram.data(), camera + 0x70, 60.0f);
         wrF(ram.data(), camera + 0x74, 1.5f);
     }
+    const auto writeMatrix = [&](uint32_t offset, float translation)
+    {
+        for (size_t i = 0; i < 16; ++i)
+            wrF(ram.data(), renderCamera + offset + static_cast<uint32_t>(i * sizeof(float)),
+                i % 5 == 0 ? 1.0f : (i == 12 ? translation : 0.0f));
+    };
+    wrF(ram.data(), timer + 0x50, 1.0f / 60.0f);
+    wrF(ram.data(), timer + 0x54, 1.0f);
+    uint32_t elapsedTicks = 2;
+    std::memcpy(ram.data() + timer + 0x64, &elapsedTicks, sizeof(elapsedTicks));
     observeCamera(ram.data(), camera1);
+    writeMatrix(0x310, 0.0f);
+    writeMatrix(0x400, 0.0f);
+    observeCameraMatrices(ram.data(), renderCamera);
+    observeFrameTime(ram.data(), timer);
     g_temporalBuilding.flags |= KZGS_TEMPORAL_GUEST_2D;
     captureTemporalBuild(0);
     observeCamera(ram.data(), camera2);
+    writeMatrix(0x310, 2.0f);
+    writeMatrix(0x400, -2.0f);
+    observeCameraMatrices(ram.data(), renderCamera);
+    elapsedTicks = 1;
+    std::memcpy(ram.data() + timer + 0x64, &elapsedTicks, sizeof(elapsedTicks));
+    observeFrameTime(ram.data(), timer);
     captureTemporalBuild(1);
     latchTemporalBuild(0);
     auto observation = kzWideTakeTemporalObservation();
     check(observation.buildId == 1 && observation.cameraId == 1 &&
               (observation.flags & (KZGS_TEMPORAL_GUEST_WORLD | KZGS_TEMPORAL_GUEST_2D |
-                  KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE)) ==
+                  KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE |
+                  KZGS_TEMPORAL_GUEST_CAMERA_MATRICES_CANDIDATE |
+                  KZGS_TEMPORAL_GUEST_FRAME_TIME_CANDIDATE)) ==
                   (KZGS_TEMPORAL_GUEST_WORLD | KZGS_TEMPORAL_GUEST_2D |
-                  KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE),
+                  KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE |
+                  KZGS_TEMPORAL_GUEST_CAMERA_MATRICES_CANDIDATE |
+                  KZGS_TEMPORAL_GUEST_FRAME_TIME_CANDIDATE) &&
+              near(observation.gameFrameTimeMs, 1000.0f / 30.0f, 0.001f) &&
+              observation.renderCameraMatrix310[0] == 1.0f &&
+              observation.renderCameraMatrix400[15] == 1.0f,
           "temporal guest metadata follows the first kicked build buffer");
     latchTemporalBuild(1);
     observation = kzWideTakeTemporalObservation();
     check(observation.buildId == 2 && observation.cameraId == 2 &&
-              !(observation.flags & KZGS_TEMPORAL_GUEST_2D),
+              !(observation.flags & KZGS_TEMPORAL_GUEST_2D) &&
+              (observation.flags & KZGS_TEMPORAL_GUEST_CAMERA_MATRICES_CANDIDATE) &&
+              (observation.flags & KZGS_TEMPORAL_GUEST_FRAME_TIME_CANDIDATE) &&
+              near(observation.gameFrameTimeMs, 1000.0f / 60.0f, 0.001f) &&
+              observation.renderCameraMatrix310[12] == 2.0f &&
+              observation.renderCameraMatrix400[12] == -2.0f,
           "temporal guest buffers preserve their independent camera candidates");
     latchTemporalBuild(0);
     check(kzWideTakeTemporalObservation().buildId == 2,
@@ -627,6 +929,34 @@ int kzWideSelfTest()
     check((g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA) &&
               !(g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE),
           "out-of-bounds camera candidates fail closed");
+    g_temporalBuilding = {};
+    wrF(ram.data(), camera1 + 0x68, 0.1f);
+    observeCamera(ram.data(), camera1);
+    writeMatrix(0x310, 0.0f);
+    writeMatrix(0x400, 0.0f);
+    observeCameraMatrices(ram.data(), renderCamera);
+    writeMatrix(0x310, 1.0f);
+    observeCameraMatrices(ram.data(), renderCamera);
+    check((g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA_MATRICES) &&
+              !(g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_CAMERA_MATRICES_CANDIDATE) &&
+              (g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE),
+          "incompatible render-camera matrices fail closed without discarding valid camera scalars");
+    g_temporalBuilding = {};
+    observeCamera(ram.data(), camera1);
+    for (size_t i = 0; i < 16; ++i)
+    {
+        wrF(ram.data(), renderCamera + 0x310u + static_cast<uint32_t>(i * sizeof(float)), 0.0f);
+        wrF(ram.data(), renderCamera + 0x400u + static_cast<uint32_t>(i * sizeof(float)), 0.0f);
+    }
+    observeCameraMatrices(ram.data(), renderCamera);
+    check((g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA_MATRICES) &&
+              !(g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_CAMERA_MATRICES_CANDIDATE),
+          "singular render-camera matrices fail closed");
+    g_temporalBuilding = {};
+    wrF(ram.data(), timer + 0x50, std::numeric_limits<float>::quiet_NaN());
+    observeFrameTime(ram.data(), timer);
+    check(!(g_temporalBuilding.flags & KZGS_TEMPORAL_GUEST_FRAME_TIME_CANDIDATE),
+          "invalid simulation frame time is not exposed as a candidate");
     g_temporalBuilding = savedBuilding;
     g_temporalBuffers[0] = savedBuffer0;
     g_temporalBuffers[1] = savedBuffer1;
@@ -636,6 +966,7 @@ int kzWideSelfTest()
     g_temporalNextBuild = savedBuild;
     g_temporalCameraId = savedCamera;
     g_temporalCameraAddress = savedAddress;
+    g_temporalViewBuildOutput = savedViewOutput;
     g_temporalDiagnostics = savedDiagnostics;
     return failures;
 }
@@ -649,13 +980,14 @@ void kzWideInstall(PS2Runtime &runtime, bool temporalDiagnostics)
     if (const char *v = std::getenv("KZ_WIDE_ASPECT")) // automation: view aspect ratio of the widened frames
         kzWideSetTargetAspect(static_cast<float>(std::atof(v)));
     const KzAddrs &a = kzAddrs();
-    const bool ok = hook(runtime, a.world, &world, g_origWorld) && hook(runtime, a.viewmodel, &viewmodel, g_origViewmodel) &&
-                    hook(runtime, a.frustum, &frustum, g_origFrustum) && hook(runtime, a.ortho, &ortho, g_origOrtho) &&
-                    hook(runtime, a.kick, &kick, g_origKick) && hook(runtime, a.frameLimiter, &limiter, g_origLimiter) &&
-                    hook(runtime, a.text, &text, g_origText) && hook(runtime, a.rect, &rect, g_origRect);
+    bool ok = hook(runtime, a.world, &world, g_origWorld) && hook(runtime, a.viewmodel, &viewmodel, g_origViewmodel) &&
+              hook(runtime, a.frustum, &frustum, g_origFrustum) && hook(runtime, a.ortho, &ortho, g_origOrtho) &&
+              hook(runtime, a.kick, &kick, g_origKick) && hook(runtime, a.frameLimiter, &limiter, g_origLimiter) &&
+              hook(runtime, a.text, &text, g_origText) && hook(runtime, a.rect, &rect, g_origRect);
+    if (g_log || g_temporalDiagnostics)
+        ok = hook(runtime, a.viewBuild, &viewBuild, g_origViewBuild) && ok;
     if (g_log)
     {
-        hook(runtime, a.viewBuild, &viewBuild, g_origViewBuild);
         traceInstall<0>(runtime, a.renderFrameTrace, "renderframe");
         traceInstall<1>(runtime, a.hudTrace, "hud");
         traceInstall<2>(runtime, a.postRender, "postfx");

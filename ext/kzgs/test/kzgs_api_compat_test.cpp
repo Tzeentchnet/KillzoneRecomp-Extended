@@ -12,6 +12,11 @@
 #include <type_traits>
 
 static_assert(std::is_aggregate_v<KzgsConfig>);
+static_assert(static_cast<int>(KzgsUpscaler::Off) == 0);
+static_assert(static_cast<int>(KzgsUpscaler::FSR1) == 1);
+static_assert(static_cast<int>(KzgsUpscaler::DLSS) == 2);
+static_assert(static_cast<int>(KzgsUpscaler::XeSS) == 3);
+static_assert(static_cast<int>(KzgsUpscaler::FSR3) == 4);
 static_assert(std::is_same_v<decltype(&kzgsVsync), void (*)(int, bool, bool)>);
 static_assert(std::is_same_v<decltype(&kzgsVsyncTry), bool (*)(int, bool, bool)>);
 static_assert(std::is_same_v<decltype(&kzgsVsyncTemporal),
@@ -92,11 +97,11 @@ int main()
 		kzgsSync();
 		check(kzgsGetUpscalerStatus(status) && status.requested == KzgsUpscaler::FSR1,
 			"rejected update leaves active configuration unchanged");
-		extended.upscaler = KzgsUpscaler::XeSS;
+		extended.upscaler = KzgsUpscaler::FSR3;
 		check(kzgsUpdateConfigEx(&extended, sizeof(extended), KZGS_CONFIG_VERSION_1, &error),
 			"versioned update accepts a complete configuration");
 		kzgsSync();
-		check(kzgsGetUpscalerStatus(status) && status.requested == KzgsUpscaler::XeSS,
+		check(kzgsGetUpscalerStatus(status) && status.requested == KzgsUpscaler::FSR3,
 			"versioned update applies extended fields");
 		legacy.useWarp = true;
 		legacy.vsync = false;

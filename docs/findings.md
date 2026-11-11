@@ -2213,7 +2213,7 @@ displayed gameplay sequence. No raw gameplay frames, memory, or traces are inclu
 | Matched gameplay depth | **FAIL.** The existing gameplay inventory was 0/20. Display-target/draw/depth IDs can now be correlated as *candidates*, but no displayed gameplay match, coverage, or forward/reversed direction was demonstrated. A GS depth-test code or bound depth image is not a depth convention. |
 | Motion and previous frame | **FAIL.** There is no matched vector image, previous object/camera transform, or object identity. Moving synthetic geometry exercises the observer but does not validate velocity units, sign, jitter inclusion, disocclusion, skinning, or representative moving game objects. Optical-flow guesses, estimated motion, and zero-motion fallbacks are not used. |
 | World-only jitter and masks | **FAIL.** No world-only projection jitter has been applied or demonstrated; a global GS offset would also move UI and effects. The 2D/viewmodel markers are not per-pixel UI, reactive, or composition masks. None is supplied. |
-| Camera, frame time, and scene | **FAIL.** Near/far/FOV/aspect at the world hook are bounded, finite *candidates* associated with a guest build/kick, not proven projection parameters for the displayed frame. Current/previous view/projection matrices, scene identity, and a matched simulation-frame delta are unavailable. The logged GS delivery interval is not a frame delta. |
+| Camera, frame time, and scene | **FAIL.** Near/far/FOV/aspect, two raw current render-camera matrices, and a game-timer delta are bounded *candidates* associated with a guest build/kick. Matrix layout/coordinate semantics, previous-frame pairing, scene identity, and correspondence to the displayed frame are not proven, so no camera or matched-frame-time input is supplied. The logged GS delivery interval remains a separate non-input. |
 | Lifecycle and failure behavior | **PASS, fail-closed only.** Synthetic tests cover missing/unmatched inputs, invalid formats/conventions, first use, duplicate/out-of-order frames, reset causes, failed dispatch/present, and transactional history. No invalid frame advances history. This does not qualify a real temporal image. |
 
 The ISO-free Vulkan observer test rendered two synthetic triangle frames and one duplicate: the first two each
@@ -2251,7 +2251,9 @@ flags and camera candidates per double-buffered build. The current kicked observ
 events are copied at EE VSync into a job ordered after queued GIF work, then copied with the VSync command to the GS
 thread. Drops and suppressed VSyncs retain pending discontinuities until an accepted command. This ordering is
 necessary but does not prove that the build/camera produced the displayed color. Multiple or invalid camera
-candidates are marked ambiguous. Hooked movie/menu behavior is unchanged unless the existing skip options are set.
+candidates or raw render-camera matrices are marked ambiguous. The simulation delta is derived from elapsed ticks,
+seconds per tick, and time scale at the matching build limiter. None of these candidates is promoted to a provider
+camera/frame-time input. Hooked movie/menu behavior is unchanged unless the existing skip options are set.
 
 First use, source/output size and crop, aspect, provider, device, game/GS reset, explicit guest discontinuities,
 failed dispatch/presentation, missing inputs, skipped frames, and duplicate/out-of-order presentations invalidate
@@ -2262,20 +2264,25 @@ exist for an eventual authoritative source; synthetic injection is not a claim t
 
 Set `KZGS_TEMPORAL_DIAGNOSTICS=1` **before launch** for one metadata-only line per delivered VSync; it also enables
 the guest hooks without changing the configured view. The line contains IDs, format codes, dimensions, crop,
-counts, candidate/validity flags, resets, and the delivery interval, not pixels, camera matrices/scalars, guest
-addresses, or menu/movie strings. `camera` and `guest_flags` describe candidates only; `scene=0` and resource ID
-zero mean unknown/unavailable. Do not combine a protected-content run with separate verbose game-specific logging
-such as `KZ_WIDE_LOG`, `KZ_MOVIE_LOG`, or `KZ_LOGO_LOG`. Do not commit any private capture, trace, game content, or unsanitized log.
+counts, candidate/validity flags, resets, the ordered game-delta candidate, and the separate delivery interval, not
+pixels, camera matrices/scalars, guest addresses, or menu/movie strings. `camera`, `guest_flags`, and fields named
+`candidate` describe candidates only; `scene=0` and resource ID zero mean unknown/unavailable. Do not combine a
+protected-content run with separate verbose game-specific logging such as `KZ_WIDE_LOG`, `KZ_MOVIE_LOG`, or
+`KZ_LOGO_LOG`. Do not commit any private capture, trace, game content, or unsanitized log.
 Hook installation is decided at startup, so restart after changing the diagnostic setting.
 
 At measurement, the provider ABI was 1.0 and XeSS initialization was blocked by its queue-submission rule. ABI 1.1
-subsequently defined an exclusive initialization scope, but the current host does not provide it and no vendor SDK
-or GPU was qualified. This engineering change **does not change the measured no-go**. Any provider advertising
-`KZGS_PROVIDER_CAP_TEMPORAL` is rejected before context creation/evaluation, even if it advertises color-only
-requirements. The production host rejects every DLSS/XeSS provider before creation even if it claims only spatial or
-color inputs; the named spatial test mock is allowed only by test hooks. DLSS and XeSS stay disabled. Reopen this
-gate only with authorized, matched consecutive gameplay evidence covering moving objects, depth correspondence and
-direction, vector units/sign/jitter, world-only jitter, and UI/reactive behavior.
+subsequently defined an exclusive initialization scope, and ABI 1.2 added explicit approximation provenance and
+partial camera validity. These engineering changes **do not change the measured no-go**. Strict FSR 3, DLSS, and
+XeSS requests remain rejected before context creation/evaluation; the named spatial test mock is allowed only by
+test hooks.
+
+FSR 3 now has a separately named, explicit `experimental` policy that may dispatch the pinned source-built provider
+with every substitute marked approximate: world-camera jitter, FidelityFX Optical Flow motion, forward far depth,
+residual reactive mask, and scalar camera/timing. It is not evidence that the measured inputs became qualified and
+is never exposed to DLSS/XeSS. Reopen the strict gate only with authorized, matched consecutive gameplay evidence
+covering moving objects, depth correspondence and direction, vector units/sign/jitter, world-only jitter, and
+UI/reactive behavior.
 
 ### Spatial presentation and validation follow-up
 

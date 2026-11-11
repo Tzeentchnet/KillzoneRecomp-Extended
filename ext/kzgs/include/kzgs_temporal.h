@@ -16,6 +16,11 @@ constexpr uint64_t KZGS_TEMPORAL_FRAME_TIME = UINT64_C(1) << 7;
 constexpr uint64_t KZGS_TEMPORAL_WORLD_COLOR = UINT64_C(1) << 8;
 constexpr uint64_t KZGS_TEMPORAL_UI = UINT64_C(1) << 9;
 constexpr uint64_t KZGS_TEMPORAL_REQUIRED = (UINT64_C(1) << 10) - 1;
+constexpr uint64_t KZGS_TEMPORAL_FSR3_EXPERIMENTAL_REQUIRED =
+	KZGS_TEMPORAL_COLOR | KZGS_TEMPORAL_DEPTH | KZGS_TEMPORAL_MOTION |
+	KZGS_TEMPORAL_JITTER | KZGS_TEMPORAL_CAMERA | KZGS_TEMPORAL_FRAME_TIME;
+constexpr uint64_t KZGS_TEMPORAL_FSR3_EXPERIMENTAL_OPTIONAL =
+	KZGS_TEMPORAL_REACTIVE | KZGS_TEMPORAL_COMPOSITION;
 
 constexpr uint64_t KZGS_TEMPORAL_RESET_INITIAL = UINT64_C(1) << 0;
 constexpr uint64_t KZGS_TEMPORAL_RESET_SIZE = UINT64_C(1) << 1;
@@ -51,12 +56,15 @@ constexpr uint64_t KZGS_TEMPORAL_INVALID_FRAME_TIME = UINT64_C(1) << 7;
 constexpr uint64_t KZGS_TEMPORAL_INVALID_MASK = UINT64_C(1) << 8;
 constexpr uint64_t KZGS_TEMPORAL_INVALID_COLOR_ENCODING = UINT64_C(1) << 9;
 constexpr uint64_t KZGS_TEMPORAL_INVALID_PREVIOUS_FRAME = UINT64_C(1) << 10;
+constexpr uint64_t KZGS_TEMPORAL_INVALID_PROVENANCE = UINT64_C(1) << 11;
+constexpr uint64_t KZGS_TEMPORAL_INVALID_POLICY = UINT64_C(1) << 12;
 
 enum class KzgsTemporalBackend : uint32_t { Unknown, Vulkan, D3D11, D3D12, Software };
 enum class KzgsTemporalColorEncoding : uint32_t { Unknown, SRGB, LinearSDR, LinearHDR, PQ };
 enum class KzgsTemporalDepthDirection : uint32_t { Unknown, Forward, Reversed };
 enum class KzgsTemporalMotionUnits : uint32_t { Unknown, Pixels };
 enum class KzgsTemporalMotionDirection : uint32_t { Unknown, PreviousMinusCurrent };
+enum class KzgsTemporalInputPolicy : uint32_t { Strict, FSR3Experimental };
 
 struct KzgsTemporalRect
 {
@@ -86,7 +94,24 @@ struct KzgsTemporalCamera
 	float viewToClip[16]{}, previousViewToClip[16]{};
 	KzgsTemporalDepthDirection depthDirection = KzgsTemporalDepthDirection::Unknown;
 	bool infiniteFar = false;
+	uint32_t validFields = 0;
 };
+
+constexpr uint32_t KZGS_TEMPORAL_CAMERA_VALID_NEAR_PLANE = 1u << 0;
+constexpr uint32_t KZGS_TEMPORAL_CAMERA_VALID_FAR_PLANE = 1u << 1;
+constexpr uint32_t KZGS_TEMPORAL_CAMERA_VALID_VERTICAL_FOV = 1u << 2;
+constexpr uint32_t KZGS_TEMPORAL_CAMERA_VALID_VIEW_TO_CLIP = 1u << 3;
+constexpr uint32_t KZGS_TEMPORAL_CAMERA_VALID_PREVIOUS_VIEW_TO_CLIP = 1u << 4;
+constexpr uint32_t KZGS_TEMPORAL_CAMERA_VALID_WORLD_TO_VIEW = 1u << 5;
+constexpr uint32_t KZGS_TEMPORAL_CAMERA_VALID_PREVIOUS_WORLD_TO_VIEW = 1u << 6;
+constexpr uint32_t KZGS_TEMPORAL_CAMERA_VALID_SCALARS =
+	KZGS_TEMPORAL_CAMERA_VALID_NEAR_PLANE | KZGS_TEMPORAL_CAMERA_VALID_FAR_PLANE |
+	KZGS_TEMPORAL_CAMERA_VALID_VERTICAL_FOV;
+constexpr uint32_t KZGS_TEMPORAL_CAMERA_VALID_MATRICES =
+	KZGS_TEMPORAL_CAMERA_VALID_VIEW_TO_CLIP | KZGS_TEMPORAL_CAMERA_VALID_PREVIOUS_VIEW_TO_CLIP |
+	KZGS_TEMPORAL_CAMERA_VALID_WORLD_TO_VIEW | KZGS_TEMPORAL_CAMERA_VALID_PREVIOUS_WORLD_TO_VIEW;
+constexpr uint32_t KZGS_TEMPORAL_CAMERA_VALID_ALL =
+	KZGS_TEMPORAL_CAMERA_VALID_SCALARS | KZGS_TEMPORAL_CAMERA_VALID_MATRICES;
 
 struct KzgsTemporalFrame
 {
@@ -110,6 +135,9 @@ struct KzgsTemporalFrame
 	uint32_t outputWidth = 0, outputHeight = 0;
 	uint64_t aspectId = 0;
 	bool duplicate = false;
+	uint64_t qualifiedInputs = 0;
+	uint64_t approximateInputs = 0;
+	KzgsTemporalInputPolicy inputPolicy = KzgsTemporalInputPolicy::Strict;
 };
 
 constexpr uint32_t KZGS_TEMPORAL_GUEST_WORLD = 1u << 0;
@@ -117,6 +145,10 @@ constexpr uint32_t KZGS_TEMPORAL_GUEST_2D = 1u << 1;
 constexpr uint32_t KZGS_TEMPORAL_GUEST_VIEWMODEL = 1u << 2;
 constexpr uint32_t KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE = 1u << 3;
 constexpr uint32_t KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA = 1u << 4;
+constexpr uint32_t KZGS_TEMPORAL_GUEST_CAMERA_MATRICES_CANDIDATE = 1u << 5;
+constexpr uint32_t KZGS_TEMPORAL_GUEST_FRAME_TIME_CANDIDATE = 1u << 6;
+constexpr uint32_t KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA_MATRICES = 1u << 7;
+constexpr uint32_t KZGS_TEMPORAL_GUEST_JITTER_APPLIED = 1u << 8;
 
 // Guest build/kick observations travel with a VSync command, after its queued
 // GIF work. They are candidates, not proof that the displayed frame matches.
@@ -126,10 +158,21 @@ struct alignas(16) KzgsTemporalGuestObservation
 	float nearPlane = 0.0f, farPlane = 0.0f, verticalFovDegrees = 0.0f, aspect = 0.0f;
 	uint32_t flags = 0;
 	uint32_t reserved[3]{};
+	float gameFrameTimeMs = 0.0f;
+	uint32_t provenanceReserved[3]{};
+	// Raw game render-camera matrices at object offsets +0x310 and +0x400.
+	// Their coordinate/layout semantics are not yet qualified for providers.
+	float renderCameraMatrix310[16]{};
+	float renderCameraMatrix400[16]{};
+	float jitterX = 0.0f, jitterY = 0.0f;
+	uint32_t jitterPhase = 0, jitterPhaseCount = 0;
+	uint32_t jitterSourceWidth = 0, jitterSourceHeight = 0;
+	uint32_t jitterDisplayWidth = 0, jitterDisplayHeight = 0;
 };
 
-// Safe to expose/log: counts, dimensions, format codes, process-local IDs, and
-// validity only. It never contains game pixels, guest addresses, matrices, or strings.
+// Safe to expose/log: counts, dimensions, format codes, process-local IDs,
+// timing scalars, and validity. It never contains game pixels, guest addresses,
+// matrices, or strings.
 struct KzgsTemporalDiagnostics
 {
 	uint64_t frameId = 0, presentationId = 0, sceneId = 0, deviceId = 0, providerId = 0;
@@ -150,6 +193,7 @@ struct KzgsTemporalDiagnostics
 	uint32_t depthTestMask = 0, displayCount = 0, depthCandidateCount = 0;
 	uint32_t guestFlags = 0;
 	float deliveryDeltaMs = 0.0f; // GS delivery interval, not a matched game-frame delta
+	float gameFrameTimeCandidateMs = 0.0f;
 	KzgsTemporalRect sourceRect{};
 	KzgsTemporalBackend backend = KzgsTemporalBackend::Unknown;
 	KzgsTemporalDepthDirection depthDirection = KzgsTemporalDepthDirection::Unknown;
@@ -158,8 +202,13 @@ struct KzgsTemporalDiagnostics
 	bool motionJitterInclusionKnown = false;
 	bool motionIncludesJitter = false;
 	bool jitterAvailable = false, matchedFrameTimeAvailable = false, cameraParametersAvailable = false;
+	bool cameraParametersCandidateAvailable = false;
+	bool cameraMatricesCandidateAvailable = false;
+	bool gameFrameTimeCandidateAvailable = false;
 	bool candidateAmbiguous = false;
 	bool temporalValid = false;
 	bool presentSucceeded = false;
 	bool observationOverflow = false;
+	uint64_t qualifiedInputs = 0, approximateInputs = 0;
+	KzgsTemporalInputPolicy inputPolicy = KzgsTemporalInputPolicy::Strict;
 };

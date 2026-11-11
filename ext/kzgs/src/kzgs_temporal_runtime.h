@@ -2,6 +2,7 @@
 #pragma once
 
 #include "kzgs_temporal.h"
+#include "kzgs_temporal_contract.h"
 
 struct KzgsConfigV1;
 
@@ -16,4 +17,8 @@ namespace kzgs
 	void TemporalDeviceCreated();
 	void TemporalDeviceDestroying();
 	bool TemporalGetDiagnostics(KzgsTemporalDiagnostics& out);
+	bool TemporalGetPendingFrame(KzgsTemporalFrame& out);
+	temporal::Decision TemporalBeginDispatch(const KzgsTemporalFrame& frame);
+	void TemporalDispatchResult(bool succeeded);
+	void TemporalPresentationResult(uint64_t presentationId, bool succeeded);
 }
