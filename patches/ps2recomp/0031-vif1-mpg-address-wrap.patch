@@ -125,3 +125,173 @@ index 0b22fe0..39ba9d5 100644
 -- 
 2.55.0.windows.5
 
+From c0b844c45d73354244120e101381b1be0f9b8840 Mon Sep 17 00:00:00 2001
+From: Tzeentchnet <58480142+Tzeentchnet@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 18:19:03 -0800
+Subject: [PATCH] fix: complete VIF MPG wrapping coverage
+
+---
+ ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp | 31 +++++----
+ ps2xTest/src/ps2_memory_tests.cpp            | 72 ++++++++++++++++++--
+ 2 files changed, 83 insertions(+), 20 deletions(-)
+
+diff --git a/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp b/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
+index 7dadd8d..867cbfd 100644
+--- a/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
++++ b/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
+@@ -36,6 +36,15 @@ namespace
+ {
+     constexpr uint8_t kGifFmtImage = 2u;
+ 
++    void uploadMicroMemory(uint8_t *micro, uint32_t microSize, uint32_t address,
++                           const uint8_t *data, uint32_t size)
++    {
++        const uint32_t firstSize = std::min(size, microSize - address);
++        std::memcpy(micro + address, data, firstSize);
++        if (firstSize < size)
++            std::memcpy(micro, data + firstSize, size - firstSize);
++    }
++
+     // PS2X_VIF1_DUMP=<dir>: writes every VIF1 buffer (the bytes processVIF1Data gets: a whole DMA chain with its TTE
+     // VIFcodes, or a normal-mode block) as vif1_NNNNN.bin, starting PS2X_VIF1_DUMP_AFTER seconds after the first
+     // VIF1 transfer, at most PS2X_VIF1_DUMP_MAX (default 400) buffers. With the first one it also writes the VU1
+@@ -707,25 +716,19 @@ void PS2Memory::processVIF0Data(const uint8_t *data, uint32_t sizeBytes)
+         }
+         else if (opcode == VIF_MPG)
+         {
+-            const uint32_t destAddr = static_cast<uint32_t>(imm & 0x1FFu) * 8u;
++            const uint32_t destAddr =
++                (static_cast<uint32_t>(imm) * 8u) & (PS2_VU0_CODE_SIZE - 1u);
+             const uint32_t instructionCount = (num == 0u) ? 256u : static_cast<uint32_t>(num);
+             const uint32_t mpgBytes = instructionCount * 8u;
+-            uint32_t copyBytes = 0u;
+-            if (m_vu0Code && destAddr < PS2_VU0_CODE_SIZE && mpgBytes > 0u)
++            if (sizeBytes - pos < mpgBytes)
++                break;
++
++            if (m_vu0Code)
+             {
+-                copyBytes = mpgBytes;
+-                if (destAddr + copyBytes > PS2_VU0_CODE_SIZE)
+-                    copyBytes = PS2_VU0_CODE_SIZE - destAddr;
+-                if (pos + copyBytes <= sizeBytes)
+-                {
+-                    std::memcpy(m_vu0Code + destAddr, data + pos, copyBytes);
+-                    markVU0CodeModified();
+-                }
++                uploadMicroMemory(m_vu0Code, PS2_VU0_CODE_SIZE, destAddr, data + pos, mpgBytes);
++                markVU0CodeModified();
+             }
+-
+             pos += mpgBytes;
+-            if (pos > sizeBytes)
+-                break;
+             continue;
+         }
+         else if ((opcode & 0x60u) == 0x60u)
+diff --git a/ps2xTest/src/ps2_memory_tests.cpp b/ps2xTest/src/ps2_memory_tests.cpp
+index 07c0a5a..7f80288 100644
+--- a/ps2xTest/src/ps2_memory_tests.cpp
++++ b/ps2xTest/src/ps2_memory_tests.cpp
+@@ -410,32 +410,92 @@ void register_ps2_memory_tests()
+             t.IsTrue(matches, "MPG num=0 should copy 2048 bytes into VU1 code memory");
+         });
+ 
+-        tc.Run("VIF MPG masks and wraps VU1 micro memory addresses", [](TestCase &t)
++        tc.Run("VIF0 MPG masks and wraps micro memory addresses", [](TestCase &t)
+         {
+             PS2Memory mem;
+             t.IsTrue(mem.initialize(), "PS2Memory initialize should succeed");
+ 
+-            std::memset(mem.getVU1Code(), 0xCD, PS2_VU1_CODE_SIZE);
++            std::memset(mem.getVU0Code(), 0xCD, PS2_VU0_CODE_SIZE);
+             std::vector<uint8_t> packet;
+-            appendU32(packet, makeVifCmd(0x4Au, 2u, 0x07FFu));
++            appendU32(packet, makeVifCmd(0x4Au, 2u, 0x01FFu));
+             for (uint32_t i = 0; i < 16u; ++i)
+                 packet.push_back(static_cast<uint8_t>(0x10u + i));
+-            appendU32(packet, makeVifCmd(0x4Au, 1u, 0x0800u));
++
++            mem.processVIF0Data(packet.data(), static_cast<uint32_t>(packet.size()));
++
++            const uint8_t *code = mem.getVU0Code();
++            bool tailMatches = true;
++            bool wrappedStartMatches = true;
++            for (uint32_t i = 0; i < 8u; ++i)
++            {
++                tailMatches &= code[PS2_VU0_CODE_SIZE - 8u + i] == static_cast<uint8_t>(0x10u + i);
++                wrappedStartMatches &= code[i] == static_cast<uint8_t>(0x18u + i);
++            }
++            t.IsTrue(tailMatches, "MPG should write through the end of VU0 micro memory");
++            t.IsTrue(wrappedStartMatches, "MPG payload should wrap to the start of VU0 micro memory");
++
++            packet.clear();
++            appendU32(packet, makeVifCmd(0x4Au, 1u, 0x0200u));
+             for (uint32_t i = 0; i < 8u; ++i)
+                 packet.push_back(static_cast<uint8_t>(0x80u + i));
++            mem.processVIF0Data(packet.data(), static_cast<uint32_t>(packet.size()));
++
++            bool maskedStartMatches = true;
++            for (uint32_t i = 0; i < 8u; ++i)
++                maskedStartMatches &= code[i] == static_cast<uint8_t>(0x80u + i);
++            t.IsTrue(maskedStartMatches, "MPG immediate 0x200 should wrap to VU0 micro address zero");
++
++            std::memset(mem.getVU0Code(), 0xCD, PS2_VU0_CODE_SIZE);
++            packet.clear();
++            appendU32(packet, makeVifCmd(0x4Au, 2u, 0x01FFu));
++            packet.resize(packet.size() + 8u, 0x55u);
++            mem.processVIF0Data(packet.data(), static_cast<uint32_t>(packet.size()));
++            t.Equals(static_cast<uint32_t>(code[PS2_VU0_CODE_SIZE - 1u]), 0xCDu,
++                     "truncated MPG payload should not partially modify VU0 micro memory");
++        });
++
++        tc.Run("VIF1 MPG masks and wraps micro memory addresses", [](TestCase &t)
++        {
++            PS2Memory mem;
++            t.IsTrue(mem.initialize(), "PS2Memory initialize should succeed");
++
++            std::memset(mem.getVU1Code(), 0xCD, PS2_VU1_CODE_SIZE);
++            std::vector<uint8_t> packet;
++            appendU32(packet, makeVifCmd(0x4Au, 2u, 0x07FFu));
++            for (uint32_t i = 0; i < 16u; ++i)
++                packet.push_back(static_cast<uint8_t>(0x10u + i));
+ 
+             mem.processVIF1Data(packet.data(), static_cast<uint32_t>(packet.size()));
+ 
+             const uint8_t *code = mem.getVU1Code();
+             bool tailMatches = true;
+-            bool maskedStartMatches = true;
++            bool wrappedStartMatches = true;
+             for (uint32_t i = 0; i < 8u; ++i)
+             {
+                 tailMatches &= code[PS2_VU1_CODE_SIZE - 8u + i] == static_cast<uint8_t>(0x10u + i);
+-                maskedStartMatches &= code[i] == static_cast<uint8_t>(0x80u + i);
++                wrappedStartMatches &= code[i] == static_cast<uint8_t>(0x18u + i);
+             }
+             t.IsTrue(tailMatches, "MPG should write through the end of VU1 micro memory");
++            t.IsTrue(wrappedStartMatches, "MPG payload should wrap to the start of VU1 micro memory");
++
++            packet.clear();
++            appendU32(packet, makeVifCmd(0x4Au, 1u, 0x0800u));
++            for (uint32_t i = 0; i < 8u; ++i)
++                packet.push_back(static_cast<uint8_t>(0x80u + i));
++            mem.processVIF1Data(packet.data(), static_cast<uint32_t>(packet.size()));
++
++            bool maskedStartMatches = true;
++            for (uint32_t i = 0; i < 8u; ++i)
++                maskedStartMatches &= code[i] == static_cast<uint8_t>(0x80u + i);
+             t.IsTrue(maskedStartMatches, "MPG immediate 0x800 should wrap to VU1 micro address zero");
++
++            std::memset(mem.getVU1Code(), 0xCD, PS2_VU1_CODE_SIZE);
++            packet.clear();
++            appendU32(packet, makeVifCmd(0x4Au, 2u, 0x07FFu));
++            packet.resize(packet.size() + 8u, 0x55u);
++            mem.processVIF1Data(packet.data(), static_cast<uint32_t>(packet.size()));
++            t.Equals(static_cast<uint32_t>(code[PS2_VU1_CODE_SIZE - 1u]), 0xCDu,
++                     "truncated MPG payload should not partially modify VU1 micro memory");
+         });
+ 
+         tc.Run("VIF UNPACK num zero uploads 256 vectors", [](TestCase &t)
+-- 
+2.55.0.windows.5
+

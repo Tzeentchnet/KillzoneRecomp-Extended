@@ -5,27 +5,76 @@ This document records issues, pull requests, and design discussions that may be 
 [PCSX2/pcsx2](https://github.com/PCSX2/pcsx2). It tracks both filed submissions and candidates that still need
 evidence, design agreement, or independent human authorship.
 
-The duplicate check and source review were refreshed on 2026-11-10 against:
+The PS2Recomp pull-request and fork review was refreshed on 2026-11-11. The PCSX2 source review remains from
+2026-11-10. The baselines are:
 
 - PS2Recomp `main` at
   [`e5636981a1c9de368f6b71e819c3dc188dfedbf4`](https://github.com/ran-j/PS2Recomp/commit/e5636981a1c9de368f6b71e819c3dc188dfedbf4).
 - PCSX2 `master` at
   [`c8081bf5d63b1b83b77112632e1113a25b81058c`](https://github.com/PCSX2/pcsx2/commit/c8081bf5d63b1b83b77112632e1113a25b81058c).
-- The published
-  [PS2Recomp `killzone` branch](https://github.com/Tzeentchnet/PS2Recomp/tree/killzone).
+- The published PS2Recomp
+  [`killzone` branch at `fbde3f0`](https://github.com/Tzeentchnet/PS2Recomp/commit/fbde3f0cbbdec560201bd1001919eda4c59376d4).
 - The published
   [PCSX2 upscaler-foundation branch](https://github.com/Tzeentchnet/pcsx2/tree/feature/kzgs-upscaler-foundation).
 
 Before filing, rebase or reproduce against the then-current upstream head. Avoid including retail data, generated
 game code, screenshots, traces containing protected content, or paths to local disc images.
 
+## PS2Recomp refresh (2026-11-11)
+
+Canonical `main` is unchanged from the 2026-11-10 review. There is no pull request newer than #437. The two submitted
+PRs have no review or check results yet, and the multi-image RFC has no maintainer response. The useful new activity
+is therefore in fork branches, not canonical commits:
+
+| Priority | Source | Decision | Reason |
+|---:|---|---|---|
+| 1 | [PR #436 follow-up `7035404`](https://github.com/Tzeentchnet/PS2Recomp/commit/70354045ef118b11452d16f835575efa359c816f) | Adapt into the Killzone fork | The pinned implementation treats `JALR $zero, $rs` as a call. The submitted follow-up correctly keeps that no-link form on the indirect-jump fallback path and adds a focused test. |
+| 2 | [PR #437 implementation `9023b80`](https://github.com/Tzeentchnet/PS2Recomp/commit/9023b80d5cfb12881c76a1ef4277c8139dd7356d) | Adapt missing pieces | The pinned `4b3c2ab` handles VIF1 only. The submitted version also covers VIF0 and rejects incomplete payloads before changing micro memory. Preserve the fork's VIF1 identical-upload optimization and statistics while porting it. |
+| 3 | [Hardnyx VIF1 streaming work](https://github.com/Hardnyx/PS2Recomp/commits/main/) | Prototype as a reconciled series | It retains split MPG, UNPACK, fixed-register, DIRECT, and I-bit state across DMA blocks with extensive tests. It is relevant, but its MPG commit clips instead of wrapping and writes partial payloads immediately, conflicting with #437's validated behavior. Do not cherry-pick it alone. |
+| 4 | [AlenDavid handler-table discovery `813c01ed`](https://github.com/AlenDavid/PS2Recomp/commit/813c01edd8f0e37059e5fd0ad0870a23a869c255) | Evaluate against all three Killzone ELFs | The three-entry, fixed-stride heuristic could replace some explicit analyzer starts. Compare discovered starts, rejection counts, and generated coverage before adopting it; any new false function split is correctness-critical. |
+| 5 | [IOP import decode cache `f42ad188`](https://github.com/batatinhafcbatatinha-pixel/PS2Recomp/commit/f42ad1887c4a5ff359cc0aaa214008f73e69ad94) | Benchmark, then consider | The cache revalidates both stub words and import-table magic and clears on reset/unload. It is small and general, but there is no Killzone profile showing import-stub scanning is material. |
+| - | [IOMAN PR #326](https://github.com/ran-j/PS2Recomp/pull/326), mislabeled [PR #433](https://github.com/ran-j/PS2Recomp/pull/433), and broad [PR #426](https://github.com/ran-j/PS2Recomp/pull/426) | Defer | #326 and #433 compete for the same read-only host-file API. #426 combines that work with ISO9660, Android, CDVD, GS, VU, and diagnostics changes. Killzone has no current IOMAN blocker and already has a separate ISO/VFS path. |
+| - | [BioRhythmic scheduler hold `c3dcb5ab`](https://github.com/BioRhythmicStudios/PS2Recomp/commit/c3dcb5ab4cb4971b94a18677bbde75034015b6c3) | Do not adapt as written | It adds an untested process-global counter with a manually balanced C API and game-thread-only assumptions. If re-entrant host hooks need this, use a scoped scheduler-owned hold with underflow and resume tests. |
+
+The other newly active fork work is not a direct fit. Hardnyx's GS scanout series targets PS2Recomp's renderer rather
+than KzGS. The broad GPU-GS, SPU2, and VU performance branches in
+[batatinhafcbatatinha-pixel/PS2Recomp](https://github.com/batatinhafcbatatinha-pixel/PS2Recomp) and
+[AlenDavid/PS2Recomp](https://github.com/AlenDavid/PS2Recomp) need isolated correctness tests and Killzone benchmarks,
+not bulk merges. Android and OpenGL ES work in
+[LTDCrissOK/PS2Recomp](https://github.com/LTDCrissOK/PS2Recomp) is outside the active Windows/KzGS path.
+
+### Adaptation trial results (2026-11-11)
+
+All five recommendations were adapted on the isolated
+`test/recommended-adaptations-2026-11-11` PS2Recomp branch and exercised from the
+`test/ps2recomp-adaptations-2026-11-11` port branch:
+
+| Candidate | Trial decision | Measured result |
+|---|---|---|
+| JALR no-link handling | Accept | `JALR $zero, $rs` now retains the unresolved indirect-jump fallback while link-producing JALRs keep call semantics. The focused regression and the complete PS2Recomp suite pass. |
+| Complete VIF MPG semantics | Accept | VIF0 now masks and wraps destinations and rejects incomplete payloads before modifying micro memory. Existing VIF1 wrapping, identical-upload suppression, and statistics are preserved. All four focused MPG tests pass. |
+| Fragmented VIF1 streams | Accept the reconciled implementation | Partial opcode bytes and fixed-register, MPG, UNPACK, DIRECT/DIRECTHL, and I-bit payloads are retained atomically across calls; `FBRST.RST` cancels retained state. Existing PATH2 continuation remains integrated. All 19 focused VIF1 tests pass. |
+| Fixed-stride handler tables | Accept for the two available executables; keep the third comparison pending | Positive and negative synthetic fixtures pass. Regenerating the US and SCES-52004 builds produced zero changed, added, or removed generated files, and their register tables and Ghidra function maps remained byte-identical. SCES-52893 remains untested because its ELF/media is unavailable locally. |
+| IOP import cache validation | Accept the correctness hardening; do not claim a Killzone speedup | This fork already had an import cache. Cache hits now revalidate both stub words and import-table magic, while existing reset and module-range invalidation remain. All four IOP suites pass. A synthetic 1,024-stub benchmark measured 4,594 ns cold versus 7.98 ns cached (575.7x) and 4,847 ns cold versus 7.87 ns cached (615.9x); this isolates cache mechanics, not a game workload. |
+
+Integration validation after the final retained-buffer optimization:
+
+- The complete standalone PS2Recomp suite passes 450/450.
+- The Windows port builds in an initialized MSVC environment and all 37 enabled ISO-free tests pass.
+- Strict dependency reconstruction passes all 39 checks, including all 35 topic-patch checksums and the canonical
+  base-to-target patch.
+- US regeneration produced 31,998 generated files with no differences; SCES-52004 produced 32,015 with no
+  differences.
+- An accelerated SCES-52004 headless run using the supported `KZ_IPU=off` automation path reached `MainMenu` at
+  8.4 seconds and remained stable through the 60-second run.
+
 ## Filed submissions
 
 | Date | Submission | Status | Validation |
 |---|---|---|---|
-| 2026-11-10 | [ran-j/PS2Recomp#436](https://github.com/ran-j/PS2Recomp/pull/436) - avoid broad fallback for unresolved JALR calls | Open | Windows Release, MSVC and ClangCL: 447/447 tests passed |
-| 2026-11-10 | [ran-j/PS2Recomp#437](https://github.com/ran-j/PS2Recomp/pull/437) - wrap VIF MPG uploads within VU micro memory | Open | Windows Release, MSVC and ClangCL: 448/448 tests passed |
-| 2026-11-10 | [ran-j/PS2Recomp#438](https://github.com/ran-j/PS2Recomp/issues/438) - RFC for multiple recompiled images in one executable | Open | Design discussion backed by a tested downstream prototype |
+| 2026-11-10 | [ran-j/PS2Recomp#436](https://github.com/ran-j/PS2Recomp/pull/436) - avoid broad fallback for unresolved JALR calls | Open; no review/checks as of 2026-11-11 | Windows Release, MSVC and ClangCL: 447/447 tests passed |
+| 2026-11-10 | [ran-j/PS2Recomp#437](https://github.com/ran-j/PS2Recomp/pull/437) - wrap VIF MPG uploads within VU micro memory | Open; no review/checks as of 2026-11-11 | Windows Release, MSVC and ClangCL: 448/448 tests passed |
+| 2026-11-10 | [ran-j/PS2Recomp#438](https://github.com/ran-j/PS2Recomp/issues/438) - RFC for multiple recompiled images in one executable | Open; no response as of 2026-11-11 | Design discussion backed by a tested downstream prototype |
 
 ## Recommended filing order
 
@@ -64,6 +113,18 @@ micro memory. This matches the address masking and split-write behavior in PCSX2
   pre-existing `NUM=0` behavior. The full Windows Release suite passed 448/448 tests under MSVC 19.44 and
   ClangCL 19.1.5.
 
+**Downstream adaptation gap:** the pinned fork and
+[`0031-vif1-mpg-address-wrap.patch`](../patches/ps2recomp/0031-vif1-mpg-address-wrap.patch) still contain the earlier
+VIF1-only implementation. Port the submitted VIF0 behavior and complete-payload validation while retaining the
+fork's VIF1 identical-upload suppression and counters.
+
+Hardnyx's later
+[`933a4b54`](https://github.com/Hardnyx/PS2Recomp/commit/933a4b54cb6912e5939f71c007bb9a5c02b3729b)
+shows the orthogonal case where a valid MPG payload spans DMA packets. Its surrounding series also retains split
+UNPACK, fixed-register, DIRECT, and I-bit state. A combined implementation should buffer or otherwise validate a
+complete MPG command across packets, then apply #437's masked, wrapping upload atomically. Cherry-picking
+`933a4b54` alone would regress wrapping and the incomplete-payload guarantee.
+
 #### Unresolved JALR should register only its return PC as resumable
 
 **Filed:** [ran-j/PS2Recomp#436](https://github.com/ran-j/PS2Recomp/pull/436) on 2026-11-10.
@@ -89,6 +150,12 @@ The canonical tests verify that `pc + 8` remains a resume entry and emitted labe
 caller instructions are not promoted, `JALR $zero` retains broad fallback without a return entry, and no jump-table
 target is fabricated. The existing unresolved-`JR` fallback test remains unchanged. The full Windows Release suite
 passed 447/447 tests under MSVC 19.44 and ClangCL 19.1.5.
+
+**Downstream adaptation gap:** the pinned fork and
+[`0014-jalr-resume-only-return.patch`](../patches/ps2recomp/0014-jalr-resume-only-return.patch) contain the first
+submission commit but not follow-up [`7035404`](https://github.com/Tzeentchnet/PS2Recomp/commit/70354045ef118b11452d16f835575efa359c816f).
+They currently classify every `SPECIAL_JALR`, including `rd == 0`, as a call. Port the `rd != 0` guard and its
+no-link regression test, then refresh the reconstructable patch.
 
 #### VIF STCYCL `CL=0` should mean 256
 
@@ -168,6 +235,7 @@ privacy, release-build cost, and integration with existing runtime error reporti
 |---|---|
 | [ran-j/PS2Recomp#260](https://github.com/ran-j/PS2Recomp/issues/260) | Prepare a focused PR for the always-taken delay-slot resume path and coordinate it with #415. |
 | [ran-j/PS2Recomp#262](https://github.com/ran-j/PS2Recomp/issues/262) | Implement the corrected root cause: model 32 VI/control-register slots. Do not upstream the fork's CMSAR0-only workaround as the general fix. |
+| [ran-j/PS2Recomp#326](https://github.com/ran-j/PS2Recomp/pull/326), [#433](https://github.com/ran-j/PS2Recomp/pull/433), and [#426](https://github.com/ran-j/PS2Recomp/pull/426) | Reconcile the competing read-only IOMAN host-file APIs before contributing tests. #433's OpenGL title does not match its IOMAN diff, while #426 mixes the same work with a much larger Android/ISO/diagnostics branch. |
 | [ran-j/PS2Recomp#393](https://github.com/ran-j/PS2Recomp/issues/393) | Add portable-VU1 tests if Killzone can provide a synthetic paired-instruction reproduction; do not open another `vf0` issue. |
 | [ran-j/PS2Recomp#397](https://github.com/ran-j/PS2Recomp/issues/397), [#434](https://github.com/ran-j/PS2Recomp/issues/434), and [#435](https://github.com/ran-j/PS2Recomp/issues/435) | Contribute instruction tests or review; these already cover the known MMI translation findings. |
 | [ran-j/PS2Recomp#410](https://github.com/ran-j/PS2Recomp/pull/410) | Compare the fork's first-fit IOP heap reuse in [`3838fa9`](https://github.com/Tzeentchnet/PS2Recomp/commit/3838fa941a15015e4df556f801747f97e91ada71) and contribute long-session fragmentation tests rather than filing a second allocator report. |

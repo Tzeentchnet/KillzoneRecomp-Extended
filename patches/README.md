@@ -40,9 +40,9 @@ resulting tree to equal the pinned submodule tree.
   `MARK; DIRECT n` in the next DMAtag's TTE words. The runtime used to treat the bytes right after the first DIRECT as
   that pixel data. Those bytes were the VIFcodes, so every such upload (fonts, CLUTs, UI atlases) was shifted by 8
   bytes: 2 CT32 or 16 T4 pixels. The last 8 bytes of the data were then parsed as VIFcodes. Now VIFcodes are always
-  parsed. Only the payload of a DIRECT is re-wrapped in a synthesized IMAGE tag when an image is pending. Raw
-  continuation is kept only for a DIRECT cut off at the end of a DMA buffer (`m_vif1PendingDirectQwc`). Verified byte
-  for byte against real PCSX2's EE RAM through a PINE savestate.
+  parsed. Only the payload of a DIRECT is re-wrapped in a synthesized IMAGE tag when an image is pending. A DIRECT
+  split at a transport boundary is buffered until its complete declared GIF payload is available, then forwarded once.
+  Verified byte for byte against real PCSX2's EE RAM through a PINE savestate.
 - `0006-spu2-host-audio.patch`: SPU2 hook for sound (`ps2xIOP/include/ps2x/iop/iop_host_spu2.h`). With a host SPU2
   installed (`src/kz_audio.cpp` installs kzspu2), the IOP emulator routes these to it:
   - SPU2 register accesses (0x1F900000-0x1F9007FF; 32-bit accesses are split into 16-bit ones);
@@ -196,7 +196,9 @@ resulting tree to equal the pinned submodule tree.
 
 - `0014-jalr-resume-only-return.patch` (recompiler, needs regen): an unresolved indirect *call* (`jalr`) made every
   instruction of the calling function an entry point (label + switch case per instruction in ~4000 functions), as if
-  it were an unresolved local jump. A call only needs its return address as a resume point. Same fix as the
+  it were an unresolved local jump. A call only needs its return address as a resume point. A no-link
+  `jalr $zero,$rs` remains a tail jump and keeps the broad indirect fallback; a regression covers that distinction.
+  Same fix as the
   PS2Recomp DQ8 fork (PR #254). Together with release-grade compiler flags for RelWithDebInfo (top-level
   CMakeLists.txt: /Ob3 /GS- /arch:AVX2 /Qspectre- /Gy /Gw, /INCREMENTAL:NO /OPT:REF,ICF): Killzone in-game
   18.6 -> 29.4 frames/s at 60 Hz vblank (headless, same scene).
@@ -686,11 +688,12 @@ resulting tree to equal the pinned submodule tree.
   existing no-progress guard still prevents retry spinning. This preserves the four-picture video reserve without
   letting a long callback chain delay guest audio maintenance. The focused scheduler regression forces continued
   callback progress and verifies that exactly two proactive callbacks run before the queued picture is returned.
-- **0031-vif1-mpg-address-wrap.patch** - VIF1 `MPG` now masks its destination into the 16 KB VU1 micro memory and
-  wraps an upload that crosses the end back to address 0, as the hardware does; `NUM=0` still means 256
-  instructions. A truncated payload stops the packet instead of being partly copied. Identical uploads still skip
-  invalidating host VU programs. Found while investigating WIN-06 (a suspicious `MSCAL 0x2CE8` XGKICK); it is a
-  correctness fix with focused memory tests, not the WIN-06 root cause (the ten-run gate still failed 2/10).
+- **0031-vif1-mpg-address-wrap.patch** - `MPG` masks destinations into the 4 KB VU0 or 16 KB VU1 micro-memory
+  window and wraps an upload that crosses the end back to address 0, as the hardware does; `NUM=0` still means 256
+  instructions. A truncated payload stops before changing either memory. VIF1 identical uploads still skip
+  invalidating host VU programs and retain their statistics. Found while investigating WIN-06 (a suspicious
+  `MSCAL 0x2CE8` XGKICK); it is a correctness fix with focused VIF0/VIF1 memory tests, not the WIN-06 root cause
+  (the ten-run gate still failed 2/10).
 - **0032-dmac-call-overflow-vif-provenance.patch** - a third nested DMAC `CALL` now transfers its local payload and
   terminates the chain instead of following `ADDR` with the two-entry return stack already full, matching PCSX2.
   A focused GIF-chain regression covers the boundary. The same investigation extends `PS2X_CHAIN_VERIFY=1` with
@@ -704,6 +707,22 @@ resulting tree to equal the pinned submodule tree.
   Regression fixtures now use the verified PCM stream key, place PATH2 image continuations inside a subsequent
   `DIRECT`, reflect the optimized JALR return-only resume policy, and verify `SifInitRpc` without assuming synchronous
   IOP timing. `PS2X_TEST_FILTER=<substring>` provides focused execution in the minimal test harness.
+- **0034-vif1-fragmented-streams.patch** - retains an incomplete VIF1 command and payload across transport
+  boundaries, including partial command words. Fixed register payloads, wrapped MPG uploads, UNPACK data, and
+  DIRECT/DIRECTHL GIF packets are applied only after their declared payload is complete; payload-bearing I-bits
+  publish `STAT.INT` at that completion point. `FBRST.RST` cancels retained data. The bounded packet buffer preserves
+  the existing PATH2 image-continuation path and moves accumulated storage between fragments instead of repeatedly
+  copying it. Focused tests cover a real two-block DMA, atomic MPG and UNPACK, a mid-quadword DIRECT split, deferred
+  I-bit status, partial opcode bytes, and reset.
+- **0035-fixed-stride-handler-tables.patch** - supplements stripped-ELF callback discovery for handler pointers in
+  fixed-size records. A run needs three code pointers at the same 4-64 byte stride, non-identical targets, non-NOP
+  entries immediately after a control-transfer delay slot, and a reachable return. Negative fixtures reject internal
+  labels and repeated struct fields.
+- **0036-iop-import-cache-validation.patch** - the runtime already had the import-stub cache introduced by patch
+  0008. This follow-up records the source import table and revalidates both stub words plus table magic on every hit,
+  while retaining reset and module-range invalidation. The standalone test mutates each validation input and checks
+  both invalidation paths. Its synthetic 1,024-stub benchmark measured 4.59-4.85 us per cold scan versus
+  7.87-7.98 ns per cached decode (576-616x); this demonstrates the cache mechanism, not a Killzone workload speedup.
 - **experimental/ee-di-interrupt-gate.diff** (not applied; `git apply --directory=ext/PS2Recomp`) - makes
   `EeScheduler` honour Status.EIE: while the running context is inside `di`/`ei`, pending interrupt, SIF and stream
   invocations, time-slice preemption and event-driven thread switches wait for `ei` (50 ms safety valve,

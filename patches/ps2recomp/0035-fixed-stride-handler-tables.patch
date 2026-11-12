@@ -1,0 +1,216 @@
+From b21ead1362063b84613f33c8974cf750408c1cd3 Mon Sep 17 00:00:00 2001
+From: Tzeentchnet <58480142+Tzeentchnet@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 18:25:51 -0800
+Subject: [PATCH] feat: discover fixed-stride handler tables
+
+---
+ ps2xRecomp/src/lib/elf_parser.cpp     | 88 ++++++++++++++++++++++++++-
+ ps2xTest/src/ps2_recompiler_tests.cpp | 52 +++++++++++++++-
+ 2 files changed, 136 insertions(+), 4 deletions(-)
+
+diff --git a/ps2xRecomp/src/lib/elf_parser.cpp b/ps2xRecomp/src/lib/elf_parser.cpp
+index 9d3b9f0..7a1510b 100644
+--- a/ps2xRecomp/src/lib/elf_parser.cpp
++++ b/ps2xRecomp/src/lib/elf_parser.cpp
+@@ -1405,6 +1405,34 @@ namespace
+         return name == ".ctors" || name == ".dtors" || name == ".init_array" || name == ".fini_array";
+     }
+ 
++    bool FollowsControlTransfer(const std::vector<ps2recomp::Section> &sections, uint32_t address)
++    {
++        const ps2recomp::Section *section = FindCodeSectionByAddress(sections, address);
++        if (!section || !section->data)
++        {
++            return false;
++        }
++
++        const uint32_t offset = address - section->address;
++        if (offset < 2u * MIPS_INSTRUCTION_SIZE)
++        {
++            return true;
++        }
++
++        uint32_t raw = 0;
++        if (!ReadSectionWord(*section, offset - 2u * MIPS_INSTRUCTION_SIZE, raw))
++        {
++            return false;
++        }
++
++        const uint32_t opcode = OPCODE(raw);
++        const bool isJr = opcode == OPCODE_SPECIAL && FUNCTION(raw) == SPECIAL_JR;
++        const bool isJ = opcode == OPCODE_J;
++        const bool isUnconditionalBranch =
++            opcode == OPCODE_BEQ && RS(raw) == GPR_ZERO && RT(raw) == GPR_ZERO;
++        return isJr || isJ || isUnconditionalBranch;
++    }
++
+     void ScanDataFunctionPointerTables(const std::vector<ps2recomp::Section> &sections, std::unordered_set<uint32_t> &starts)
+     {
+         struct PointerCandidate
+@@ -1536,11 +1564,65 @@ namespace
+                 return false;
+             };
+ 
++            constexpr uint32_t kMaxRecordStrideBytes = 64u;
++            std::vector<int8_t> entryLikeCache(candidates.size(), -1);
++            auto entryLike = [&](size_t candidateIndex)
++            {
++                int8_t &cached = entryLikeCache[candidateIndex];
++                if (cached < 0)
++                {
++                    const uint32_t target = candidates[candidateIndex].target;
++                    uint32_t firstWord = 0;
++                    const ps2recomp::Section *codeSection = FindCodeSectionByAddress(sections, target);
++                    const bool startsWithNop =
++                        !codeSection || !codeSection->data ||
++                        !ReadSectionWord(*codeSection, target - codeSection->address, firstWord) ||
++                        firstWord == 0u;
++                    cached = (!startsWithNop &&
++                              FollowsControlTransfer(sections, target) &&
++                              LooksLikeCallableEntry(sections, target, true, true))
++                                 ? 1
++                                 : 0;
++                }
++                return cached == 1;
++            };
++
++            auto isPeriodicTableEntry = [&](size_t candidateIndex)
++            {
++                const auto stride = [&](size_t from, size_t to) -> uint32_t
++                {
++                    return candidates[to].sourceOffset - candidates[from].sourceOffset;
++                };
++                const auto isRun = [&](size_t first, size_t second, size_t third)
++                {
++                    const uint32_t step = stride(first, second);
++                    const bool distinctTargets =
++                        candidates[first].target != candidates[second].target ||
++                        candidates[second].target != candidates[third].target;
++                    return step >= MIPS_INSTRUCTION_SIZE &&
++                           step <= kMaxRecordStrideBytes &&
++                           stride(second, third) == step &&
++                           distinctTargets &&
++                           entryLike(first) && entryLike(second) && entryLike(third);
++                };
++
++                const size_t count = candidates.size();
++                return (candidateIndex >= 2u &&
++                        isRun(candidateIndex - 2u, candidateIndex - 1u, candidateIndex)) ||
++                       (candidateIndex >= 1u && candidateIndex + 1u < count &&
++                        isRun(candidateIndex - 1u, candidateIndex, candidateIndex + 1u)) ||
++                       (candidateIndex + 2u < count &&
++                        isRun(candidateIndex, candidateIndex + 1u, candidateIndex + 2u));
++            };
++
+             for (size_t index = 0; index < candidates.size(); ++index)
+             {
+                 if (candidates[index].hasConservativeShape)
+                 {
+-                    const bool clustered = dedicatedPointerSection || hasConservativeNeighborWithin(index, kClusterDistanceBytes);
++                    const bool clustered =
++                        dedicatedPointerSection ||
++                        hasConservativeNeighborWithin(index, kClusterDistanceBytes) ||
++                        isPeriodicTableEntry(index);
+                     if (clustered)
+                     {
+                         starts.insert(candidates[index].target);
+@@ -1549,7 +1631,9 @@ namespace
+                 }
+ 
+                 const bool hasConservativeAnchor = dedicatedPointerSection || hasClassDescriptorShape(index) || hasAlternatingPointerIdShape(index);
+-                if (hasConservativeAnchor && LooksLikeCallableEntry(sections, candidates[index].target, true, true))
++                if ((hasConservativeAnchor &&
++                     LooksLikeCallableEntry(sections, candidates[index].target, true, true)) ||
++                    isPeriodicTableEntry(index))
+                 {
+                     starts.insert(candidates[index].target);
+                 }
+diff --git a/ps2xTest/src/ps2_recompiler_tests.cpp b/ps2xTest/src/ps2_recompiler_tests.cpp
+index 2fb592f..15e4e0d 100644
+--- a/ps2xTest/src/ps2_recompiler_tests.cpp
++++ b/ps2xTest/src/ps2_recompiler_tests.cpp
+@@ -286,7 +286,7 @@ static bool writeMinimalMipsElfWithAddressTakenCallbacks(const std::filesystem::
+     text->set_addr_align(4);
+     text->set_address(0x00100000u);
+ 
+-    std::array<uint32_t, 384> textWords{};
++    std::array<uint32_t, 448> textWords{};
+     textWords[0] = 0x3C040010u;  // lui a0,0x10
+     textWords[1] = 0xAC800000u;  // sw zero,0(a0)
+     textWords[2] = 0x0C040008u;  // jal 0x00100020 (callback registrar)
+@@ -519,6 +519,27 @@ static bool writeMinimalMipsElfWithAddressTakenCallbacks(const std::filesystem::
+     textWords[373] = 0x03E00008u; // jr ra
+     textWords[374] = 0x27BD0010u; // addiu sp,sp,0x10 (delay slot)
+ 
++    textWords[382] = 0x03E00008u; // jr ra
++    textWords[383] = 0x00000000u; // nop (delay slot)
++    const std::array<uint32_t, 8> shortHandler = {
++        0x8C8F002Cu, 0x8DEE0000u, 0x95CF0010u, 0x25EDFFD4u,
++        0x25EFFF8Eu, 0xA5CD0064u, 0x03E00008u, 0xA5CF0034u};
++    const std::array<uint32_t, 10> mediumHandler = {
++        0x8C8F002Cu, 0x240E000Au, 0x8DED0000u, 0x95AF0010u, 0xA5AE0094u,
++        0x25EEFFD4u, 0x25EFFF8Eu, 0xA5AE0064u, 0x03E00008u, 0xA5AF0034u};
++    const std::array<uint32_t, 13> longHandler = {
++        0x8C8F002Cu, 0x8C8E25B4u, 0x8DED0000u, 0x8C8C0030u, 0x8DAF0010u,
++        0xADAE0048u, 0x000F77C2u, 0x01EE7821u, 0x000F7843u, 0xA5AF0034u,
++        0x858F0004u, 0x03E00008u, 0xADAF0070u};
++    std::copy(shortHandler.begin(), shortHandler.end(), textWords.begin() + 384);
++    std::copy(mediumHandler.begin(), mediumHandler.end(), textWords.begin() + 392);
++    std::copy(longHandler.begin(), longHandler.end(), textWords.begin() + 402);
++
++    const std::array<uint32_t, 8> repeatedHandler = {
++        0x8C820000u, 0x24420001u, 0x24420001u, 0x24420001u,
++        0x24420001u, 0x24420001u, 0x03E00008u, 0x00000000u};
++    std::copy(repeatedHandler.begin(), repeatedHandler.end(), textWords.begin() + 415);
++
+     text->set_data(reinterpret_cast<const char *>(textWords.data()),
+                    static_cast<ELFIO::Elf_Word>(textWords.size() * sizeof(uint32_t)));
+ 
+@@ -551,9 +572,22 @@ static bool writeMinimalMipsElfWithAddressTakenCallbacks(const std::filesystem::
+     data->set_flags(ELFIO::SHF_ALLOC | ELFIO::SHF_WRITE);
+     data->set_addr_align(4);
+     data->set_address(0x00201000u);
+-    std::array<uint32_t, 17> singletonCallbacks{};
++    std::array<uint32_t, 112> singletonCallbacks{};
+     singletonCallbacks[0] = 0x00100580u;
+     singletonCallbacks[16] = 0x00100588u;
++    const std::array<uint32_t, 24> handlerRecords = {
++        0x00201000u, 0x3u, 0xEu, 0xDu, 0x10020u, 0x00100600u,
++        0x00201000u, 0x4u, 0xEu, 0xDu, 0x10020u, 0x00100620u,
++        0x00201000u, 0x3u, 0xEu, 0xDu, 0x20020u, 0x00100648u,
++        0x00201000u, 0x4u, 0xEu, 0xDu, 0x10014u, 0x0u};
++    std::copy(handlerRecords.begin(), handlerRecords.end(), singletonCallbacks.begin() + 25);
++
++    singletonCallbacks[55] = 0x00100604u;
++    singletonCallbacks[65] = 0x00100624u;
++    singletonCallbacks[75] = 0x0010064Cu;
++    singletonCallbacks[85] = 0x0010067Cu;
++    singletonCallbacks[95] = 0x0010067Cu;
++    singletonCallbacks[105] = 0x0010067Cu;
+     data->set_data(reinterpret_cast<const char *>(singletonCallbacks.data()),
+                    static_cast<ELFIO::Elf_Word>(singletonCallbacks.size() * sizeof(uint32_t)));
+ 
+@@ -1658,6 +1692,20 @@ void register_ps2_recompiler_tests()
+                       "a data pointer must not split a function at a control-transfer delay slot");
+             t.IsFalse(hasStart(0x00100300u),
+                       "an isolated data pointer or non-callback code materialization must not become a function");
++            t.IsTrue(hasStart(0x00100600u),
++                     "a strided record table should discover its short leaf handler");
++            t.IsTrue(hasStart(0x00100620u),
++                     "a strided record table should discover a handler that returns beyond the probe window");
++            t.IsTrue(hasStart(0x00100648u),
++                     "a strided record table should discover its longest leaf handler");
++            t.IsFalse(hasStart(0x00100604u),
++                      "strided pointers to internal labels should not split handlers");
++            t.IsFalse(hasStart(0x00100624u),
++                      "a periodic table target must follow a control-transfer delay slot");
++            t.IsFalse(hasStart(0x0010064Cu),
++                      "a long handler's internal label should remain part of its owner");
++            t.IsFalse(hasStart(0x0010067Cu),
++                      "a repeated struct field should not be treated as a handler table");
+ 
+             std::error_code removeError;
+             std::filesystem::remove(elfPath, removeError);
+-- 
+2.55.0.windows.5
+

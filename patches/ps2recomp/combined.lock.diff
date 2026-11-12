@@ -914,10 +914,10 @@ index caa1417..7ae25b3 100644
              return true;
          case 8:
 diff --git a/ps2xIOP/src/emulator/imports/iop_imports.cpp b/ps2xIOP/src/emulator/imports/iop_imports.cpp
-index f13267f..2590c4f 100644
+index f13267f..9d0c367 100644
 --- a/ps2xIOP/src/emulator/imports/iop_imports.cpp
 +++ b/ps2xIOP/src/emulator/imports/iop_imports.cpp
-@@ -42,6 +42,7 @@ namespace ps2x::iop::detail
+@@ -42,18 +42,31 @@ namespace ps2x::iop::detail
  
      void IopImportRegistry::reset()
      {
@@ -925,20 +925,32 @@ index f13267f..2590c4f 100644
          m_libraries.clear();
      }
  
-@@ -54,6 +55,12 @@ namespace ps2x::iop::detail
+     std::optional<IopImportCall> IopImportRegistry::decode(uint32_t pc) const
+     {
+-        if (m_memory.read32(pc) != 0x03E00008u)
++        const uint32_t first = m_memory.read32(pc);
++        if (first != 0x03E00008u)
+             return std::nullopt;
+         const uint32_t delay = m_memory.read32(pc + 4u);
+         if ((delay & 0xFFFF0000u) != 0x24000000u)
              return std::nullopt;
  
          const uint32_t physicalPc = IopMemory::physicalAddress(pc);
 +        if (const auto hit = m_decodeCache.find(physicalPc); hit != m_decodeCache.end())
 +        {
-+            if (hit->second.delayWord == delay)
++            const CachedImport &cached = hit->second;
++            if (cached.firstWord == first &&
++                cached.delayWord == delay &&
++                m_memory.read32(cached.tableAddress) == kImportMagic)
++            {
 +                return hit->second.call;
++            }
 +            m_decodeCache.erase(hit);
 +        }
          const uint32_t searchBegin = physicalPc > 0x10000u ? physicalPc - 0x10000u : 0u;
          for (uint32_t candidate = physicalPc & ~3u; candidate >= searchBegin + 20u; candidate -= 4u)
          {
-@@ -89,11 +96,13 @@ namespace ps2x::iop::detail
+@@ -89,11 +102,13 @@ namespace ps2x::iop::detail
              }
              if (valid)
              {
@@ -948,12 +960,12 @@ index f13267f..2590c4f 100644
                      static_cast<uint16_t>(delay & 0xFFFFu),
                      m_memory.read16(table + 8u),
                  };
-+                m_decodeCache[physicalPc] = CachedImport{delay, call};
++                m_decodeCache[physicalPc] = CachedImport{first, delay, table, call};
 +                return call;
              }
          }
          return std::nullopt;
-@@ -129,6 +138,7 @@ namespace ps2x::iop::detail
+@@ -129,6 +144,7 @@ namespace ps2x::iop::detail
  
      bool IopImportRegistry::releaseExportTable(uint32_t address)
      {
@@ -961,7 +973,7 @@ index f13267f..2590c4f 100644
          return m_libraries.erase(IopMemory::physicalAddress(address)) != 0u;
      }
  
-@@ -184,6 +194,7 @@ namespace ps2x::iop::detail
+@@ -184,6 +200,7 @@ namespace ps2x::iop::detail
  
      void IopImportRegistry::eraseRange(uint32_t base, uint32_t size)
      {
@@ -970,7 +982,7 @@ index f13267f..2590c4f 100644
          {
              if (library->first >= base && library->first < base + size)
 diff --git a/ps2xIOP/src/emulator/imports/iop_imports.h b/ps2xIOP/src/emulator/imports/iop_imports.h
-index cae8d91..e8fd877 100644
+index cae8d91..781e1f6 100644
 --- a/ps2xIOP/src/emulator/imports/iop_imports.h
 +++ b/ps2xIOP/src/emulator/imports/iop_imports.h
 @@ -6,6 +6,7 @@
@@ -981,15 +993,16 @@ index cae8d91..e8fd877 100644
  #include <vector>
  
  namespace ps2x::iop::detail
-@@ -46,5 +47,13 @@ namespace ps2x::iop::detail
+@@ -46,5 +47,14 @@ namespace ps2x::iop::detail
  
          IopMemory &m_memory;
          std::map<uint32_t, ExportLibrary> m_libraries;
-+        // decode() runs on every IOP instruction and walks back up to 64 KB to find a stub's import table; remember
-+        // resolved stubs (keyed by physical pc, validated by the stub's two instruction words). Cleared on reset/unload.
++        // decode() runs on every IOP instruction and walks back up to 64 KB to find a stub's import table.
 +        struct CachedImport
 +        {
-+            uint32_t delayWord;
++            uint32_t firstWord = 0u;
++            uint32_t delayWord = 0u;
++            uint32_t tableAddress = 0u;
 +            IopImportCall call;
 +        };
 +        mutable std::unordered_map<uint32_t, CachedImport> m_decodeCache;
@@ -2372,6 +2385,147 @@ index b498155..6a1952e 100644
 +        return stats;
 +    }
  }
+diff --git a/ps2xIOP/tests/iop_import_tests.cpp b/ps2xIOP/tests/iop_import_tests.cpp
+index 3035618..53f8bc7 100644
+--- a/ps2xIOP/tests/iop_import_tests.cpp
++++ b/ps2xIOP/tests/iop_import_tests.cpp
+@@ -98,6 +98,126 @@ namespace
+         return false;
+     }
+ 
++    bool testImportDecodeCache()
++    {
++        IopMemory memory;
++        IopImportRegistry imports(memory);
++
++        constexpr uint32_t table = 0x1000u;
++        constexpr uint32_t stubCount = 1024u;
++        constexpr uint32_t firstStub = table + 20u;
++        constexpr uint32_t targetStub = firstStub + (stubCount - 1u) * 8u;
++        memory.write32(table, 0x41E00000u);
++        memory.write16(table + 8u, 0x0102u);
++        constexpr char library[8] = {'c', 'a', 'c', 'h', 'e', 'l', 'i', 'b'};
++        if (!expect(memory.writeRam(table + 12u, library, sizeof(library)),
++                    "import cache test library name did not fit"))
++            return false;
++        for (uint32_t index = 0u; index < stubCount; ++index)
++        {
++            const uint32_t stub = firstStub + index * 8u;
++            memory.write32(stub, 0x03E00008u);
++            memory.write32(stub + 4u, 0x24000000u | index);
++        }
++
++        const auto initial = imports.decode(targetStub);
++        if (!expect(initial && initial->library == "cachelib" &&
++                        initial->ordinal == stubCount - 1u &&
++                        initial->version == 0x0102u,
++                    "cold import decode returned the wrong call"))
++            return false;
++
++        const auto alias = imports.decode(0x80000000u | targetStub);
++        if (!expect(alias && alias->ordinal == stubCount - 1u,
++                    "physical-address cache key did not serve an aliased import stub"))
++            return false;
++
++        memory.write32(targetStub + 4u, 0x24000007u);
++        const auto changedOrdinal = imports.decode(targetStub);
++        if (!expect(changedOrdinal && changedOrdinal->ordinal == 7u,
++                    "cache did not revalidate the import stub delay word"))
++            return false;
++        memory.write32(targetStub + 4u, 0x24000000u | (stubCount - 1u));
++
++        memory.write32(targetStub, 0u);
++        if (!expect(!imports.decode(targetStub),
++                    "cache accepted a modified import stub return word"))
++            return false;
++        memory.write32(targetStub, 0x03E00008u);
++        if (!expect(static_cast<bool>(imports.decode(targetStub)),
++                    "restored import stub did not decode"))
++            return false;
++
++        memory.write32(table, 0u);
++        if (!expect(!imports.decode(targetStub),
++                    "cache accepted a removed import table"))
++            return false;
++        memory.write32(table, 0x41E00000u);
++        if (!expect(static_cast<bool>(imports.decode(targetStub)),
++                    "restored import table did not decode"))
++            return false;
++
++        constexpr char renamed[8] = {'n', 'e', 'w', 'l', 'i', 'b', '\0', '\0'};
++        if (!expect(memory.writeRam(table + 12u, renamed, sizeof(renamed)),
++                    "renamed import library did not fit"))
++            return false;
++        imports.eraseRange(table, targetStub + 8u - table);
++        const auto afterErase = imports.decode(targetStub);
++        if (!expect(afterErase && afterErase->library == "newlib",
++                    "module-range erase did not invalidate decoded imports"))
++            return false;
++
++        constexpr char resetName[8] = {'r', 'e', 's', 'e', 't', 'l', 'i', 'b'};
++        if (!expect(memory.writeRam(table + 12u, resetName, sizeof(resetName)),
++                    "reset import library name did not fit"))
++            return false;
++        imports.reset();
++        const auto afterReset = imports.decode(targetStub);
++        if (!expect(afterReset && afterReset->library == "resetlib",
++                    "registry reset did not invalidate decoded imports"))
++            return false;
++
++        constexpr uint32_t coldIterations = 200u;
++        constexpr uint32_t cachedIterations = 20000u;
++        uint64_t checksum = 0u;
++        const auto coldStart = std::chrono::steady_clock::now();
++        for (uint32_t iteration = 0u; iteration < coldIterations; ++iteration)
++        {
++            imports.reset();
++            const auto call = imports.decode(targetStub);
++            if (!call)
++                return expect(false, "cold benchmark import failed to decode");
++            checksum += call->ordinal;
++        }
++        const auto coldEnd = std::chrono::steady_clock::now();
++
++        imports.reset();
++        if (!expect(static_cast<bool>(imports.decode(targetStub)),
++                    "cached benchmark import failed to prime"))
++            return false;
++        const auto cachedStart = std::chrono::steady_clock::now();
++        for (uint32_t iteration = 0u; iteration < cachedIterations; ++iteration)
++        {
++            const auto call = imports.decode(targetStub);
++            if (!call)
++                return expect(false, "cached benchmark import failed to decode");
++            checksum += call->ordinal;
++        }
++        const auto cachedEnd = std::chrono::steady_clock::now();
++
++        const double coldNs =
++            static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(coldEnd - coldStart).count()) /
++            coldIterations;
++        const double cachedNs =
++            static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(cachedEnd - cachedStart).count()) /
++            cachedIterations;
++        std::cout << "IOP import decode benchmark: cold=" << coldNs
++                  << " ns/call cached=" << cachedNs
++                  << " ns/call speedup=" << (coldNs / cachedNs) << "x\n";
++        return expect(checksum != 0u, "import benchmark result was optimized away") &&
++               expect(cachedNs < coldNs, "decoded import cache was not faster than a cold scan");
++    }
++
+     bool testLoadcoreRebootLibraryMode()
+     {
+         IopMemory memory;
+@@ -330,7 +450,8 @@ namespace
+ 
+ int main()
+ {
+-    if (!testLoadcoreRebootLibraryMode() || !testCdvdSpecialControl() || !testCdvdSearchFile() ||
++    if (!testImportDecodeCache() || !testLoadcoreRebootLibraryMode() ||
++        !testCdvdSpecialControl() || !testCdvdSearchFile() ||
+         !testTimrmanPeriodicCallback())
+         return 1;
+     std::cout << "ps2xIOP import tests passed\n";
 diff --git a/ps2xRecomp/include/ps2recomp/code_generator.h b/ps2xRecomp/include/ps2recomp/code_generator.h
 index 1bdf0f6..84f0170 100644
 --- a/ps2xRecomp/include/ps2recomp/code_generator.h
@@ -2642,12 +2796,15 @@ index 97dc2dd..b85fcd1 100644
          general["stubs"] = config.stubImplementations;
          general["entry_points"] = config.entryPointHints;
 diff --git a/ps2xRecomp/src/lib/control_flow_analyzer.cpp b/ps2xRecomp/src/lib/control_flow_analyzer.cpp
-index ed7578d..250978d 100644
+index ed7578d..e889e5d 100644
 --- a/ps2xRecomp/src/lib/control_flow_analyzer.cpp
 +++ b/ps2xRecomp/src/lib/control_flow_analyzer.cpp
-@@ -194,7 +194,12 @@ namespace ps2recomp
+@@ -192,9 +192,14 @@ namespace ps2recomp
+             bool needsIndirectFallback = false;
+             for (const Instruction *jrInst : indirectJumps)
              {
-                 if (jrInst->function == SPECIAL_JALR)
+-                if (jrInst->function == SPECIAL_JALR)
++                if (jrInst->function == SPECIAL_JALR && jrInst->rd != 0u)
                  {
 +                    // An indirect *call*: the target is another function, entered through the runtime dispatcher.
 +                    // Only the return address needs a resume label. Treating it like an unresolved local jump made
@@ -2961,6 +3118,123 @@ index 1823a39..2ef9db2 100644
                      "if (ctx->cop0_status & 0x4) {{ \n" // Check ERL bit (bit 2)
                      "    ctx->pc = ctx->cop0_errorepc; \n"
                      "    ctx->cop0_status &= ~0x4; \n" // Clear ERL bit
+diff --git a/ps2xRecomp/src/lib/elf_parser.cpp b/ps2xRecomp/src/lib/elf_parser.cpp
+index 9d3b9f0..7a1510b 100644
+--- a/ps2xRecomp/src/lib/elf_parser.cpp
++++ b/ps2xRecomp/src/lib/elf_parser.cpp
+@@ -1405,6 +1405,34 @@ namespace
+         return name == ".ctors" || name == ".dtors" || name == ".init_array" || name == ".fini_array";
+     }
+ 
++    bool FollowsControlTransfer(const std::vector<ps2recomp::Section> &sections, uint32_t address)
++    {
++        const ps2recomp::Section *section = FindCodeSectionByAddress(sections, address);
++        if (!section || !section->data)
++        {
++            return false;
++        }
++
++        const uint32_t offset = address - section->address;
++        if (offset < 2u * MIPS_INSTRUCTION_SIZE)
++        {
++            return true;
++        }
++
++        uint32_t raw = 0;
++        if (!ReadSectionWord(*section, offset - 2u * MIPS_INSTRUCTION_SIZE, raw))
++        {
++            return false;
++        }
++
++        const uint32_t opcode = OPCODE(raw);
++        const bool isJr = opcode == OPCODE_SPECIAL && FUNCTION(raw) == SPECIAL_JR;
++        const bool isJ = opcode == OPCODE_J;
++        const bool isUnconditionalBranch =
++            opcode == OPCODE_BEQ && RS(raw) == GPR_ZERO && RT(raw) == GPR_ZERO;
++        return isJr || isJ || isUnconditionalBranch;
++    }
++
+     void ScanDataFunctionPointerTables(const std::vector<ps2recomp::Section> &sections, std::unordered_set<uint32_t> &starts)
+     {
+         struct PointerCandidate
+@@ -1536,11 +1564,65 @@ namespace
+                 return false;
+             };
+ 
++            constexpr uint32_t kMaxRecordStrideBytes = 64u;
++            std::vector<int8_t> entryLikeCache(candidates.size(), -1);
++            auto entryLike = [&](size_t candidateIndex)
++            {
++                int8_t &cached = entryLikeCache[candidateIndex];
++                if (cached < 0)
++                {
++                    const uint32_t target = candidates[candidateIndex].target;
++                    uint32_t firstWord = 0;
++                    const ps2recomp::Section *codeSection = FindCodeSectionByAddress(sections, target);
++                    const bool startsWithNop =
++                        !codeSection || !codeSection->data ||
++                        !ReadSectionWord(*codeSection, target - codeSection->address, firstWord) ||
++                        firstWord == 0u;
++                    cached = (!startsWithNop &&
++                              FollowsControlTransfer(sections, target) &&
++                              LooksLikeCallableEntry(sections, target, true, true))
++                                 ? 1
++                                 : 0;
++                }
++                return cached == 1;
++            };
++
++            auto isPeriodicTableEntry = [&](size_t candidateIndex)
++            {
++                const auto stride = [&](size_t from, size_t to) -> uint32_t
++                {
++                    return candidates[to].sourceOffset - candidates[from].sourceOffset;
++                };
++                const auto isRun = [&](size_t first, size_t second, size_t third)
++                {
++                    const uint32_t step = stride(first, second);
++                    const bool distinctTargets =
++                        candidates[first].target != candidates[second].target ||
++                        candidates[second].target != candidates[third].target;
++                    return step >= MIPS_INSTRUCTION_SIZE &&
++                           step <= kMaxRecordStrideBytes &&
++                           stride(second, third) == step &&
++                           distinctTargets &&
++                           entryLike(first) && entryLike(second) && entryLike(third);
++                };
++
++                const size_t count = candidates.size();
++                return (candidateIndex >= 2u &&
++                        isRun(candidateIndex - 2u, candidateIndex - 1u, candidateIndex)) ||
++                       (candidateIndex >= 1u && candidateIndex + 1u < count &&
++                        isRun(candidateIndex - 1u, candidateIndex, candidateIndex + 1u)) ||
++                       (candidateIndex + 2u < count &&
++                        isRun(candidateIndex, candidateIndex + 1u, candidateIndex + 2u));
++            };
++
+             for (size_t index = 0; index < candidates.size(); ++index)
+             {
+                 if (candidates[index].hasConservativeShape)
+                 {
+-                    const bool clustered = dedicatedPointerSection || hasConservativeNeighborWithin(index, kClusterDistanceBytes);
++                    const bool clustered =
++                        dedicatedPointerSection ||
++                        hasConservativeNeighborWithin(index, kClusterDistanceBytes) ||
++                        isPeriodicTableEntry(index);
+                     if (clustered)
+                     {
+                         starts.insert(candidates[index].target);
+@@ -1549,7 +1631,9 @@ namespace
+                 }
+ 
+                 const bool hasConservativeAnchor = dedicatedPointerSection || hasClassDescriptorShape(index) || hasAlternatingPointerIdShape(index);
+-                if (hasConservativeAnchor && LooksLikeCallableEntry(sections, candidates[index].target, true, true))
++                if ((hasConservativeAnchor &&
++                     LooksLikeCallableEntry(sections, candidates[index].target, true, true)) ||
++                    isPeriodicTableEntry(index))
+                 {
+                     starts.insert(candidates[index].target);
+                 }
 diff --git a/ps2xRecomp/src/lib/fpu_translator.cpp b/ps2xRecomp/src/lib/fpu_translator.cpp
 index 944cee7..90e565e 100644
 --- a/ps2xRecomp/src/lib/fpu_translator.cpp
@@ -4744,7 +5018,7 @@ index 0000000..955febf
 +void ps2SetHostVu0(const PS2HostVu0 &hooks);
 +const PS2HostVu0 &ps2HostVu0();
 diff --git a/ps2xRuntime/include/runtime/ps2_memory.h b/ps2xRuntime/include/runtime/ps2_memory.h
-index ea86a9c..4afdcbe 100644
+index ea86a9c..3f3e4e5 100644
 --- a/ps2xRuntime/include/runtime/ps2_memory.h
 +++ b/ps2xRuntime/include/runtime/ps2_memory.h
 @@ -335,6 +335,7 @@ public:
@@ -4755,14 +5029,12 @@ index ea86a9c..4afdcbe 100644
      void processGIFPacket(uint32_t srcPhysAddr, uint32_t qwCount);
      void processGIFPacket(const uint8_t *data, uint32_t sizeBytes);
      bool tryProcessNativeGifImageUploadChain(GS &gs, uint32_t tadr, uint32_t chcr);
-@@ -409,6 +410,10 @@ public:
+@@ -409,6 +410,8 @@ public:
      bool m_path3Masked = false;
      uint32_t m_vif1PendingPath2ImageQwc = 0u;
      bool m_vif1PendingPath2DirectHl = false;
-+    // Remaining data qwords of a VIF1 DIRECT/DIRECTHL cut off by the end of a processVIF1Data() buffer; the next
-+    // buffer starts with that raw data (no VIFcodes).
-+    uint32_t m_vif1PendingDirectQwc = 0u;
-+    bool m_vif1PendingDirectHl = false;
++    // Retains a VIFcode and its partial payload until the command can be applied atomically.
++    std::vector<uint8_t> m_vif1PendingPacket;
      std::vector<std::vector<uint8_t>> m_path3MaskedFifo;
  
      struct PendingTransfer
@@ -8240,7 +8512,7 @@ index 0000000..2e4ef9e
 +
 +void ps2IopDrainPosted(PS2Runtime &runtime);
 diff --git a/ps2xRuntime/src/lib/ps2_memory.cpp b/ps2xRuntime/src/lib/ps2_memory.cpp
-index 37b6a4d..2d26738 100644
+index 37b6a4d..1f7a43d 100644
 --- a/ps2xRuntime/src/lib/ps2_memory.cpp
 +++ b/ps2xRuntime/src/lib/ps2_memory.cpp
 @@ -1,8 +1,17 @@
@@ -8567,7 +8839,7 @@ index 37b6a4d..2d26738 100644
      m_seenGifCopy = false;
      m_dmaStartCount.store(0, std::memory_order_relaxed);
      m_gifCopyCount.store(0, std::memory_order_relaxed);
-@@ -325,12 +576,15 @@ bool PS2Memory::initialize(size_t ramSize)
+@@ -325,12 +576,14 @@ bool PS2Memory::initialize(size_t ramSize)
      {
          std::lock_guard<std::mutex> lock(m_completedDmacMutex);
          m_completedDmacCauses.clear();
@@ -8578,12 +8850,11 @@ index 37b6a4d..2d26738 100644
      m_path3MaskedFifo.clear();
      m_vif1PendingPath2ImageQwc = 0u;
      m_vif1PendingPath2DirectHl = false;
-+    m_vif1PendingDirectQwc = 0u;
-+    m_vif1PendingDirectHl = false;
++    m_vif1PendingPacket.clear();
      resetEeTimers();
  
      try
-@@ -355,6 +609,7 @@ bool PS2Memory::initialize(size_t ramSize)
+@@ -355,6 +608,7 @@ bool PS2Memory::initialize(size_t ramSize)
  
          // Initialize I/O registers
          m_ioRegisters.clear();
@@ -8591,7 +8862,7 @@ index 37b6a4d..2d26738 100644
  
          // Initialize GS registers
          memset(&gs_regs, 0, sizeof(gs_regs));
-@@ -370,17 +625,44 @@ bool PS2Memory::initialize(size_t ramSize)
+@@ -370,17 +624,44 @@ bool PS2Memory::initialize(size_t ramSize)
          m_gsVRAM = new uint8_t[PS2_GS_VRAM_SIZE];
          std::memset(m_gsVRAM, 0, PS2_GS_VRAM_SIZE);
  
@@ -8640,7 +8911,7 @@ index 37b6a4d..2d26738 100644
  
          // Initialize VIF registers
          memset(&vif0_regs, 0, sizeof(vif0_regs));
-@@ -402,36 +684,87 @@ bool PS2Memory::initialize(size_t ramSize)
+@@ -402,36 +683,87 @@ bool PS2Memory::initialize(size_t ramSize)
  void PS2Memory::resetEeTimers() noexcept
  {
      m_eeTimers = {};
@@ -8744,7 +9015,7 @@ index 37b6a4d..2d26738 100644
          if (ticks == 0u)
          {
              continue;
-@@ -480,46 +813,98 @@ uint32_t PS2Memory::advanceEeTimers(uint64_t eeCycles) noexcept
+@@ -480,46 +812,98 @@ uint32_t PS2Memory::advanceEeTimers(uint64_t eeCycles) noexcept
      return interruptMask;
  }
  
@@ -8870,7 +9141,7 @@ index 37b6a4d..2d26738 100644
  }
  
  bool PS2Memory::isScratchpad(uint32_t address) const
-@@ -558,11 +943,16 @@ const uint8_t *PS2Memory::mapVuMemory(uint32_t physAddr, uint32_t size, uint32_t
+@@ -558,11 +942,16 @@ const uint8_t *PS2Memory::mapVuMemory(uint32_t physAddr, uint32_t size, uint32_t
      {
          return ptr;
      }
@@ -8888,7 +9159,7 @@ index 37b6a4d..2d26738 100644
  }
  
  uint32_t PS2Memory::translateAddress(uint32_t virtualAddress)
-@@ -821,6 +1211,8 @@ uint64_t PS2Memory::read64(uint32_t address)
+@@ -821,6 +1210,8 @@ uint64_t PS2Memory::read64(uint32_t address)
  
      // 64-bit IO read: compose from the two adjacent 32-bit IO register slots
      // to avoid any side-effects from read32 handlers.
@@ -8897,7 +9168,7 @@ index 37b6a4d..2d26738 100644
      if (isIoRegister(address))
      {
          uint32_t lo = m_ioRegisters.count(address) ? m_ioRegisters[address] : 0u;
-@@ -840,6 +1232,13 @@ __m128i PS2Memory::read128(uint32_t address)
+@@ -840,6 +1231,13 @@ __m128i PS2Memory::read128(uint32_t address)
      const bool scratch = isScratchpad(address);
      uint32_t physAddr = translateAddress(address);
  
@@ -8911,7 +9182,7 @@ index 37b6a4d..2d26738 100644
      if (scratch)
      {
          inRange(physAddr, sizeof(__m128i), PS2_SCRATCHPAD_SIZE, "read128 scratchpad", address);
-@@ -1011,6 +1410,12 @@ void PS2Memory::write64(uint32_t address, uint64_t value)
+@@ -1011,6 +1409,12 @@ void PS2Memory::write64(uint32_t address, uint64_t value)
          throw std::runtime_error("Unaligned 64-bit write at address: 0x" + std::to_string(address));
      }
  
@@ -8924,7 +9195,7 @@ index 37b6a4d..2d26738 100644
      if (isGsPrivReg(address))
      {
          const uint32_t regOff = (address - PS2_GS_PRIV_REG_BASE) & ~0x7u;
-@@ -1070,6 +1475,13 @@ void PS2Memory::write128(uint32_t address, __m128i value)
+@@ -1070,6 +1474,13 @@ void PS2Memory::write128(uint32_t address, __m128i value)
      const bool scratch = isScratchpad(address);
      uint32_t physAddr = translateAddress(address);
  
@@ -8938,7 +9209,7 @@ index 37b6a4d..2d26738 100644
      if (!scratch && physAddr == 0x10004000u) // VIF0_FIFO
      {
          alignas(16) uint8_t fifoData[16];
-@@ -1081,6 +1493,7 @@ void PS2Memory::write128(uint32_t address, __m128i value)
+@@ -1081,6 +1492,7 @@ void PS2Memory::write128(uint32_t address, __m128i value)
      {
          alignas(16) uint8_t fifoData[16];
          _mm_storeu_si128(reinterpret_cast<__m128i *>(fifoData), value);
@@ -8946,7 +9217,7 @@ index 37b6a4d..2d26738 100644
          processVIF1Data(fifoData, sizeof(fifoData));
          return;
      }
-@@ -1124,10 +1537,23 @@ void PS2Memory::write128(uint32_t address, __m128i value)
+@@ -1124,10 +1536,23 @@ void PS2Memory::write128(uint32_t address, __m128i value)
  
  bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
  {
@@ -8970,7 +9241,7 @@ index 37b6a4d..2d26738 100644
          EeTimer &timer = m_eeTimers[timerIndex];
          switch (timerOffset)
          {
-@@ -1155,6 +1581,19 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1155,6 +1580,19 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
          default:
              return false;
          }
@@ -8990,7 +9261,7 @@ index 37b6a4d..2d26738 100644
          return true;
      }
  
-@@ -1221,6 +1660,9 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1221,6 +1659,9 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
      if (address >= 0x10003C00u && address < 0x10003E00u)
      {
          m_vifWriteCount.fetch_add(1, std::memory_order_relaxed);
@@ -9000,16 +9271,15 @@ index 37b6a4d..2d26738 100644
  
          switch (address)
          {
-@@ -1231,6 +1673,8 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1231,6 +1672,7 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                  std::memset(&vif1_regs, 0, sizeof(vif1_regs));
                  m_vif1PendingPath2ImageQwc = 0u;
                  m_vif1PendingPath2DirectHl = false;
-+                m_vif1PendingDirectQwc = 0u;
-+                m_vif1PendingDirectHl = false;
++                m_vif1PendingPacket.clear();
                  m_path3Masked = false;
                  if (wasPath3Masked)
                      flushMaskedPath3Packets();
-@@ -1302,14 +1746,20 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1302,14 +1744,20 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
              }
  
              const uint32_t channelBase = address & 0xFFFFFF00;
@@ -9031,7 +9301,7 @@ index 37b6a4d..2d26738 100644
  
              if ((channelBase == 0x1000A000u || channelBase == 0x10009000u || channelBase == 0x10008000u) && (m_gsVRAM || channelBase == 0x10008000u))
              {
-@@ -1339,17 +1789,40 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1339,17 +1787,40 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                  }
                  else if (mode == 1)
                  {
@@ -9076,7 +9346,7 @@ index 37b6a4d..2d26738 100644
                          uint32_t bytes = (bytes64 > 0xFFFFFFFFull) ? 0xFFFFFFFFu : static_cast<uint32_t>(bytes64);
                          const bool scratch = isScratchpad(srcAddr);
                          uint32_t src = 0;
-@@ -1376,7 +1849,8 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1376,7 +1847,8 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                                  chunk = maxSz2 - src;
                              if (chunk == 0)
                                  break;
@@ -9086,7 +9356,7 @@ index 37b6a4d..2d26738 100644
                              bytes -= chunk;
                              src += chunk;
                          }
-@@ -1395,7 +1869,7 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1395,7 +1867,7 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
  
                          // CHCR.TTE sends the DMAtag's upper 64 bits to the channel before
                          // the tag payload. VIF chains use those bytes for two VIFcodes.
@@ -9095,7 +9365,7 @@ index 37b6a4d..2d26738 100644
                      };
  
                      const bool isVifChannel =
-@@ -1438,13 +1912,17 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1438,13 +1910,17 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                          uint16_t tagQwc = static_cast<uint16_t>(tag & 0xFFFF);
                          uint32_t id = static_cast<uint32_t>((tag >> 28) & 0x7);
                          const bool irq = ((tag >> 31) & 0x1ull) != 0ull;
@@ -9114,7 +9384,7 @@ index 37b6a4d..2d26738 100644
  
                          switch (id)
                          {
-@@ -1480,8 +1958,17 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1480,8 +1956,17 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                                      asr1 = retAddr;
                                      asp = 2u;
                                  }
@@ -9133,7 +9403,7 @@ index 37b6a4d..2d26738 100644
                              break;
                          case 6:
                              dataAddr = tagAddr + 16;
-@@ -1510,9 +1997,20 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1510,9 +1995,20 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                              break;
                          }
  
@@ -9155,7 +9425,7 @@ index 37b6a4d..2d26738 100644
                          if (hasPayload)
                              appendData(dataAddr, tagQwc);
                          if (irq && tieEnabled)
-@@ -1521,6 +2019,26 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1521,6 +2017,26 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                              break;
                      }
  
@@ -9182,7 +9452,7 @@ index 37b6a4d..2d26738 100644
                      m_ioRegisters[channelBase + 0x30] = tagAddr;
                      m_ioRegisters[channelBase + 0x40] = asr0;
                      m_ioRegisters[channelBase + 0x50] = asr1;
-@@ -1548,6 +2066,8 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1548,6 +2064,8 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                              m_pendingVif0Transfers.push_back(std::move(pt));
                          }
                      }
@@ -9191,7 +9461,7 @@ index 37b6a4d..2d26738 100644
                      // else if (channelBase == 0x10009000u)
                      // {
  
-@@ -1562,7 +2082,9 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1562,7 +2080,9 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                      (channelBase == 0x1000A000u) ? (m_gifPacketCallback || m_gifArbiter != nullptr) : true;
                  if (autoProcessTransfers)
                  {
@@ -9202,7 +9472,7 @@ index 37b6a4d..2d26738 100644
                  }
              }
          }
-@@ -1584,6 +2106,20 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1584,6 +2104,20 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
      return false;
  }
  
@@ -9223,7 +9493,7 @@ index 37b6a4d..2d26738 100644
  bool PS2Memory::tryProcessScratchpadDma(uint32_t channelBase, uint32_t chcr)
  {
      static constexpr uint32_t kSprFromChannel = 0x1000D000u;
-@@ -1591,9 +2127,188 @@ bool PS2Memory::tryProcessScratchpadDma(uint32_t channelBase, uint32_t chcr)
+@@ -1591,9 +2125,188 @@ bool PS2Memory::tryProcessScratchpadDma(uint32_t channelBase, uint32_t chcr)
      if (channelBase != kSprFromChannel && channelBase != kSprToChannel)
          return false;
  
@@ -9413,7 +9683,7 @@ index 37b6a4d..2d26738 100644
  
      const uint32_t qwc = m_ioRegisters[channelBase + 0x20u] & 0xFFFFu;
      const uint32_t byteCount = qwc * 16u;
-@@ -1610,33 +2325,52 @@ bool PS2Memory::tryProcessScratchpadDma(uint32_t channelBase, uint32_t chcr)
+@@ -1610,33 +2323,52 @@ bool PS2Memory::tryProcessScratchpadDma(uint32_t channelBase, uint32_t chcr)
          return false;
      }
  
@@ -9474,7 +9744,7 @@ index 37b6a4d..2d26738 100644
      m_ioRegisters[channelBase + 0x20u] = 0u;
      m_ioRegisters[channelBase + 0x80u] = (originalSadr + byteCount) & 0x3FF0u;
      completeDmacChannel(channelBase, fromScratchpad ? 8u : 9u);
-@@ -1662,6 +2396,8 @@ void PS2Memory::completeDmacChannel(uint32_t channelBase, uint32_t cause)
+@@ -1662,6 +2394,8 @@ void PS2Memory::completeDmacChannel(uint32_t channelBase, uint32_t cause)
  
  void PS2Memory::processPendingTransfers()
  {
@@ -9483,7 +9753,7 @@ index 37b6a4d..2d26738 100644
      const bool hadGif = !m_pendingGifTransfers.empty();
      uint32_t observedGifQwc = 0u;
      for (const auto &transfer : m_pendingGifTransfers)
-@@ -1741,6 +2477,8 @@ void PS2Memory::processPendingTransfers()
+@@ -1741,6 +2475,8 @@ void PS2Memory::processPendingTransfers()
              }
          }
      }
@@ -9492,7 +9762,7 @@ index 37b6a4d..2d26738 100644
      m_pendingGifTransfers.clear();
  
      const bool hadVif0 = !m_pendingVif0Transfers.empty();
-@@ -1799,6 +2537,8 @@ void PS2Memory::processPendingTransfers()
+@@ -1799,6 +2535,8 @@ void PS2Memory::processPendingTransfers()
              }
          }
      }
@@ -9501,7 +9771,7 @@ index 37b6a4d..2d26738 100644
      m_pendingVif0Transfers.clear();
  
      const bool hadVif1 = !m_pendingVif1Transfers.empty();
-@@ -1857,6 +2597,8 @@ void PS2Memory::processPendingTransfers()
+@@ -1857,6 +2595,8 @@ void PS2Memory::processPendingTransfers()
              }
          }
      }
@@ -9510,7 +9780,7 @@ index 37b6a4d..2d26738 100644
      m_pendingVif1Transfers.clear();
  
      if (m_gifArbiter)
-@@ -1909,13 +2651,17 @@ void PS2Memory::queueCompletedDmacCause(uint32_t cause)
+@@ -1909,13 +2649,17 @@ void PS2Memory::queueCompletedDmacCause(uint32_t cause)
  {
      std::lock_guard<std::mutex> lock(m_completedDmacMutex);
      m_completedDmacCauses.push_back(cause);
@@ -9528,7 +9798,7 @@ index 37b6a4d..2d26738 100644
      return causes;
  }
  
-@@ -1947,6 +2693,7 @@ void PS2Memory::submitGifPacket(GifPathId pathId, const uint8_t *data, uint32_t
+@@ -1947,6 +2691,7 @@ void PS2Memory::submitGifPacket(GifPathId pathId, const uint8_t *data, uint32_t
  {
      if (!data || sizeBytes < 16)
          return;
@@ -9536,7 +9806,7 @@ index 37b6a4d..2d26738 100644
  
      if (pathId == GifPathId::Path3)
      {
-@@ -1971,6 +2718,7 @@ void PS2Memory::processGIFPacket(uint32_t srcPhysAddr, uint32_t qwCount)
+@@ -1971,6 +2716,7 @@ void PS2Memory::processGIFPacket(uint32_t srcPhysAddr, uint32_t qwCount)
  {
      if (!m_rdram || qwCount == 0)
          return;
@@ -9544,7 +9814,7 @@ index 37b6a4d..2d26738 100644
      const uint64_t bytes64 = static_cast<uint64_t>(qwCount) * 16ull;
      uint32_t sizeBytes = (bytes64 > 0xFFFFFFFFull) ? 0xFFFFFFFFu : static_cast<uint32_t>(bytes64);
      uint32_t bytesLeft = sizeBytes;
-@@ -2280,10 +3028,21 @@ int PS2Memory::pollDmaRegisters()
+@@ -2280,10 +3026,21 @@ int PS2Memory::pollDmaRegisters()
  
  uint32_t PS2Memory::readIORegister(uint32_t address)
  {
@@ -9566,7 +9836,7 @@ index 37b6a4d..2d26738 100644
          const EeTimer &timer = m_eeTimers[timerIndex];
          switch (timerOffset)
          {
-@@ -2341,6 +3100,7 @@ uint32_t PS2Memory::readIORegister(uint32_t address)
+@@ -2341,6 +3098,7 @@ uint32_t PS2Memory::readIORegister(uint32_t address)
  
      if (address == 0x10003020u) // GIF_STAT
      {
@@ -9574,7 +9844,7 @@ index 37b6a4d..2d26738 100644
          uint32_t stat = m_ioRegisters.count(address) ? m_ioRegisters[address] : 0u;
          const uint32_t mode = m_ioRegisters.count(0x10003010u) ? m_ioRegisters[0x10003010u] : 0u;
          const uint32_t ctrl = m_ioRegisters.count(0x10003000u) ? m_ioRegisters[0x10003000u] : 0u;
-@@ -2361,6 +3121,8 @@ uint32_t PS2Memory::readIORegister(uint32_t address)
+@@ -2361,6 +3119,8 @@ uint32_t PS2Memory::readIORegister(uint32_t address)
          {
              if ((address & 0xFF) == 0x00)
              {
@@ -10545,10 +10815,10 @@ index 45cb9d2..07c670b 100644
      RUNTIME_LOG("[run] exiting loop");
  }
 diff --git a/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp b/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
-index b02c7ca..7dadd8d 100644
+index b02c7ca..1c16183 100644
 --- a/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
 +++ b/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
-@@ -1,6 +1,12 @@
+@@ -1,6 +1,13 @@
  // Based on Blackline Interactive implementation
  #include "runtime/ps2_memory.h"
 +#include "runtime/ps2_dma_stats.h"
@@ -10558,13 +10828,23 @@ index b02c7ca..7dadd8d 100644
 +#include <cstdlib>
  #include <cstring>
 +#include <string>
++#include <utility>
  
  enum VIFCmd : uint8_t
  {
-@@ -30,6 +36,537 @@ namespace
+@@ -30,6 +37,587 @@ namespace
  {
      constexpr uint8_t kGifFmtImage = 2u;
  
++    void uploadMicroMemory(uint8_t *micro, uint32_t microSize, uint32_t address,
++                           const uint8_t *data, uint32_t size)
++    {
++        const uint32_t firstSize = std::min(size, microSize - address);
++        std::memcpy(micro + address, data, firstSize);
++        if (firstSize < size)
++            std::memcpy(micro, data + firstSize, size - firstSize);
++    }
++
 +    // PS2X_VIF1_DUMP=<dir>: writes every VIF1 buffer (the bytes processVIF1Data gets: a whole DMA chain with its TTE
 +    // VIFcodes, or a normal-mode block) as vif1_NNNNN.bin, starting PS2X_VIF1_DUMP_AFTER seconds after the first
 +    // VIF1 transfer, at most PS2X_VIF1_DUMP_MAX (default 400) buffers. With the first one it also writes the VU1
@@ -10652,6 +10932,47 @@ index b02c7ca..7dadd8d 100644
 +
 +    // Bytes of source data per vector, by VN<<2|VL (PCSX2 nVifT).
 +    constexpr uint8_t kVifGsize[16] = {4, 2, 1, 0, 8, 4, 2, 0, 12, 6, 3, 0, 16, 8, 4, 2};
++
++    uint32_t vif1UnpackPayloadSize(uint8_t opcode, uint8_t num, uint32_t cycle, bool legacy)
++    {
++        const uint32_t vectorCount = (num == 0u) ? 256u : static_cast<uint32_t>(num);
++        if (!legacy)
++        {
++            const uint32_t cl = (cycle & 0xFFu) ? (cycle & 0xFFu) : 256u;
++            const uint32_t wl = ((cycle >> 8) & 0xFFu) ? ((cycle >> 8) & 0xFFu) : 256u;
++            const uint32_t sourceVectors =
++                (cl < wl) ? cl * (vectorCount / wl) + std::min(vectorCount % wl, cl) : vectorCount;
++            return (sourceVectors * kVifGsize[opcode & 0xFu] + 3u) & ~3u;
++        }
++
++        const uint8_t vn = static_cast<uint8_t>((opcode >> 2) & 0x3u);
++        const uint8_t vl = static_cast<uint8_t>(opcode & 0x3u);
++        const uint32_t components = static_cast<uint32_t>(vn) + 1u;
++        uint32_t bitsPerComponent = 32u;
++        if (vl == 1u)
++            bitsPerComponent = 16u;
++        else if (vl == 2u)
++            bitsPerComponent = 8u;
++        else if (vl == 3u)
++            bitsPerComponent = (vn == 3u) ? 4u : 16u;
++
++        const uint32_t bitsPerVector = (vl == 3u && vn == 3u) ? 16u : components * bitsPerComponent;
++        const uint32_t bytesPerVector = (bitsPerVector + 7u) / 8u;
++        uint32_t cl = cycle & 0xFFu;
++        uint32_t wl = (cycle >> 8) & 0xFFu;
++        if (cl == 0u)
++            cl = 1u;
++        if (wl == 0u)
++            wl = 1u;
++
++        uint32_t sourceVectors = vectorCount;
++        if (cl < wl)
++        {
++            const uint32_t fullBlocks = vectorCount / wl;
++            sourceVectors = fullBlocks * cl + std::min(vectorCount % wl, cl);
++        }
++        return (sourceVectors * bytesPerVector + 3u) & ~3u;
++    }
 +
 +    // ---- UNPACK fast path ------------------------------------------------------------------------------------------
 +    // Plain UNPACK (no mask, STMOD 0, not fill mode: WL <= CL) is nearly all of Killzone's ~8700 UNPACKs per frame. The
@@ -11099,10 +11420,45 @@ index b02c7ca..7dadd8d 100644
      uint32_t pendingGifImageQwc(const uint8_t *data, uint32_t sizeBytes)
      {
          if (!data || sizeBytes < 16u)
-@@ -295,39 +832,119 @@ void PS2Memory::processVIF1Data(uint32_t srcPhys, uint32_t sizeBytes)
+@@ -170,25 +758,19 @@ void PS2Memory::processVIF0Data(const uint8_t *data, uint32_t sizeBytes)
+         }
+         else if (opcode == VIF_MPG)
+         {
+-            const uint32_t destAddr = static_cast<uint32_t>(imm & 0x1FFu) * 8u;
++            const uint32_t destAddr =
++                (static_cast<uint32_t>(imm) * 8u) & (PS2_VU0_CODE_SIZE - 1u);
+             const uint32_t instructionCount = (num == 0u) ? 256u : static_cast<uint32_t>(num);
+             const uint32_t mpgBytes = instructionCount * 8u;
+-            uint32_t copyBytes = 0u;
+-            if (m_vu0Code && destAddr < PS2_VU0_CODE_SIZE && mpgBytes > 0u)
++            if (sizeBytes - pos < mpgBytes)
++                break;
++
++            if (m_vu0Code)
+             {
+-                copyBytes = mpgBytes;
+-                if (destAddr + copyBytes > PS2_VU0_CODE_SIZE)
+-                    copyBytes = PS2_VU0_CODE_SIZE - destAddr;
+-                if (pos + copyBytes <= sizeBytes)
+-                {
+-                    std::memcpy(m_vu0Code + destAddr, data + pos, copyBytes);
+-                    markVU0CodeModified();
+-                }
++                uploadMicroMemory(m_vu0Code, PS2_VU0_CODE_SIZE, destAddr, data + pos, mpgBytes);
++                markVU0CodeModified();
+             }
+-
+             pos += mpgBytes;
+-            if (pos > sizeBytes)
+-                break;
+             continue;
+         }
+         else if ((opcode & 0x60u) == 0x60u)
+@@ -295,42 +877,122 @@ void PS2Memory::processVIF1Data(uint32_t srcPhys, uint32_t sizeBytes)
      processVIF1Data(m_rdram + srcPhys, sizeBytes);
  }
  
+-void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
 +// Forwards the data of a VIF1 DIRECT/DIRECTHL to GIF PATH2. The GS frontends consume each forwarded packet on its own,
 +// starting with a GIFtag, while on hardware PATH2 is one continuous GIF stream: a DIRECT may end with an IMAGE GIFtag
 +// whose pixel data arrives in a later DIRECT (typically "MARK; DIRECT n" in the next DMAtag's TTE words). Such
@@ -11110,29 +11466,48 @@ index b02c7ca..7dadd8d 100644
 +// wrapped; the VIFcodes between the DIRECTs are parsed as VIFcodes (they used to be taken as the first 8 bytes of
 +// the image, shifting every uploaded texture by two words).
 +void PS2Memory::forwardVif1DirectData(const uint8_t *data, uint32_t sizeBytes, bool directHl)
-+{
+ {
+-    if (sizeBytes == 0u)
+-        return;
+-
+-    uint32_t pos = 0;
+-
+-    while (pos + 4 <= sizeBytes)
 +    while (sizeBytes >= 16u)
-+    {
-+        if (m_vif1PendingPath2ImageQwc != 0u)
-+        {
+     {
+         if (m_vif1PendingPath2ImageQwc != 0u)
+         {
+-            const uint32_t availableQw = (sizeBytes - pos) / 16u;
+-            if (availableQw == 0u)
+-            {
+-                break;
+-            }
+-
+-            const uint32_t chunkQw = std::min<uint32_t>(m_vif1PendingPath2ImageQwc, availableQw);
 +            const uint32_t chunkQw = std::min<uint32_t>(m_vif1PendingPath2ImageQwc, sizeBytes / 16u);
-+            std::vector<uint8_t> imagePacket(16u + static_cast<size_t>(chunkQw) * 16u, 0u);
-+            const uint64_t imageTag =
-+                static_cast<uint64_t>(chunkQw & 0x7FFFu) |
-+                ((m_vif1PendingPath2ImageQwc == chunkQw) ? (1ull << 15) : 0ull) |
-+                (static_cast<uint64_t>(kGifFmtImage) << 58);
-+            std::memcpy(imagePacket.data(), &imageTag, sizeof(imageTag));
+             std::vector<uint8_t> imagePacket(16u + static_cast<size_t>(chunkQw) * 16u, 0u);
+             const uint64_t imageTag =
+                 static_cast<uint64_t>(chunkQw & 0x7FFFu) |
+                 ((m_vif1PendingPath2ImageQwc == chunkQw) ? (1ull << 15) : 0ull) |
+                 (static_cast<uint64_t>(kGifFmtImage) << 58);
+             std::memcpy(imagePacket.data(), &imageTag, sizeof(imageTag));
+-            std::memcpy(imagePacket.data() + 16u, data + pos, static_cast<size_t>(chunkQw) * 16u);
+-            submitGifPacket(GifPathId::Path2, imagePacket.data(), static_cast<uint32_t>(imagePacket.size()), true, m_vif1PendingPath2DirectHl);
+-
+-            pos += chunkQw * 16u;
 +            std::memcpy(imagePacket.data() + 16u, data, static_cast<size_t>(chunkQw) * 16u);
 +            submitGifPacket(GifPathId::Path2, imagePacket.data(), static_cast<uint32_t>(imagePacket.size()), true,
 +                            m_vif1PendingPath2DirectHl);
-+            m_vif1PendingPath2ImageQwc -= chunkQw;
-+            if (m_vif1PendingPath2ImageQwc == 0u)
-+                m_vif1PendingPath2DirectHl = false;
+             m_vif1PendingPath2ImageQwc -= chunkQw;
+             if (m_vif1PendingPath2ImageQwc == 0u)
+-            {
+                 m_vif1PendingPath2DirectHl = false;
+-            }
 +            data += chunkQw * 16u;
 +            sizeBytes -= chunkQw * 16u;
-+            continue;
-+        }
-+
+             continue;
+         }
+ 
 +        submitGifPacket(GifPathId::Path2, data, sizeBytes, true, directHl);
 +        const uint32_t pendingImageQw = pendingGifImageQwc(data, sizeBytes);
 +        if (pendingImageQw != 0u)
@@ -11144,10 +11519,10 @@ index b02c7ca..7dadd8d 100644
 +    }
 +}
 +
- void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
- {
-     if (sizeBytes == 0u)
-         return;
++void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
++{
++    if (sizeBytes == 0u)
++        return;
 +    // VIF1 state belongs to the worker thread while it has work (no-op when this is the worker).
 +    ps2Vif1Barrier(Vif1BarrierReason::Other);
 +
@@ -11198,45 +11573,63 @@ index b02c7ca..7dadd8d 100644
 +        if (ps2Vif1StatsEnabled())
 +            ps2Vif1StatMpg(same);
 +    };
- 
-     uint32_t pos = 0;
- 
--    while (pos + 4 <= sizeBytes)
++
++    std::vector<uint8_t> bufferedData;
++    if (!m_vif1PendingPacket.empty())
++    {
++        bufferedData.swap(m_vif1PendingPacket);
++        bufferedData.insert(bufferedData.end(), data, data + sizeBytes);
++        data = bufferedData.data();
++        sizeBytes = static_cast<uint32_t>(bufferedData.size());
++    }
++    const auto retainPending = [&](uint32_t start)
++    {
++        if (start == 0u && !bufferedData.empty() && data == bufferedData.data())
++            m_vif1PendingPacket = std::move(bufferedData);
++        else
++            m_vif1PendingPacket.assign(data + start, data + sizeBytes);
++    };
++
++    uint32_t pos = 0;
 +    while (pos + 4u <= sizeBytes)
-     {
--        if (m_vif1PendingPath2ImageQwc != 0u)
-+        if (m_vif1PendingDirectQwc != 0u)
-         {
-+            // Continuation of a DIRECT that was cut off at the end of the previous buffer: raw GIF data, no VIFcodes.
-             const uint32_t availableQw = (sizeBytes - pos) / 16u;
-             if (availableQw == 0u)
-             {
-                 break;
-             }
++    {
++        const uint32_t commandStart = pos;
+         uint32_t cmd;
+         memcpy(&cmd, data + pos, 4);
+         pos += 4;
+@@ -343,7 +1005,30 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
+         // Track most-recent command for VIFn_CODE emulation.
+         vif1_regs.code = cmd;
+         vif1_regs.num = num;
+-        if (irq)
++
++        const bool unpack = (opcode & 0x60u) == 0x60u;
++        const bool hasPayload =
++            opcode == VIF_STMASK || opcode == VIF_STROW || opcode == VIF_STCOL ||
++            opcode == VIF_MPG || opcode == VIF_DIRECT || opcode == VIF_DIRECTHL || unpack;
++        uint32_t payloadBytes = 0u;
++        if (opcode == VIF_STMASK)
++            payloadBytes = 4u;
++        else if (opcode == VIF_STROW || opcode == VIF_STCOL)
++            payloadBytes = 16u;
++        else if (opcode == VIF_MPG)
++            payloadBytes = ((num == 0u) ? 256u : static_cast<uint32_t>(num)) * 8u;
++        else if (opcode == VIF_DIRECT || opcode == VIF_DIRECTHL)
++            payloadBytes = ((imm == 0u) ? 65536u : static_cast<uint32_t>(imm)) * 16u;
++        else if (unpack)
++            payloadBytes = vif1UnpackPayloadSize(opcode, num, vif1_regs.cycle, legacyVif1Unpack());
++
++        if (payloadBytes > sizeBytes - pos)
++        {
++            retainPending(commandStart);
++            return;
++        }
++
++        if (irq && !hasPayload)
+             vif1_regs.stat |= (1u << 11); // INT
  
--            const uint32_t chunkQw = std::min<uint32_t>(m_vif1PendingPath2ImageQwc, availableQw);
--            std::vector<uint8_t> imagePacket(16u + static_cast<size_t>(chunkQw) * 16u, 0u);
--            const uint64_t imageTag =
--                static_cast<uint64_t>(chunkQw & 0x7FFFu) |
--                ((m_vif1PendingPath2ImageQwc == chunkQw) ? (1ull << 15) : 0ull) |
--                (static_cast<uint64_t>(kGifFmtImage) << 58);
--            std::memcpy(imagePacket.data(), &imageTag, sizeof(imageTag));
--            std::memcpy(imagePacket.data() + 16u, data + pos, static_cast<size_t>(chunkQw) * 16u);
--            submitGifPacket(GifPathId::Path2, imagePacket.data(), static_cast<uint32_t>(imagePacket.size()), true, m_vif1PendingPath2DirectHl);
--
-+            const uint32_t chunkQw = std::min<uint32_t>(m_vif1PendingDirectQwc, availableQw);
-+            forwardVif1DirectData(data + pos, chunkQw * 16u, m_vif1PendingDirectHl);
-             pos += chunkQw * 16u;
--            m_vif1PendingPath2ImageQwc -= chunkQw;
--            if (m_vif1PendingPath2ImageQwc == 0u)
--            {
--                m_vif1PendingPath2DirectHl = false;
--            }
-+            m_vif1PendingDirectQwc -= chunkQw;
-             continue;
-         }
- 
-@@ -379,6 +996,7 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
+         if (opcode == VIF_NOP)
+@@ -379,6 +1064,7 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
          else if (opcode == VIF_STMOD)
          {
              vif1_regs.mode = imm & 3u;
@@ -11244,7 +11637,7 @@ index b02c7ca..7dadd8d 100644
              continue;
          }
          else if (opcode == VIF_MSKPATH3)
-@@ -416,7 +1034,9 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
+@@ -416,7 +1102,9 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
                  vif1_regs.tops = (vif1_regs.base + vif1_regs.ofst) & 0x3FFu;
              vif1_regs.stat ^= (1u << 7); // toggle DBF
  
@@ -11255,7 +11648,7 @@ index b02c7ca..7dadd8d 100644
                  m_vu1MscalCallback(startPC, runTop, runItop);
              continue;
          }
-@@ -434,7 +1054,8 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
+@@ -434,86 +1122,62 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
                  vif1_regs.tops = (vif1_regs.base + vif1_regs.ofst) & 0x3FFu;
              vif1_regs.stat ^= (1u << 7); // toggle DBF
  
@@ -11265,7 +11658,37 @@ index b02c7ca..7dadd8d 100644
                  m_vu1MscntCallback(runTop, runItop);
              continue;
          }
-@@ -466,23 +1087,16 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
+         else if (opcode == VIF_STMASK)
+         {
+-            if (pos + 4 > sizeBytes)
+-                break;
+             uint32_t maskValue = 0;
+             std::memcpy(&maskValue, data + pos, sizeof(maskValue));
+             vif1_regs.mask = maskValue;
+             pos += 4;
++            if (irq)
++                vif1_regs.stat |= (1u << 11);
+             continue;
+         }
+         else if (opcode == VIF_STROW)
+         {
+-            if (pos + 16 > sizeBytes)
+-                break;
+             std::memcpy(vif1_regs.row, data + pos, 16);
+             pos += 16;
++            if (irq)
++                vif1_regs.stat |= (1u << 11);
+             continue;
+         }
+         else if (opcode == VIF_STCOL)
+         {
+-            if (pos + 16 > sizeBytes)
+-                break;
+             std::memcpy(vif1_regs.col, data + pos, 16);
+             pos += 16;
++            if (irq)
++                vif1_regs.stat |= (1u << 11);
+             continue;
          }
          else if (opcode == VIF_MPG)
          {
@@ -11285,38 +11708,28 @@ index b02c7ca..7dadd8d 100644
 -                    markVU1CodeModified();
 -                }
 -            }
--            pos += mpgBytes;
--            if (pos > sizeBytes)
-+            if (sizeBytes - pos < mpgBytes)
-                 break;
 +
 +            // The game re-sends microcode frequently. Identical uploads do not invalidate host VU programs.
 +            applyMpgUpload(destAddr, data + pos, mpgBytes);
-+            pos += mpgBytes;
+             pos += mpgBytes;
+-            if (pos > sizeBytes)
+-                break;
++            if (irq)
++                vif1_regs.stat |= (1u << 11);
              continue;
          }
          else if (opcode == VIF_DIRECT || opcode == VIF_DIRECTHL)
-@@ -490,22 +1104,24 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
-             uint32_t qwCount = imm;
-             if (qwCount == 0)
-                 qwCount = 65536;
-+            const uint32_t requestedQw = qwCount;
-             const uint32_t availableQw = (sizeBytes - pos) / 16u;
-             const bool truncated = qwCount > availableQw;
-             if (qwCount > availableQw)
-                 qwCount = availableQw;
- 
-+            const bool directHl = (opcode == VIF_DIRECTHL);
-+            count(st.vif1Direct);
-+            count(st.vif1DirectQw, requestedQw);
-+            if (truncated)
-+            {
-+                // The rest of this DIRECT's data starts the next buffer (see m_vif1PendingDirectQwc).
-+                m_vif1PendingDirectQwc = requestedQw - qwCount;
-+                m_vif1PendingDirectHl = directHl;
-+            }
-             if (qwCount > 0)
-             {
+         {
+-            uint32_t qwCount = imm;
+-            if (qwCount == 0)
+-                qwCount = 65536;
+-            const uint32_t availableQw = (sizeBytes - pos) / 16u;
+-            const bool truncated = qwCount > availableQw;
+-            if (qwCount > availableQw)
+-                qwCount = availableQw;
+-
+-            if (qwCount > 0)
+-            {
 -                const bool directHl = (opcode == VIF_DIRECTHL);
 -                submitGifPacket(GifPathId::Path2, data + pos, qwCount * 16, true, directHl);
 -
@@ -11326,11 +11739,25 @@ index b02c7ca..7dadd8d 100644
 -                    m_vif1PendingPath2ImageQwc = pendingImageQw;
 -                    m_vif1PendingPath2DirectHl = directHl;
 -                }
-+                forwardVif1DirectData(data + pos, qwCount * 16u, directHl);
-             }
+-            }
++            const uint32_t qwCount = (imm == 0u) ? 65536u : static_cast<uint32_t>(imm);
++            const bool directHl = (opcode == VIF_DIRECTHL);
++            count(st.vif1Direct);
++            count(st.vif1DirectQw, qwCount);
++            forwardVif1DirectData(data + pos, qwCount * 16u, directHl);
  
              pos += qwCount * 16;
-@@ -571,6 +1187,34 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
+-            if (truncated)
+-            {
+-                pos = sizeBytes;
+-                break;
+-            }
++            if (irq)
++                vif1_regs.stat |= (1u << 11);
+             continue;
+         }
+         else if ((opcode & 0x60) == 0x60)
+@@ -571,6 +1235,34 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
                  vuAddr = (vuAddr + (vif1_regs.tops & 0x3FFu)) & 0x3FFu;
  
              const bool zeroExtend = (imm & 0x4000u) != 0u;
@@ -11358,14 +11785,22 @@ index b02c7ca..7dadd8d 100644
 +                        checkedUnpack(m_vu1Data, PS2_VU1_DATA_SIZE, vif1_regs, cmd, data + pos, srcBytes);
 +                }
 +                pos += srcBytes;
-+                if (pos > sizeBytes)
-+                    break;
++                if (irq)
++                    vif1_regs.stat |= (1u << 11);
 +                continue;
 +            }
  
              if (m_vu1Data && totalBytes > 0 && pos + totalBytes <= sizeBytes)
              {
-@@ -777,6 +1421,10 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
+@@ -771,13 +1463,20 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
+             }
+             pos += totalBytes;
+ 
+-            if (pos > sizeBytes)
+-                break;
++            if (irq)
++                vif1_regs.stat |= (1u << 11);
+             continue;
          }
          else
          {
@@ -11376,6 +11811,10 @@ index b02c7ca..7dadd8d 100644
              continue;
          }
      }
++
++    if (pos < sizeBytes)
++        retainPending(pos);
+ }
 diff --git a/ps2xRuntime/src/lib/ps2_vif1_worker.cpp b/ps2xRuntime/src/lib/ps2_vif1_worker.cpp
 new file mode 100644
 index 0000000..6f6e6ae
@@ -12495,7 +12934,7 @@ index 9fc510b..359a47c 100644
                  totalTests++;
                  testCase.ClearFailures();
 diff --git a/ps2xTest/src/code_generator_tests.cpp b/ps2xTest/src/code_generator_tests.cpp
-index 463b6cf..1fded9b 100644
+index 463b6cf..6bd91ac 100644
 --- a/ps2xTest/src/code_generator_tests.cpp
 +++ b/ps2xTest/src/code_generator_tests.cpp
 @@ -191,6 +191,144 @@ void register_code_generator_tests()
@@ -12652,7 +13091,7 @@ index 463b6cf..1fded9b 100644
          Function func;
          func.name = "unresolved_jalr_fallback";
          func.start = 0x3200;
-@@ -647,10 +785,12 @@ void register_code_generator_tests()
+@@ -647,14 +785,45 @@ void register_code_generator_tests()
          CodeGenerator gen({}, {});
          CodeGenerator::AnalysisResult analysis = gen.collectInternalBranchTargets(func, instructions);
  
@@ -12668,15 +13107,92 @@ index 463b6cf..1fded9b 100644
          t.IsFalse(analysis.jumpTableTargets.contains(0x3204u),
                    "unresolved JALR should not pretend it has a resolved local jump table");
      });
+ 
++    tc.Run("unresolved JALR without a link register retains indirect fallback", [](TestCase &t) {
++        Function func;
++        func.name = "unresolved_jalr_tail_jump";
++        func.start = 0x3300;
++        func.end = 0x3320;
++        func.isRecompiled = true;
++        func.isStub = false;
++
++        std::vector<Instruction> instructions{
++            makeNop(0x3300),
++            makeJalr(0x3304, 25, 0),
++            makeNop(0x3308),
++            makeNop(0x330C),
++            makeNop(0x3310),
++        };
++
++        CodeGenerator gen({}, {});
++        CodeGenerator::AnalysisResult analysis = gen.collectInternalBranchTargets(func, instructions);
++
++        t.IsFalse(analysis.resumeEntryPoints.contains(0x330Cu),
++                  "JALR without a link register should not add a return resume entry");
++        t.IsTrue(analysis.indirectFallbackEntryPoints.contains(0x330Cu),
++                 "JALR without a link register should retain unresolved indirect-jump fallback");
++        t.IsTrue(analysis.entryPoints.contains(0x3310u),
++                 "JALR without a link register should retain fallback labels in the owner");
++        t.IsFalse(analysis.jumpTableTargets.contains(0x3304u),
++                  "unresolved JALR without a link register should not fabricate a jump table");
++    });
++
+     tc.Run("syscall marks the following instruction as a resume entry", [](TestCase &t) {
+         // Shape of a real SDK syscall wrapper:
+         //   addiu $v1, $zero, <num> ; syscall ; jr $ra ; <delay slot>
 diff --git a/ps2xTest/src/ps2_memory_tests.cpp b/ps2xTest/src/ps2_memory_tests.cpp
-index 0b22fe0..07c0a5a 100644
+index 0b22fe0..925e534 100644
 --- a/ps2xTest/src/ps2_memory_tests.cpp
 +++ b/ps2xTest/src/ps2_memory_tests.cpp
-@@ -410,6 +410,34 @@ void register_ps2_memory_tests()
+@@ -410,6 +410,269 @@ void register_ps2_memory_tests()
              t.IsTrue(matches, "MPG num=0 should copy 2048 bytes into VU1 code memory");
          });
  
-+        tc.Run("VIF MPG masks and wraps VU1 micro memory addresses", [](TestCase &t)
++        tc.Run("VIF0 MPG masks and wraps micro memory addresses", [](TestCase &t)
++        {
++            PS2Memory mem;
++            t.IsTrue(mem.initialize(), "PS2Memory initialize should succeed");
++
++            std::memset(mem.getVU0Code(), 0xCD, PS2_VU0_CODE_SIZE);
++            std::vector<uint8_t> packet;
++            appendU32(packet, makeVifCmd(0x4Au, 2u, 0x01FFu));
++            for (uint32_t i = 0; i < 16u; ++i)
++                packet.push_back(static_cast<uint8_t>(0x10u + i));
++
++            mem.processVIF0Data(packet.data(), static_cast<uint32_t>(packet.size()));
++
++            const uint8_t *code = mem.getVU0Code();
++            bool tailMatches = true;
++            bool wrappedStartMatches = true;
++            for (uint32_t i = 0; i < 8u; ++i)
++            {
++                tailMatches &= code[PS2_VU0_CODE_SIZE - 8u + i] == static_cast<uint8_t>(0x10u + i);
++                wrappedStartMatches &= code[i] == static_cast<uint8_t>(0x18u + i);
++            }
++            t.IsTrue(tailMatches, "MPG should write through the end of VU0 micro memory");
++            t.IsTrue(wrappedStartMatches, "MPG payload should wrap to the start of VU0 micro memory");
++
++            packet.clear();
++            appendU32(packet, makeVifCmd(0x4Au, 1u, 0x0200u));
++            for (uint32_t i = 0; i < 8u; ++i)
++                packet.push_back(static_cast<uint8_t>(0x80u + i));
++            mem.processVIF0Data(packet.data(), static_cast<uint32_t>(packet.size()));
++
++            bool maskedStartMatches = true;
++            for (uint32_t i = 0; i < 8u; ++i)
++                maskedStartMatches &= code[i] == static_cast<uint8_t>(0x80u + i);
++            t.IsTrue(maskedStartMatches, "MPG immediate 0x200 should wrap to VU0 micro address zero");
++
++            std::memset(mem.getVU0Code(), 0xCD, PS2_VU0_CODE_SIZE);
++            packet.clear();
++            appendU32(packet, makeVifCmd(0x4Au, 2u, 0x01FFu));
++            packet.resize(packet.size() + 8u, 0x55u);
++            mem.processVIF0Data(packet.data(), static_cast<uint32_t>(packet.size()));
++            t.Equals(static_cast<uint32_t>(code[PS2_VU0_CODE_SIZE - 1u]), 0xCDu,
++                     "truncated MPG payload should not partially modify VU0 micro memory");
++        });
++
++        tc.Run("VIF1 MPG masks and wraps micro memory addresses", [](TestCase &t)
 +        {
 +            PS2Memory mem;
 +            t.IsTrue(mem.initialize(), "PS2Memory initialize should succeed");
@@ -12686,28 +13202,219 @@ index 0b22fe0..07c0a5a 100644
 +            appendU32(packet, makeVifCmd(0x4Au, 2u, 0x07FFu));
 +            for (uint32_t i = 0; i < 16u; ++i)
 +                packet.push_back(static_cast<uint8_t>(0x10u + i));
-+            appendU32(packet, makeVifCmd(0x4Au, 1u, 0x0800u));
-+            for (uint32_t i = 0; i < 8u; ++i)
-+                packet.push_back(static_cast<uint8_t>(0x80u + i));
 +
 +            mem.processVIF1Data(packet.data(), static_cast<uint32_t>(packet.size()));
 +
 +            const uint8_t *code = mem.getVU1Code();
 +            bool tailMatches = true;
-+            bool maskedStartMatches = true;
++            bool wrappedStartMatches = true;
 +            for (uint32_t i = 0; i < 8u; ++i)
 +            {
 +                tailMatches &= code[PS2_VU1_CODE_SIZE - 8u + i] == static_cast<uint8_t>(0x10u + i);
-+                maskedStartMatches &= code[i] == static_cast<uint8_t>(0x80u + i);
++                wrappedStartMatches &= code[i] == static_cast<uint8_t>(0x18u + i);
 +            }
 +            t.IsTrue(tailMatches, "MPG should write through the end of VU1 micro memory");
++            t.IsTrue(wrappedStartMatches, "MPG payload should wrap to the start of VU1 micro memory");
++
++            packet.clear();
++            appendU32(packet, makeVifCmd(0x4Au, 1u, 0x0800u));
++            for (uint32_t i = 0; i < 8u; ++i)
++                packet.push_back(static_cast<uint8_t>(0x80u + i));
++            mem.processVIF1Data(packet.data(), static_cast<uint32_t>(packet.size()));
++
++            bool maskedStartMatches = true;
++            for (uint32_t i = 0; i < 8u; ++i)
++                maskedStartMatches &= code[i] == static_cast<uint8_t>(0x80u + i);
 +            t.IsTrue(maskedStartMatches, "MPG immediate 0x800 should wrap to VU1 micro address zero");
++
++            std::memset(mem.getVU1Code(), 0xCD, PS2_VU1_CODE_SIZE);
++            packet.clear();
++            appendU32(packet, makeVifCmd(0x4Au, 2u, 0x07FFu));
++            packet.resize(packet.size() + 8u, 0x55u);
++            mem.processVIF1Data(packet.data(), static_cast<uint32_t>(packet.size()));
++            t.Equals(static_cast<uint32_t>(code[PS2_VU1_CODE_SIZE - 1u]), 0xCDu,
++                     "truncated MPG payload should not partially modify VU1 micro memory");
++        });
++
++        tc.Run("VIF1 fixed payload resumes across DMA blocks", [](TestCase &t)
++        {
++            PS2Memory mem;
++            t.IsTrue(mem.initialize(), "split fixed-payload fixture should initialize");
++
++            constexpr uint32_t kVif1Ch = 0x10009000u;
++            constexpr uint32_t kSource = 0x0002A000u;
++            const uint32_t blocks[][4] = {
++                {makeVifCmd(0x30u, 0u, 0u) | 0x80000000u,
++                 0x11111111u, 0x22222222u, 0x33333333u},
++                {0x44444444u, makeVifCmd(0x07u, 0u, 0xABCDu), 0u, 0u}
++            };
++            std::memcpy(mem.getRDRAM() + kSource, blocks, sizeof(blocks));
++
++            const auto transmit = [&](uint32_t source)
++            {
++                mem.writeIORegister(kVif1Ch + 0x10u, source);
++                mem.writeIORegister(kVif1Ch + 0x20u, 1u);
++                mem.writeIORegister(kVif1Ch, 0x100u);
++            };
++
++            transmit(kSource);
++            t.Equals(mem.vif1_regs.row[0], 0u, "incomplete STROW should not publish partial register data");
++            t.Equals(mem.vif1_regs.stat & (1u << 11), 0u,
++                     "I-bit should remain clear until the STROW payload completes");
++            t.Equals(mem.readIORegister(kVif1Ch + 0x20u), 0u,
++                     "the first DMA block should be consumed while its command remains pending");
++
++            transmit(kSource + 16u);
++            t.Equals(mem.vif1_regs.row[0], 0x11111111u, "split STROW should preserve row[0]");
++            t.Equals(mem.vif1_regs.row[1], 0x22222222u, "split STROW should preserve row[1]");
++            t.Equals(mem.vif1_regs.row[2], 0x33333333u, "split STROW should preserve row[2]");
++            t.Equals(mem.vif1_regs.row[3], 0x44444444u, "split STROW should preserve row[3]");
++            t.Equals(mem.vif1_regs.stat & (1u << 11), 1u << 11,
++                     "I-bit should assert after the STROW payload completes");
++            t.Equals(mem.vif1_regs.mark, 0xABCDu, "the command after split STROW should execute");
++        });
++
++        tc.Run("VIF1 MPG resumes atomically across input fragments", [](TestCase &t)
++        {
++            PS2Memory mem;
++            t.IsTrue(mem.initialize(), "split MPG fixture should initialize");
++            std::memset(mem.getVU1Code(), 0xCD, PS2_VU1_CODE_SIZE);
++
++            std::vector<uint8_t> packet;
++            appendU32(packet, makeVifCmd(0x4Au, 2u, 0x07FFu) | 0x80000000u);
++            for (uint32_t i = 0u; i < 16u; ++i)
++                packet.push_back(static_cast<uint8_t>(0x40u + i));
++            appendU32(packet, makeVifCmd(0x07u, 0u, 0x1234u));
++
++            mem.processVIF1Data(packet.data(), 12u);
++            const uint8_t *code = mem.getVU1Code();
++            t.Equals(static_cast<uint32_t>(code[PS2_VU1_CODE_SIZE - 1u]), 0xCDu,
++                     "incomplete MPG should not publish its first fragment");
++            t.Equals(static_cast<uint32_t>(code[0]), 0xCDu,
++                     "incomplete wrapping MPG should leave the start untouched");
++            t.Equals(mem.vif1_regs.stat & (1u << 11), 0u,
++                     "I-bit should remain clear while MPG is incomplete");
++
++            mem.processVIF1Data(packet.data() + 12u, static_cast<uint32_t>(packet.size()) - 12u);
++            bool wrapped = true;
++            for (uint32_t i = 0u; i < 8u; ++i)
++            {
++                wrapped &= code[PS2_VU1_CODE_SIZE - 8u + i] == static_cast<uint8_t>(0x40u + i);
++                wrapped &= code[i] == static_cast<uint8_t>(0x48u + i);
++            }
++            t.IsTrue(wrapped, "completed MPG should atomically wrap through VU1 micro memory");
++            t.Equals(mem.vif1_regs.stat & (1u << 11), 1u << 11,
++                     "I-bit should assert after MPG completes");
++            t.Equals(mem.vif1_regs.mark, 0x1234u, "the command after split MPG should execute");
++        });
++
++        tc.Run("VIF1 UNPACK resumes atomically across input fragments", [](TestCase &t)
++        {
++            PS2Memory mem;
++            t.IsTrue(mem.initialize(), "split UNPACK fixture should initialize");
++            std::memset(mem.getVU1Data(), 0, PS2_VU1_DATA_SIZE);
++
++            std::vector<uint8_t> packet;
++            appendU32(packet, makeVifCmd(0x6Cu, 2u, 3u) | 0x80000000u);
++            for (uint32_t i = 0u; i < 8u; ++i)
++                appendU32(packet, 0x10000000u + i);
++            appendU32(packet, makeVifCmd(0x07u, 0u, 0x5678u));
++
++            mem.processVIF1Data(packet.data(), 20u);
++            uint32_t first = 0xFFFFFFFFu;
++            std::memcpy(&first, mem.getVU1Data() + 3u * 16u, sizeof(first));
++            t.Equals(first, 0u, "incomplete UNPACK should not publish a partial vector");
++            t.Equals(mem.vif1_regs.stat & (1u << 11), 0u,
++                     "I-bit should remain clear while UNPACK is incomplete");
++
++            mem.processVIF1Data(packet.data() + 20u, static_cast<uint32_t>(packet.size()) - 20u);
++            bool unpacked = true;
++            for (uint32_t i = 0u; i < 8u; ++i)
++            {
++                uint32_t value = 0u;
++                std::memcpy(&value, mem.getVU1Data() + 3u * 16u + i * 4u, sizeof(value));
++                unpacked &= value == 0x10000000u + i;
++            }
++            t.IsTrue(unpacked, "completed UNPACK should preserve both vectors");
++            t.Equals(mem.vif1_regs.stat & (1u << 11), 1u << 11,
++                     "I-bit should assert after UNPACK completes");
++            t.Equals(mem.vif1_regs.mark, 0x5678u, "the command after split UNPACK should execute");
++        });
++
++        tc.Run("VIF1 DIRECT resumes inside a GIF quadword", [](TestCase &t)
++        {
++            PS2Memory mem;
++            t.IsTrue(mem.initialize(), "split DIRECT fixture should initialize");
++
++            std::vector<std::vector<uint8_t>> captured;
++            mem.setGifPacketCallback([&](const uint8_t *data, uint32_t sizeBytes)
++            {
++                captured.emplace_back(data, data + sizeBytes);
++            });
++
++            std::vector<uint8_t> packet;
++            appendU32(packet, makeVifCmd(0x50u, 0u, 1u) | 0x80000000u);
++            for (uint32_t i = 0u; i < 16u; ++i)
++                packet.push_back(static_cast<uint8_t>(0x80u + i));
++            appendU32(packet, makeVifCmd(0x07u, 0u, 0x9ABCu));
++
++            mem.processVIF1Data(packet.data(), 11u);
++            t.Equals(captured.size(), static_cast<size_t>(0u),
++                     "incomplete DIRECT should not submit a partial GIF packet");
++            t.Equals(mem.vif1_regs.stat & (1u << 11), 0u,
++                     "I-bit should remain clear while DIRECT is incomplete");
++
++            mem.processVIF1Data(packet.data() + 11u, static_cast<uint32_t>(packet.size()) - 11u);
++            t.Equals(captured.size(), static_cast<size_t>(1u),
++                     "completed DIRECT should submit exactly one GIF packet");
++            if (captured.size() == 1u)
++            {
++                t.Equals(captured[0].size(), static_cast<size_t>(16u),
++                         "completed DIRECT should preserve its declared size");
++                bool payloadMatches = captured[0].size() == 16u;
++                for (uint32_t i = 0u; payloadMatches && i < 16u; ++i)
++                    payloadMatches &= captured[0][i] == static_cast<uint8_t>(0x80u + i);
++                t.IsTrue(payloadMatches, "completed DIRECT should preserve bytes across the fragment");
++            }
++            t.Equals(mem.vif1_regs.stat & (1u << 11), 1u << 11,
++                     "I-bit should assert after DIRECT completes");
++            t.Equals(mem.vif1_regs.mark, 0x9ABCu, "the command after split DIRECT should execute");
++        });
++
++        tc.Run("VIF1 retains partial command bytes and reset cancels pending data", [](TestCase &t)
++        {
++            PS2Memory mem;
++            t.IsTrue(mem.initialize(), "partial command fixture should initialize");
++
++            std::vector<uint8_t> packet;
++            appendU32(packet, makeVifCmd(0x20u, 0u, 0u));
++            appendU32(packet, 0x89ABCDEFu);
++            appendU32(packet, makeVifCmd(0x07u, 0u, 0x2468u));
++            mem.processVIF1Data(packet.data(), 2u);
++            mem.processVIF1Data(packet.data() + 2u, static_cast<uint32_t>(packet.size()) - 2u);
++            t.Equals(mem.vif1_regs.mask, 0x89ABCDEFu, "split VIFcode bytes should retain the STMASK command");
++            t.Equals(mem.vif1_regs.mark, 0x2468u, "decoding should resume after the split VIFcode");
++
++            std::memset(mem.getVU1Code(), 0xCD, PS2_VU1_CODE_SIZE);
++            packet.clear();
++            appendU32(packet, makeVifCmd(0x4Au, 2u, 0u) | 0x80000000u);
++            packet.resize(packet.size() + 8u, 0x55u);
++            mem.processVIF1Data(packet.data(), static_cast<uint32_t>(packet.size()));
++            t.IsTrue(mem.writeIORegister(0x10003C10u, 1u), "VIF1 FBRST reset should succeed");
++
++            const uint32_t mark = makeVifCmd(0x07u, 0u, 0x1357u);
++            mem.processVIF1Data(reinterpret_cast<const uint8_t *>(&mark), sizeof(mark));
++            t.Equals(mem.vif1_regs.mark, 0x1357u, "reset should discard the stale MPG fragment");
++            t.Equals(static_cast<uint32_t>(mem.getVU1Code()[0]), 0xCDu,
++                     "cancelled MPG should leave VU1 micro memory untouched");
++            t.Equals(mem.vif1_regs.stat & (1u << 11), 0u,
++                     "reset should discard the pending command's I-bit");
 +        });
 +
          tc.Run("VIF UNPACK num zero uploads 256 vectors", [](TestCase &t)
          {
              PS2Memory mem;
-@@ -1723,6 +1751,49 @@ void register_ps2_memory_tests()
+@@ -1723,6 +1986,49 @@ void register_ps2_memory_tests()
              t.IsTrue(secondQwOk, "END payload should follow CALL payload");
          });
  
@@ -12757,7 +13464,7 @@ index 0b22fe0..07c0a5a 100644
          tc.Run("GIF DMA chain RET transfers payload and resumes after CALL", [](TestCase &t)
          {
              PS2Memory mem;
-@@ -2138,9 +2209,10 @@ void register_ps2_memory_tests()
+@@ -2138,9 +2444,10 @@ void register_ps2_memory_tests()
              gs.writeRegister(GS_REG_TRXDIR, 0ull);
  
              std::vector<uint8_t> packet;
@@ -12769,7 +13476,7 @@ index 0b22fe0..07c0a5a 100644
              for (uint32_t i = 0; i < 16u; ++i)
              {
                  packet.push_back(static_cast<uint8_t>(0xA0u + i));
-@@ -2194,6 +2266,7 @@ void register_ps2_memory_tests()
+@@ -2194,6 +2501,7 @@ void register_ps2_memory_tests()
              appendU64(packet, GS_REG_TEXA);
              appendU64(packet, makeGifTag(1u, GIF_FMT_IMAGE, 0u, true));
              appendU64(packet, 0ull);
@@ -12778,10 +13485,71 @@ index 0b22fe0..07c0a5a 100644
                  packet.push_back(static_cast<uint8_t>(0xC0u + i));
  
 diff --git a/ps2xTest/src/ps2_recompiler_tests.cpp b/ps2xTest/src/ps2_recompiler_tests.cpp
-index 86e5e3f..2fb592f 100644
+index 86e5e3f..15e4e0d 100644
 --- a/ps2xTest/src/ps2_recompiler_tests.cpp
 +++ b/ps2xTest/src/ps2_recompiler_tests.cpp
-@@ -1331,6 +1331,43 @@ void register_ps2_recompiler_tests()
+@@ -286,7 +286,7 @@ static bool writeMinimalMipsElfWithAddressTakenCallbacks(const std::filesystem::
+     text->set_addr_align(4);
+     text->set_address(0x00100000u);
+ 
+-    std::array<uint32_t, 384> textWords{};
++    std::array<uint32_t, 448> textWords{};
+     textWords[0] = 0x3C040010u;  // lui a0,0x10
+     textWords[1] = 0xAC800000u;  // sw zero,0(a0)
+     textWords[2] = 0x0C040008u;  // jal 0x00100020 (callback registrar)
+@@ -519,6 +519,27 @@ static bool writeMinimalMipsElfWithAddressTakenCallbacks(const std::filesystem::
+     textWords[373] = 0x03E00008u; // jr ra
+     textWords[374] = 0x27BD0010u; // addiu sp,sp,0x10 (delay slot)
+ 
++    textWords[382] = 0x03E00008u; // jr ra
++    textWords[383] = 0x00000000u; // nop (delay slot)
++    const std::array<uint32_t, 8> shortHandler = {
++        0x8C8F002Cu, 0x8DEE0000u, 0x95CF0010u, 0x25EDFFD4u,
++        0x25EFFF8Eu, 0xA5CD0064u, 0x03E00008u, 0xA5CF0034u};
++    const std::array<uint32_t, 10> mediumHandler = {
++        0x8C8F002Cu, 0x240E000Au, 0x8DED0000u, 0x95AF0010u, 0xA5AE0094u,
++        0x25EEFFD4u, 0x25EFFF8Eu, 0xA5AE0064u, 0x03E00008u, 0xA5AF0034u};
++    const std::array<uint32_t, 13> longHandler = {
++        0x8C8F002Cu, 0x8C8E25B4u, 0x8DED0000u, 0x8C8C0030u, 0x8DAF0010u,
++        0xADAE0048u, 0x000F77C2u, 0x01EE7821u, 0x000F7843u, 0xA5AF0034u,
++        0x858F0004u, 0x03E00008u, 0xADAF0070u};
++    std::copy(shortHandler.begin(), shortHandler.end(), textWords.begin() + 384);
++    std::copy(mediumHandler.begin(), mediumHandler.end(), textWords.begin() + 392);
++    std::copy(longHandler.begin(), longHandler.end(), textWords.begin() + 402);
++
++    const std::array<uint32_t, 8> repeatedHandler = {
++        0x8C820000u, 0x24420001u, 0x24420001u, 0x24420001u,
++        0x24420001u, 0x24420001u, 0x03E00008u, 0x00000000u};
++    std::copy(repeatedHandler.begin(), repeatedHandler.end(), textWords.begin() + 415);
++
+     text->set_data(reinterpret_cast<const char *>(textWords.data()),
+                    static_cast<ELFIO::Elf_Word>(textWords.size() * sizeof(uint32_t)));
+ 
+@@ -551,9 +572,22 @@ static bool writeMinimalMipsElfWithAddressTakenCallbacks(const std::filesystem::
+     data->set_flags(ELFIO::SHF_ALLOC | ELFIO::SHF_WRITE);
+     data->set_addr_align(4);
+     data->set_address(0x00201000u);
+-    std::array<uint32_t, 17> singletonCallbacks{};
++    std::array<uint32_t, 112> singletonCallbacks{};
+     singletonCallbacks[0] = 0x00100580u;
+     singletonCallbacks[16] = 0x00100588u;
++    const std::array<uint32_t, 24> handlerRecords = {
++        0x00201000u, 0x3u, 0xEu, 0xDu, 0x10020u, 0x00100600u,
++        0x00201000u, 0x4u, 0xEu, 0xDu, 0x10020u, 0x00100620u,
++        0x00201000u, 0x3u, 0xEu, 0xDu, 0x20020u, 0x00100648u,
++        0x00201000u, 0x4u, 0xEu, 0xDu, 0x10014u, 0x0u};
++    std::copy(handlerRecords.begin(), handlerRecords.end(), singletonCallbacks.begin() + 25);
++
++    singletonCallbacks[55] = 0x00100604u;
++    singletonCallbacks[65] = 0x00100624u;
++    singletonCallbacks[75] = 0x0010064Cu;
++    singletonCallbacks[85] = 0x0010067Cu;
++    singletonCallbacks[95] = 0x0010067Cu;
++    singletonCallbacks[105] = 0x0010067Cu;
+     data->set_data(reinterpret_cast<const char *>(singletonCallbacks.data()),
+                    static_cast<ELFIO::Elf_Word>(singletonCallbacks.size() * sizeof(uint32_t)));
+ 
+@@ -1331,6 +1365,43 @@ void register_ps2_recompiler_tests()
              std::filesystem::remove(configPath, removeError);
          });
  
@@ -12825,6 +13593,27 @@ index 86e5e3f..2fb592f 100644
          tc.Run("config manager loads modern and legacy guest entry hints", [](TestCase &t) {
              const auto uniqueSuffix = std::to_string(
                  static_cast<unsigned long long>(std::chrono::steady_clock::now().time_since_epoch().count()));
+@@ -1621,6 +1692,20 @@ void register_ps2_recompiler_tests()
+                       "a data pointer must not split a function at a control-transfer delay slot");
+             t.IsFalse(hasStart(0x00100300u),
+                       "an isolated data pointer or non-callback code materialization must not become a function");
++            t.IsTrue(hasStart(0x00100600u),
++                     "a strided record table should discover its short leaf handler");
++            t.IsTrue(hasStart(0x00100620u),
++                     "a strided record table should discover a handler that returns beyond the probe window");
++            t.IsTrue(hasStart(0x00100648u),
++                     "a strided record table should discover its longest leaf handler");
++            t.IsFalse(hasStart(0x00100604u),
++                      "strided pointers to internal labels should not split handlers");
++            t.IsFalse(hasStart(0x00100624u),
++                      "a periodic table target must follow a control-transfer delay slot");
++            t.IsFalse(hasStart(0x0010064Cu),
++                      "a long handler's internal label should remain part of its owner");
++            t.IsFalse(hasStart(0x0010067Cu),
++                      "a repeated struct field should not be treated as a handler table");
+ 
+             std::error_code removeError;
+             std::filesystem::remove(elfPath, removeError);
 diff --git a/ps2xTest/src/ps2_runtime_expansion_tests.cpp b/ps2xTest/src/ps2_runtime_expansion_tests.cpp
 index 4772f3f..52a9af5 100644
 --- a/ps2xTest/src/ps2_runtime_expansion_tests.cpp

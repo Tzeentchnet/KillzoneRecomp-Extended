@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-10",
+  "generated_at": "2026-11-11",
   "project": {
     "repository": "https://github.com/Tzeentchnet/KillzoneRecomp-Extended.git",
     "audited_baseline": "8dcb545d72ea3542023f4f5bcab00ef4240c05c7",
@@ -10,12 +10,12 @@
     "repository_path": "ext/PS2Recomp",
     "patch_directory": "patches/ps2recomp",
     "base_commit": "75d729ce40d7eed9649fd4bb05628dee520f3d0c",
-    "target_commit": "fbde3f0cbbdec560201bd1001919eda4c59376d4",
-    "target_tree": "9b960316d60ff3a56a6355e81c429dbf458b135c",
+    "target_commit": "debadfe40ccb225623def3faacbe3185782190f3",
+    "target_tree": "2bdb505aca66ef64bdf1e7216d89fe8d4e117be4",
     "canonical_patch": {
       "path": "patches/ps2recomp/combined.lock.diff",
-      "changed_paths": 73,
-      "sha256": "63b556605f8f47cd3a02af61a5154e0c6a1d60331ebfd81dd8b74b0cd0dbb9fe"
+      "changed_paths": 75,
+      "sha256": "fe0fb8312025f1ae017266431573cc8cb109c4fe1db7d931d9ae41f8f6a12b8c"
     },
     "patches": [
       {
@@ -72,7 +72,7 @@
       },
       {
         "path": "0014-jalr-resume-only-return.patch",
-        "sha256": "a01f7a49f6b016f1f5ef123539da138cf2b2a2edb610e4f49b9b14bda71b0327"
+        "sha256": "c7c8ec7d22413eacded5c5ded2f8be32bd59eb5d1f96045430ab17907c9af3db"
       },
       {
         "path": "0015-iop-thread.patch",
@@ -136,7 +136,7 @@
       },
       {
         "path": "0031-vif1-mpg-address-wrap.patch",
-        "sha256": "6b7646587f7756756ef8f15dca50d73d50ce3a6dfc6674b68c15f6d0e83072d3"
+        "sha256": "397ff4a8b81752b875bda976bd7ac18d408abed8ea39fea173802784a9929931"
       },
       {
         "path": "0032-dmac-call-overflow-vif-provenance.patch",
@@ -145,6 +145,18 @@
       {
         "path": "0033-standalone-runtime-test-suite.patch",
         "sha256": "a2256e946889a50ead803b62bc316461d2ed6ac8da8d350e6675ec5cd2c378ac"
+      },
+      {
+        "path": "0034-vif1-fragmented-streams.patch",
+        "sha256": "cda4036443fdd8f93868c76c764cc1c3871d3bedb591df16e813654f1d6cc9af"
+      },
+      {
+        "path": "0035-fixed-stride-handler-tables.patch",
+        "sha256": "75e31a53347db3c3b48b76217947482eb920d18c95da8e1b01c2c6cb867193a1"
+      },
+      {
+        "path": "0036-iop-import-cache-validation.patch",
+        "sha256": "c38b7c7135ba7945049c2a443a8721f5797b435cfd44859aafb76e21eb9ce341"
       }
     ]
   },
@@ -153,7 +165,7 @@
       "id": "ps2recomp",
       "kind": "git-submodule",
       "source_url": "https://github.com/Tzeentchnet/PS2Recomp.git",
-      "revision": "fbde3f0cbbdec560201bd1001919eda4c59376d4",
+      "revision": "debadfe40ccb225623def3faacbe3185782190f3",
       "license": "GPL-3.0-only",
       "redistribution": "Copyleft; distribute corresponding source and notices.",
       "acquisition": "git submodule update --init --recursive",
