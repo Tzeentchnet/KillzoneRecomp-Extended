@@ -68,6 +68,23 @@ Integration validation after the final retained-buffer optimization:
 - An accelerated SCES-52004 headless run using the supported `KZ_IPU=off` automation path reached `MainMenu` at
   8.4 seconds and remained stable through the 60-second run.
 
+### Submission-readiness review (2026-11-11)
+
+The three unfiled contribution candidates were replayed against canonical `main` at `e5636981`; the VIF1 candidate
+was tested on top of PR #437 at `9023b80`. Focused duplicate searches found no matching open submission.
+
+| Candidate | Readiness | Canonical-tree result | Submission plan |
+|---|---|---|---|
+| Fragmented VIF1 command streams | Not ready to file as-is | Cherry-picking local commits `2fb312f` and `debadfe` onto PR #437 conflicts in `ps2_memory.h`, `ps2_memory.cpp`, and `ps2_vif1_interpreter.cpp`; the expanded tests apply cleanly. The local implementation is coupled to the fork's existing PATH2 continuation state. | Wait for or explicitly stack on #437, then manually port only bounded VIFcode/payload retention. Coordinate with Hardnyx, whose active branch contains the original split-command work plus newer DMA/interrupt/PATH2 work and has already reverted an unsafe PACKED/REGLIST continuation scanner. Preserve original authorship and exclude that reverted scanner. |
+| Fixed-stride handler-table discovery | Technically ready; coordinate authorship before filing | Local `b21ead1` applies cleanly to canonical `main`; the canonical suite passes 446/446. The fork suite passes 450/450, and US/SCES-52004 regeneration remains byte-identical. The local adaptation adds four rejection fixtures for internal labels and repeated struct fields to AlenDavid's original `813c01ed`. | Prefer that AlenDavid file the PR, or preserve `813c01ed` authorship and add the extra guards/tests as a separate follow-up commit. Disclose that SCES-52893 comparison is unavailable rather than treating it as a blocker. |
+| VIF STCYCL zero fields | Not ready; prior proposal was incorrect | PCSX2 preserves `CL=0` and expands only `WL=0` to 256. Canonical PS2Recomp currently maps both zero fields to 1 in VIF0 and VIF1. The historical `fbde3f0` change instead expanded `CL=0` in two VIF1 helper paths, included unrelated DIRECT fixture repairs, and added no focused STCYCL regression. A reference-aligned two-channel experiment passed 441/447 tests: the new zero-field test and five existing UNPACK tests exposed missing VIF0 fill behavior, VIF1's zero-payload guard, and fixtures that rely on the current zero-to-one default. | Do not submit the historical patch. First define reset/default behavior, implement VIF0 and VIF1 fill cycles consistently, add explicit `CL=0` and `WL=0` regressions, and update legacy fixtures to issue the STCYCL state they require. |
+
+Recommended order for these three:
+
+1. Coordinate and submit the fixed-stride handler-table PR.
+2. Rebase the bounded fragmented-VIF1 core after #437, in coordination with Hardnyx.
+3. Keep STCYCL zero-field behavior in research until the reference-aligned model passes the complete suite.
+
 ## Filed submissions
 
 | Date | Submission | Status | Validation |
@@ -82,13 +99,15 @@ Integration validation after the final retained-buffer optimization:
 |---:|---|---|---|---|
 | 1 | PCSX2 | Small PR | Store compute specialization-constant values | Blocked by PCSX2's LLM policy; requires independent human authorship |
 | 2 | PS2Recomp | Small PR | Wrap VIF MPG uploads within VU micro memory | Filed as [ran-j/PS2Recomp#437](https://github.com/ran-j/PS2Recomp/pull/437) |
-| 3 | PS2Recomp | PR for existing issue | Model all 32 VU integer/control-register slots | Existing issue has independent game evidence |
-| 4 | PS2Recomp | Small PR | Limit unresolved JALR resume points to the return PC | Filed as [ran-j/PS2Recomp#436](https://github.com/ran-j/PS2Recomp/pull/436) |
-| 5 | PCSX2 | Issue | Vulkan index-upload synchronization hazard | Reproduce on current PCSX2 `master` first |
-| 6 | PS2Recomp | Small PR | Interpret VIF STCYCL `CL=0` as 256 | Extract from the mixed local test-restoration commit |
-| 7 | PS2Recomp | RFC issue | Namespaced output for multiple recompiled images | Filed as [ran-j/PS2Recomp#438](https://github.com/ran-j/PS2Recomp/issues/438) |
-| 8 | PCSX2 | RFC issue | Supported external presentation/integration hooks | Submit the design before splitting the companion branch |
-| 9 | PS2Recomp | Issue | Fixed IOP RPC instruction budgets can truncate valid handlers | Needs a minimal non-Killzone reproduction |
+| 3 | PS2Recomp | Small analyzer PR | Discover fixed-stride handler tables | Technically ready; coordinate with AlenDavid and preserve original authorship |
+| 4 | PS2Recomp | PR for existing issue | Model all 32 VU integer/control-register slots | Existing issue has independent game evidence |
+| 5 | PS2Recomp | Small PR | Limit unresolved JALR resume points to the return PC | Filed as [ran-j/PS2Recomp#436](https://github.com/ran-j/PS2Recomp/pull/436) |
+| 6 | PS2Recomp | Stacked runtime PR | Preserve fragmented VIF1 command streams | Manually port after #437 and coordinate with Hardnyx |
+| 7 | PCSX2 | Issue | Vulkan index-upload synchronization hazard | Reproduce on current PCSX2 `master` first |
+| 8 | PS2Recomp | RFC issue | Namespaced output for multiple recompiled images | Filed as [ran-j/PS2Recomp#438](https://github.com/ran-j/PS2Recomp/issues/438) |
+| 9 | PCSX2 | RFC issue | Supported external presentation/integration hooks | Submit the design before splitting the companion branch |
+| 10 | PS2Recomp | Issue | Fixed IOP RPC instruction budgets can truncate valid handlers | Needs a minimal non-Killzone reproduction |
+| - | PS2Recomp | Research before PR | Model VIF STCYCL zero fields | Current proposal contradicts PCSX2 and breaks existing UNPACK coverage |
 
 ## PS2Recomp
 
@@ -157,20 +176,26 @@ submission commit but not follow-up [`7035404`](https://github.com/Tzeentchnet/P
 They currently classify every `SPECIAL_JALR`, including `rd == 0`, as a call. Port the `rd != 0` guard and its
 no-link regression test, then refresh the reconstructable patch.
 
-#### VIF STCYCL `CL=0` should mean 256
+#### VIF STCYCL zero fields need a reference-aligned model
 
-**Suggested title:** `VIF: treat STCYCL CL=0 as 256 during UNPACK source accounting`
+**Status:** not ready to file. The earlier `CL=0 means 256` proposal was incorrect.
 
-The local standalone test restoration found that `WL=0` was expanded to 256 while `CL=0` remained zero. Treating
-both zero fields consistently as 256 fixes fill/source-vector accounting.
+PCSX2 retains the eight-bit `CL` value, including zero, while interpreting `WL=0` as 256 for UNPACK size and fill
+decisions. Canonical PS2Recomp instead maps both zero fields to 1 in its VIF0 and VIF1 interpreters. The historical
+[`fbde3f0`](https://github.com/Tzeentchnet/PS2Recomp/commit/fbde3f0cbbdec560201bd1001919eda4c59376d4)
+change expanded `CL=0` to 256 in two later VIF1 helper/source-size paths, did not fix the primary VIF0/VIF1 loops,
+and bundled unrelated DIRECT fixture corrections.
 
-- Local source:
-  [`fbde3f0`](https://github.com/Tzeentchnet/PS2Recomp/commit/fbde3f0cbbdec560201bd1001919eda4c59376d4).
-- The commit is mixed; submit only the two STCYCL changes and their focused tests.
-- Duplicate search: no matching open issue or PR was found.
+An isolated canonical-tree experiment preserved `CL=0`, expanded `WL=0` to 256, and added VIF0/VIF1 regressions.
+It passed 441/447 tests. The six failures showed that a complete patch must also:
 
-This should not be submitted as “restore the standalone suite.” The same local commit contains unrelated audio
-guards, JALR tests, test filtering, corrected GIF continuation fixtures, and MPEG/SIF fixture repairs.
+- Implement VIF0 fill cycles instead of dropping writes without source data.
+- Permit VIF1 zero-source-byte UNPACK commands to perform row-fill writes.
+- Make reset/default CYCLE behavior explicit.
+- Update five existing UNPACK fixtures that rely implicitly on zero CYCLE behaving as `CL=1, WL=1`.
+
+Do not submit `fbde3f0` or a two-line extraction. Revisit this as a dedicated semantic series with PCSX2-aligned
+fixtures and full-suite coverage.
 
 #### Optional test filtering
 
