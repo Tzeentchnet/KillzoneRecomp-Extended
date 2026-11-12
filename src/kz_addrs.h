@@ -1,9 +1,9 @@
 #pragma once
 
-// Guest addresses our code uses, per game version (issue #15). The US values are the ones the code always used
-// (SCUS_974.02); the PAL values (SCES_528.93) come from work/pal/hookmap.csv and were checked against the PAL ELF's
-// instruction words (same function body apart from relocations, or a call site that calls it the same way). Only real
-// guest addresses are here: RAM masks, CRCs, range bounds and struct offsets stay where they are used.
+// Guest addresses our code uses, per game executable. The US values are the ones the code always used (SCUS_974.02);
+// both PAL tables were mapped to their ELF and checked against its instruction words (same function body apart from
+// relocations, or a call site that calls it the same way). Only real guest addresses are here: RAM masks, CRCs, range
+// bounds and struct offsets stay where they are used.
 //
 // kzAddrs() is the table of the region chosen at boot (kz_region.h). It is valid before the region is chosen too (US).
 
@@ -56,6 +56,8 @@ struct KzAddrs
     // ---- movies (kz_ipu.cpp, kz_movies.cpp, kz_overrides.cpp)
     uint32_t playMovie;     // blocking movie player
     uint32_t menuPageUpdate; // front-end page update: script clock from menu+0x170 (ms), then <Page>Update (kz_movies.cpp)
+    uint32_t switchToMenu;   // front-end screen transition (kz_testing.cpp)
+    uint32_t setLevelFile;   // campaign level selection (kz_testing.cpp)
     uint32_t movieOpen;     // movie object's open method
     uint32_t movieRead;     // player read callback
     uint32_t movieInputEnd; // end-of-input check
@@ -101,6 +103,7 @@ struct KzAddrs
 
 extern const KzAddrs kKzAddrsUs;
 extern const KzAddrs kKzAddrsPal;
+extern const KzAddrs kKzAddrsEu;
 
 namespace kz_detail
 {

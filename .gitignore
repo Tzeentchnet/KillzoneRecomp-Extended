@@ -18,6 +18,7 @@ dist/
 0x*
 tools/pcsx2_par/
 generated_pal/
+generated_eu/
 pin-tool-log.txt
 /dia_symbols.obj
 /gs_trace_summary.obj

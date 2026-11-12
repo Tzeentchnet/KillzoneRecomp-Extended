@@ -157,44 +157,49 @@ file(GLOB KZ_GENERATED_SRC CONFIGURE_DEPENDS "${KZ_GENERATED_DIR}/*.cpp")
 list(LENGTH KZ_GENERATED_SRC KZ_GENERATED_COUNT)
 message(STATUS "Killzone: ${KZ_GENERATED_COUNT} generated sources")
 
-# Issue #15: one exe for the US disc (SCUS-97402, the set above) and the PAL disc (SCES-52893, En/Ru/El). The PAL code
-# (from SCES_528.93) is generated with symbol_prefix = "kzpal_" and table_register_function = "kzPalRegisterFunctionTable"
-# (src/kz_pal_table.h), so it links next to the US code; it is its own object library below (own include directory and
-# PCH, so its ps2_recompiled_functions.h is the PAL one). The game picks the version from the disc at run time
-# (src/kz_region.h). Empty or missing directory: a US-only build (the PAL disc is then reported as unsupported).
-set(KZ_GENERATED_PAL_DIR "${CMAKE_SOURCE_DIR}/generated_pal" CACHE PATH "PS2Recomp output for SCES_528.93 (PAL); empty = US only")
-set(KZ_HAVE_PAL OFF)
-if(KZ_GENERATED_PAL_DIR AND EXISTS "${KZ_GENERATED_PAL_DIR}/register_functions.cpp")
-    # A PAL set generated without the table function (e.g. the old PAL-only test build) defines the US table symbols
-    # and would not link: it is left out.
-    file(STRINGS "${KZ_GENERATED_PAL_DIR}/register_functions.cpp" _kz_pal_register REGEX "kzPalRegisterFunctionTable" LIMIT_COUNT 1)
-    if(_kz_pal_register)
-        # The PAL set fills the US live table at boot, so the US table must reach past the end of the PAL code
-        # (config/killzone.toml table_end_min). Checked here so a PAL regen that grew can't ship a PAL disc that fails at boot.
-        file(STRINGS "${KZ_GENERATED_PAL_DIR}/register_functions.cpp" _kz_pal_end REGEX "kzPalRegisterFunctionTableEnd = 0x" LIMIT_COUNT 1)
-        file(STRINGS "${KZ_GENERATED_DIR}/register_functions.cpp" _kz_us_end REGEX "g_ps2RecompiledFunctionTableEnd = 0x" LIMIT_COUNT 1)
-        string(REGEX MATCH "0x[0-9a-fA-F]+" _kz_pal_end "${_kz_pal_end}")
-        string(REGEX MATCH "0x[0-9a-fA-F]+" _kz_us_end "${_kz_us_end}")
-        if(_kz_pal_end AND _kz_us_end)
-            math(EXPR _kz_pal_end_n "${_kz_pal_end}")
-            math(EXPR _kz_us_end_n "${_kz_us_end}")
-            if(_kz_pal_end_n GREATER _kz_us_end_n)
-                message(FATAL_ERROR "Killzone: the PAL code ends at ${_kz_pal_end} but the US function table ends at ${_kz_us_end}: "
-                                    "raise table_end_min in config/killzone.toml to at least ${_kz_pal_end} and regenerate the US set")
+# Each PAL executable is recompiled separately with prefixed symbols and a register function that fills the live US
+# function table. Missing generated directories simply leave that exact disc unsupported by the build.
+set(KZ_GENERATED_PAL_DIR "${CMAKE_SOURCE_DIR}/generated_pal" CACHE PATH "PS2Recomp output for SCES_528.93; empty = unsupported")
+set(KZ_GENERATED_EU_DIR "${CMAKE_SOURCE_DIR}/generated_eu" CACHE PATH "PS2Recomp output for SCES_520.04; empty = unsupported")
+
+function(kz_find_generated_version key generated_dir register_function serial)
+    set(KZ_HAVE_${key} OFF PARENT_SCOPE)
+    if(generated_dir AND EXISTS "${generated_dir}/register_functions.cpp")
+        file(STRINGS "${generated_dir}/register_functions.cpp" _kz_register
+             REGEX "${register_function}" LIMIT_COUNT 1)
+        if(_kz_register)
+            # Every PAL set fills the US live table, so config/killzone.toml must reserve through its final address.
+            file(STRINGS "${generated_dir}/register_functions.cpp" _kz_version_end
+                 REGEX "${register_function}End = 0x" LIMIT_COUNT 1)
+            file(STRINGS "${KZ_GENERATED_DIR}/register_functions.cpp" _kz_us_end
+                 REGEX "g_ps2RecompiledFunctionTableEnd = 0x" LIMIT_COUNT 1)
+            string(REGEX MATCH "0x[0-9a-fA-F]+" _kz_version_end "${_kz_version_end}")
+            string(REGEX MATCH "0x[0-9a-fA-F]+" _kz_us_end "${_kz_us_end}")
+            if(_kz_version_end AND _kz_us_end)
+                math(EXPR _kz_version_end_n "${_kz_version_end}")
+                math(EXPR _kz_us_end_n "${_kz_us_end}")
+                if(_kz_version_end_n GREATER _kz_us_end_n)
+                    message(FATAL_ERROR "Killzone: ${serial} code ends at ${_kz_version_end} but the US function table ends "
+                                        "at ${_kz_us_end}: raise table_end_min in config/killzone.toml to at least "
+                                        "${_kz_version_end} and regenerate the US set")
+                endif()
             endif()
+            file(GLOB _kz_generated_src CONFIGURE_DEPENDS "${generated_dir}/*.cpp")
+            list(LENGTH _kz_generated_src _kz_generated_count)
+            set(KZ_GENERATED_${key}_SRC "${_kz_generated_src}" PARENT_SCOPE)
+            set(KZ_HAVE_${key} ON PARENT_SCOPE)
+            message(STATUS "Killzone: ${_kz_generated_count} generated sources for ${serial}")
+        else()
+            message(WARNING "Killzone: ${generated_dir} was not generated with table_register_function = "
+                            "${register_function}; ${serial} is not supported by this build")
         endif()
-        file(GLOB KZ_GENERATED_PAL_SRC CONFIGURE_DEPENDS "${KZ_GENERATED_PAL_DIR}/*.cpp")
-        list(LENGTH KZ_GENERATED_PAL_SRC KZ_GENERATED_PAL_COUNT)
-        set(KZ_HAVE_PAL ON)
-        message(STATUS "Killzone: ${KZ_GENERATED_PAL_COUNT} PAL generated sources (SCES-52893 supported)")
     else()
-        message(WARNING "Killzone: ${KZ_GENERATED_PAL_DIR} was not generated with table_register_function = "
-                        "kzPalRegisterFunctionTable (and symbol_prefix = kzpal_); building US only, the PAL disc is not supported")
+        message(STATUS "Killzone: no generated code for ${serial} (${generated_dir}); that disc is not supported")
     endif()
-else()
-    message(STATUS "Killzone: no PAL generated code (KZ_GENERATED_PAL_DIR = '${KZ_GENERATED_PAL_DIR}'); building US only, "
-                   "the PAL disc (SCES-52893) is not supported")
-endif()
+endfunction()
+
+kz_find_generated_version(PAL "${KZ_GENERATED_PAL_DIR}" "kzPalRegisterFunctionTable" "SCES-52893")
+kz_find_generated_version(EU "${KZ_GENERATED_EU_DIR}" "kzEuRegisterFunctionTable" "SCES-52004")
 
 file(GLOB KZ_SRC CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/*.cpp")
 list(FILTER KZ_SRC EXCLUDE REGEX "/kz_(crash|profiler|sampler)\\.cpp$")
@@ -213,6 +218,9 @@ target_link_libraries(kz_port PRIVATE kz_host_core ps2_runtime SDL3::SDL3 imgui 
 target_compile_definitions(kz_port PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 if(KZ_HAVE_PAL)
     target_compile_definitions(kz_port PRIVATE KZ_HAVE_PAL=1) # src/kz_region.cpp fills the function table from the PAL set
+endif()
+if(KZ_HAVE_EU)
+    target_compile_definitions(kz_port PRIVATE KZ_HAVE_EU=1)
 endif()
 # The CPU check runs before the C runtime on any x64 CPU, so it is built without AVX2 (src/kz_cpucheck.cpp, issue #14).
 # KZ_CPUCHECK_ISA tells it which instructions this build needs: 0 = MULTI, 1 = SSE4, 2 = AVX2.
@@ -288,30 +296,35 @@ if(MSVC)
     target_link_options(killzone PRIVATE /ENTRY:kzCpuCheckEntry)
 endif()
 
-# The PAL generated code (see KZ_GENERATED_PAL_DIR above): same flags, unity batches and PCH layout as the US code, but its
-# own include directory, so `#include <ps2_recompiled_functions.h>` in its sources and its PCH is generated_pal's header.
-if(KZ_HAVE_PAL)
-    add_library(kz_generated_pal OBJECT ${KZ_GENERATED_PAL_SRC})
-    target_include_directories(kz_generated_pal PRIVATE "${KZ_GENERATED_PAL_DIR}")
-    target_link_libraries(kz_generated_pal PRIVATE ps2_runtime)
-    set_target_properties(kz_generated_pal PROPERTIES
+# PAL generated code uses the US code's flags and batching, but each set needs its own include directory and PCH so
+# ps2_recompiled_functions.h resolves to that set's header.
+function(kz_add_generated_version target generated_dir)
+    add_library(${target} OBJECT ${ARGN})
+    target_include_directories(${target} PRIVATE "${generated_dir}")
+    target_link_libraries(${target} PRIVATE ps2_runtime)
+    set_target_properties(${target} PROPERTIES
         UNITY_BUILD ON
         UNITY_BUILD_BATCH_SIZE 128
     )
-    target_precompile_headers(kz_generated_pal PRIVATE
+    target_precompile_headers(${target} PRIVATE
         ext/PS2Recomp/ps2xRuntime/include/ps2_runtime_macros.h
         ext/PS2Recomp/ps2xRuntime/include/ps2_runtime.h
-        "${KZ_GENERATED_PAL_DIR}/ps2_recompiled_functions.h"
-        "${KZ_GENERATED_PAL_DIR}/ps2_recompiled_stubs.h"
+        "${generated_dir}/ps2_recompiled_functions.h"
+        "${generated_dir}/ps2_recompiled_stubs.h"
         ext/PS2Recomp/ps2xRuntime/include/ps2_syscalls.h
         ext/PS2Recomp/ps2xRuntime/include/ps2_stubs.h
     )
     if(MSVC)
-        target_compile_options(kz_generated_pal PRIVATE /bigobj /FS)
+        target_compile_options(${target} PRIVATE /bigobj /FS)
     endif()
-    # Only its objects: linking the object library would add its ps2_runtime dependency again at the end of the link line,
-    # which moves raylib behind OneCore.lib/winmm.lib (LNK2005 CloseWindow / PlaySound).
-    target_sources(killzone PRIVATE $<TARGET_OBJECTS:kz_generated_pal>)
+    target_sources(killzone PRIVATE $<TARGET_OBJECTS:${target}>)
+endfunction()
+
+if(KZ_HAVE_PAL)
+    kz_add_generated_version(kz_generated_pal "${KZ_GENERATED_PAL_DIR}" ${KZ_GENERATED_PAL_SRC})
+endif()
+if(KZ_HAVE_EU)
+    kz_add_generated_version(kz_generated_eu "${KZ_GENERATED_EU_DIR}" ${KZ_GENERATED_EU_SRC})
 endif()
 if(KZGS_ADDRESS_SANITIZER)
     target_link_options(killzone PRIVATE /fsanitize=address)

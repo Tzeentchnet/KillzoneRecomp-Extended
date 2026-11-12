@@ -10,8 +10,8 @@
 - An x64 CPU with SSE4.1; AVX and AVX2 paths are selected at runtime
 - Your own supported Killzone disc image
 
-The supported executable builds are NTSC-U `SCUS-97402` and PAL `SCES-52893` (English, Russian, and Greek). The
-repository does not contain game code or data.
+The supported executable builds are NTSC-U `SCUS-97402`, PAL `SCES-52893` (English, Russian, and Greek), and PAL
+`SCES-52004` (English, French, German, Spanish, Italian, and Dutch). The repository does not contain game code or data.
 
 ## Clone and provision
 
@@ -67,13 +67,20 @@ repository does not contain game code or data.
    python .\tools\scripts\regen.py --elf $env:KZ_GAME_ELF
    ```
 
-   For a combined US/PAL executable, generate the US tree first, then point `KZ_GAME_ELF` at `SCES_528.93` and run:
+   For a combined executable, generate the US tree first. To add `SCES-52893`, point `KZ_GAME_ELF` at `SCES_528.93`
+   and run:
 
    ```powershell
    python .\tools\scripts\regen.py --pal --elf $env:KZ_GAME_ELF
    ```
 
-   A missing `generated_pal\` directory produces a US-only build that reports PAL discs as unsupported.
+   To add the six-language `SCES-52004` release, point `KZ_GAME_ELF` at `SCES_520.04` and run:
+
+   ```powershell
+   python .\tools\scripts\regen.py --eu --elf $env:KZ_GAME_ELF
+   ```
+
+   Missing `generated_pal\` or `generated_eu\` directories disable only their matching PAL executable.
 
 7. Configure and build:
 

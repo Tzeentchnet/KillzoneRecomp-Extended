@@ -15,8 +15,9 @@ mouse-and-keyboard controls, gamepads, internal resolution scaling, and optional
 > Super Resolution only, not frame generation, and its approximate temporal inputs can produce HUD or disocclusion
 > ghosting. See the [experimental upscaler configuration](docs/configuration.md#experimental-presentation-upscaler).
 
-> **Bring your own disc.** This repository contains no game code or data. You need a supported Killzone NTSC-U
-> (`SCUS-97402`) or PAL (`SCES-52893`, English/Russian/Greek) disc image.
+> **Bring your own disc.** This repository contains no game code or data. You need a supported Killzone disc image:
+> NTSC-U `SCUS-97402`, PAL `SCES-52893` (English/Russian/Greek), or PAL `SCES-52004`
+> (English/French/German/Spanish/Italian/Dutch).
 
 > [!NOTE]
 > **Companion Blender add-on:** [Killzone Blender Importer](https://github.com/Tzeentchnet/Killzone-Blender-Importer)
@@ -40,7 +41,7 @@ Windows x64.
 - Default-off Vulkan FSR 3.1.6 Super Resolution in explicit experimental-input mode. This is SR only, not frame
   generation, and its synthetic depth/Optical Flow inputs can produce HUD or disocclusion ghosting.
 - Launcher-managed display, graphics, controls, audio, disc, and isolated testing settings.
-- US and PAL runtime support from separately generated code sets in one executable.
+- US and two PAL executable versions supported from separately generated code sets in one executable.
 
 ## Build and play on Windows
 
@@ -57,6 +58,17 @@ Clone with submodules:
 git clone --recursive https://github.com/Tzeentchnet/KillzoneRecomp-Extended
 Set-Location .\KillzoneRecomp-Extended
 ```
+
+The build can contain these separately generated executable versions:
+
+| Disc | Boot executable | Languages | `regen.py` mode |
+|---|---|---|---|
+| NTSC-U `SCUS-97402` | `SCUS_974.02` | English | default |
+| PAL `SCES-52893` | `SCES_528.93` | English, Russian, Greek | `--pal` |
+| PAL `SCES-52004` | `SCES_520.04` | English, French, German, Spanish, Italian, Dutch | `--eu` |
+
+The US generated tree is required. When `generated_pal\` or `generated_eu\` is present during configuration, CMake
+adds that prefixed code set to the same `killzone.exe`; omitting either directory disables only that matching disc.
 
 Follow the [Killzone Recomp Extended building guide](docs/building.md) to provision locked dependencies, generate
 private game-derived C++, and build `killzone.exe`. Start `launch_launcher.bat`, select your disc image, and configure

@@ -3,8 +3,8 @@
 #include <cstdio>
 #include <cstring>
 
-// US: SCUS_974.02 (the addresses the code always used). PAL: SCES_528.93, from work/pal/hookmap.csv, each checked
-// against the PAL ELF (issue #15):
+// US: SCUS_974.02 (the addresses the code always used). The SCES_528.93 and SCES_520.04 tables were each checked
+// against their PAL ELF:
 //  - code: the PAL function has the same instructions as the US one apart from relocated immediates (jal targets,
 //    lui/lo16 of data), or, for the three hand ports, was found from its call site:
 //      viewmodel 0x2204C0: the function changed, but it is called from the same site of the world render (PAL 0x1C2074,
@@ -14,8 +14,8 @@
 //        the US one apart from relocations;
 //      hudTrace 0x26B9B8: same call site in the world render (PAL 0x1C20DC); trace only;
 //  - data: a PAL instruction that references the same object (lui/lo16), or the next object at the same +0xE00 shift.
-// Both tables list every field in declaration order (designated initializers); kzSelectRegion (kz_region.cpp) refuses a
-// table with a field left at 0.
+// All tables list every field in declaration order (designated initializers); kzSelectRegion (kz_region.cpp) refuses
+// a table with a field left at 0.
 
 const KzAddrs kKzAddrsUs = {
     .gameObjectPtr = 0x00559178u,
@@ -58,6 +58,8 @@ const KzAddrs kKzAddrsUs = {
 
     .playMovie = 0x0026ECC8u,
     .menuPageUpdate = 0x001A8958u,
+    .switchToMenu = 0x001A9738u,
+    .setLevelFile = 0x001B89A8u,
     .movieOpen = 0x002DED00u,
     .movieRead = 0x002DEB98u,
     .movieInputEnd = 0x002DF800u,
@@ -138,6 +140,8 @@ const KzAddrs kKzAddrsPal = {
 
     .playMovie = 0x0026F338u,
     .menuPageUpdate = 0x001A8B30u, // 30 words, same as US apart from 5 relocations
+    .switchToMenu = 0x001A9910u,
+    .setLevelFile = 0x001B8B98u,
     .movieOpen = 0x002DF800u,
     .movieRead = 0x002DF698u,
     .movieInputEnd = 0x002E0300u,
@@ -173,6 +177,88 @@ const KzAddrs kKzAddrsPal = {
     .renderFrameTrace = 0x001C04B0u,
     .hudTrace = 0x0026B9B8u,
     .c3040Trace = 0x001C33A8u,
+
+    .objListQuery = 0x0017D2F0u,
+};
+
+const KzAddrs kKzAddrsEu = {
+    .gameObjectPtr = 0x00559DF8u,
+    .gameObjectVtable = 0x00522E38u,
+    .bufferIndex = 0x0055B334u,
+    .vsyncCounter = 0x0055B360u,
+    .secondsPerVsync = 0x0055B364u,
+    .bufferState = 0x0055B368u,
+    .kickFlag = 0x0055B415u,
+    .fadeLevel = 0x0055B448u,
+    .movieCurrentPlayer = 0x0055C058u,
+    .vsyncCountAcc = 0x0055FD68u,
+    .vsyncCountLast = 0x0055FD70u,
+    .nowSeconds = 0x0055FD7Cu,
+    .cpNameObj = 0x005657C8u,
+    .lgkbmState = 0x00591A10u,
+    .imageEnd = 0x0055B2F4u,
+
+    .playerVtable = 0x00526290u,
+    .ctlVtable = 0x005256D0u,
+    .weaponVtable = 0x0052C8A8u,
+    .discStreamVtable = 0x0052F6B8u,
+
+    .ctrlUpdate = 0x0023F2B8u,
+    .applyLook = 0x0021C910u,
+    .pitchAutoCentre = 0x0023EE78u,
+    .afterLookProbe = 0x00218B68u,
+    .vkKeyboard = 0x001B0EE8u,
+    .vkAddChar = 0x001B1898u,
+    .vkBackspace = 0x001B19D0u,
+    .buttonValue = 0x001B34E8u,
+
+    .frameLimiter = 0x001C0190u,
+    .kick = 0x00150068u,
+    .kickCheck = 0x00151FA0u,
+    .vblankHandler = 0x00151FF0u,
+    .waitD1Idle = 0x00175998u,
+    .waitKicked = 0x001759D0u,
+    .lookAccel = 0x0023ED78u,
+
+    .playMovie = 0x0026F258u,
+    .menuPageUpdate = 0x001A8A70u,
+    .switchToMenu = 0x001A9850u,
+    .setLevelFile = 0x001B8AD8u,
+    .movieOpen = 0x002DF700u,
+    .movieRead = 0x002DF598u,
+    .movieInputEnd = 0x002E0200u,
+    .movieFeed = 0x002E14C0u,
+    .audioFull = 0x002E2440u,
+    .audioFeed = 0x002E23C0u,
+    .stOpen = 0x00496D18u,
+    .stRead = 0x00496F68u,
+    .fileReadAsync = 0x0014D770u,
+    .filePoll = 0x0014DAB0u,
+
+    .sifSearchModuleByName = 0x002B6788u,
+    .sifUnloadModule = 0x002B66F8u,
+    .sifLoadModule = 0x002B6A60u,
+    .sifStopModule = 0x002B64F0u,
+    .lgkbmInit = 0x003D7FE0u,
+
+    .glowPass = 0x0015DF98u,
+    .frameBlend = 0x0015F740u,
+    .lensBlur = 0x001A9420u,
+    .postRender = 0x001EFB18u,
+    .zoneParams = 0x0033A638u,
+    .lodScale = 0x001C23E8u,
+
+    .world = 0x001C1BE0u,
+    .viewmodel = 0x002203D8u,
+    .frustum = 0x0016E2B0u,
+    .ortho = 0x0016E3F8u,
+    .text = 0x001676F0u,
+    .rect = 0x0015CF38u,
+    .viewBuild = 0x003C99B8u,
+    .viewBuildFromWorld = 0x001C1CE4u,
+    .renderFrameTrace = 0x001C03C8u,
+    .hudTrace = 0x0026B8B8u,
+    .c3040Trace = 0x001C32C0u,
 
     .objListQuery = 0x0017D2F0u,
 };

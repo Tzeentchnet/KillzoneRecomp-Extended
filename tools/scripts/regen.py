@@ -3,7 +3,7 @@
 Steps: merge SCE library bindings from ps2_analyzer and missed function starts from find_code_pointers.py into the
 config (work/killzone.merged.toml), run ps2_recomp into work/gen_tmp, close emitted tail and resume dispatch targets
 to a fixed point, then copy changed/new files to generated/ and delete stale ones.
-Usage: python tools/scripts/regen.py [--pal] [--elf <path-to-boot-ELF>]
+Usage: python tools/scripts/regen.py [--pal | --eu] [--elf <path-to-boot-ELF>]
 """
 import argparse, filecmp, hashlib, json, os, re, shutil, subprocess, sys, tomllib
 
@@ -24,8 +24,13 @@ def repo_path(value: str | os.PathLike[str]) -> Path:
     return path if path.is_absolute() else ROOT / path
 
 
-if "--pal" in sys.argv[1:]:
+version_flags = [flag for flag in ("--pal", "--eu") if flag in sys.argv[1:]]
+if len(version_flags) > 1:
+    raise SystemExit("[regen] --pal and --eu are mutually exclusive")
+if "--pal" in version_flags:
     os.environ.setdefault("KZ_CONFIG", str(ROOT / "config" / "killzone_pal.toml"))
+elif "--eu" in version_flags:
+    os.environ.setdefault("KZ_CONFIG", str(ROOT / "config" / "killzone_eu.toml"))
 CFG = repo_path(os.environ.get("KZ_CONFIG", "config/killzone.toml"))
 PRESETS = {
     "killzone": {
@@ -43,6 +48,14 @@ PRESETS = {
         "merged": "work/pal/killzone_pal.merged.toml",
         "temporary": "work/pal/gen_tmp",
         "log": "work/pal/recomp_pal.log",
+    },
+    "killzone_eu": {
+        "analyzer": "work/eu/analyzer_eu.toml",
+        "code_pointers": "work/eu/code_pointers_eu.txt",
+        "reject": "work/eu/code_pointers_reject_eu.txt",
+        "merged": "work/eu/killzone_eu.merged.toml",
+        "temporary": "work/eu/gen_tmp",
+        "log": "work/eu/recomp_eu.log",
     },
 }
 if CFG.stem not in PRESETS:
@@ -170,7 +183,9 @@ def sync() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pal", action="store_true", help="use config/killzone_pal.toml and PAL-specific outputs")
+    version_group = parser.add_mutually_exclusive_group()
+    version_group.add_argument("--pal", action="store_true", help="use config/killzone_pal.toml for SCES-52893")
+    version_group.add_argument("--eu", action="store_true", help="use config/killzone_eu.toml for SCES-52004")
     parser.add_argument("--elf", default=os.environ.get("KZ_ELF", os.environ.get("KZ_GAME_ELF", str(CONFIG_ELF))))
     args = parser.parse_args()
     if not args.elf:

@@ -146,9 +146,11 @@ namespace
     }
     void installUs(PS2Runtime &runtime) { install(runtime, KzRegion::Us); }
     void installPal(PS2Runtime &runtime) { install(runtime, KzRegion::Pal); }
+    void installEu(PS2Runtime &runtime) { install(runtime, KzRegion::Eu); }
 }
 
 // Same ELF identity as the descriptors in kz_overrides.cpp; the runtime applies every descriptor that matches. Installed
 // while the ELF loads, so the aim patch (installed after) wraps this hook.
 PS2_REGISTER_GAME_OVERRIDE("Killzone SCUS-97402 weapons", "SCUS_974.02", 0x00146F30u, 0x114E85F8u, installUs)
 PS2_REGISTER_GAME_OVERRIDE("Killzone SCES-52893 weapons", "SCES_528.93", 0x00146F10u, 0x39B8D221u, installPal)
+PS2_REGISTER_GAME_OVERRIDE("Killzone SCES-52004 weapons", "SCES_520.04", 0x00146F10u, 0xC8407F87u, installEu)

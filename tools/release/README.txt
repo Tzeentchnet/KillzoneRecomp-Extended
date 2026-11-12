@@ -6,7 +6,7 @@ You need your own copy of the game. No game data (levels, models, textures, soun
 it's all read from your disc image.
 
 What you need
-- Killzone for PS2, US version (SCUS-97402) or European version (SCES-52893), as an .iso you dumped from your own disc.
+- Killzone for PS2 (SCUS-97402, SCES-52893, or SCES-52004), as an .iso you dumped from your own disc.
   Other versions of the game don't work yet.
 - Windows 10 or 11, 64-bit, a CPU with SSE4.1 (Intel Core 2 Penryn / AMD FX or newer), and a GPU with Direct3D 11, Direct3D 12 or Vulkan.
 

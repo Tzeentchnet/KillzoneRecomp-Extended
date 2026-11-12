@@ -14,6 +14,8 @@ namespace
     KzRegion g_region = KzRegion::Us;
     bool g_selected = false;
 
+    using TableRegisterFunction = void (*)(PS2Runtime::RecompiledFunction *, uint32_t, uint32_t);
+
     bool tableComplete(const KzAddrs &a)
     {
         static_assert(sizeof(KzAddrs) % sizeof(uint32_t) == 0, "KzAddrs holds only uint32_t fields");
@@ -24,24 +26,91 @@ namespace
                 return false;
         return true;
     }
+
+    const KzAddrs &regionAddrs(KzRegion region)
+    {
+        switch (region)
+        {
+        case KzRegion::Pal:
+            return kKzAddrsPal;
+        case KzRegion::Eu:
+            return kKzAddrsEu;
+        case KzRegion::Us:
+        default:
+            return kKzAddrsUs;
+        }
+    }
 }
 
 KzRegion kzRegion() { return g_region; }
 
-const char *kzRegionTitle(KzRegion r) { return r == KzRegion::Pal ? "Killzone (Europe)" : "Killzone (USA)"; }
-const char *kzRegionSerial(KzRegion r) { return r == KzRegion::Pal ? "SCES-52893" : "SCUS-97402"; }
-const char *kzRegionBootElf(KzRegion r) { return r == KzRegion::Pal ? "SCES_528.93" : "SCUS_974.02"; }
-const char *kzRegionBootFolder(KzRegion r) { return r == KzRegion::Pal ? "disc_pal" : "disc"; }
-uint32_t kzRegionBootElfXorCrc(KzRegion r) { return r == KzRegion::Pal ? 0x69FE9BB6u : 0xCAAEC49Cu; }
+const char *kzRegionTitle(KzRegion r) { return r == KzRegion::Us ? "Killzone (USA)" : "Killzone (Europe)"; }
+const char *kzRegionSerial(KzRegion r)
+{
+    switch (r)
+    {
+    case KzRegion::Pal:
+        return "SCES-52893";
+    case KzRegion::Eu:
+        return "SCES-52004";
+    case KzRegion::Us:
+    default:
+        return "SCUS-97402";
+    }
+}
+const char *kzRegionBootElf(KzRegion r)
+{
+    switch (r)
+    {
+    case KzRegion::Pal:
+        return "SCES_528.93";
+    case KzRegion::Eu:
+        return "SCES_520.04";
+    case KzRegion::Us:
+    default:
+        return "SCUS_974.02";
+    }
+}
+const char *kzRegionBootFolder(KzRegion r)
+{
+    switch (r)
+    {
+    case KzRegion::Pal:
+        return "disc_pal";
+    case KzRegion::Eu:
+        return "disc_eu";
+    case KzRegion::Us:
+    default:
+        return "disc";
+    }
+}
+uint32_t kzRegionBootElfXorCrc(KzRegion r)
+{
+    switch (r)
+    {
+    case KzRegion::Pal:
+        return 0x69FE9BB6u;
+    case KzRegion::Eu:
+        return 0x6624A78Cu;
+    case KzRegion::Us:
+    default:
+        return 0xCAAEC49Cu;
+    }
+}
 
 bool kzRegionSupported(KzRegion r)
 {
+    if (r == KzRegion::Us)
+        return true;
 #if defined(KZ_HAVE_PAL)
-    (void)r;
-    return true;
-#else
-    return r == KzRegion::Us;
+    if (r == KzRegion::Pal)
+        return true;
 #endif
+#if defined(KZ_HAVE_EU)
+    if (r == KzRegion::Eu)
+        return true;
+#endif
+    return false;
 }
 
 bool kzSelectRegion(KzRegion r, std::string *error)
@@ -55,30 +124,47 @@ bool kzSelectRegion(KzRegion r, std::string *error)
     if (g_selected)
         return r == g_region ? true : fail("the game region is already chosen; it cannot change while running");
     if (!kzRegionSupported(r))
-        return fail(std::string(kzRegionTitle(r)) + " (" + kzRegionSerial(r) + ") is not supported by this build (built without the PAL code).");
-    const KzAddrs &addrs = r == KzRegion::Pal ? kKzAddrsPal : kKzAddrsUs;
+        return fail(std::string(kzRegionTitle(r)) + " (" + kzRegionSerial(r) +
+                    ") is not supported by this build (its generated code is not linked).");
+    const KzAddrs &addrs = regionAddrs(r);
     if (!tableComplete(addrs))
         return fail(std::string("internal error: the guest address table for ") + kzRegionSerial(r) + " is incomplete");
-#if defined(KZ_HAVE_PAL)
-    if (r == KzRegion::Pal)
+    if (r != KzRegion::Us)
     {
-        // The live table is the one the US generated code defines (g_ps2RecompiledFunctionTable, Base, SlotCount; every
-        // guest call indexes it). It must reach past the last PAL entry; then the PAL code replaces every slot.
+        TableRegisterFunction registerTable = nullptr;
+        uint32_t versionEnd = 0;
+#if defined(KZ_HAVE_PAL)
+        if (r == KzRegion::Pal)
+        {
+            registerTable = &kzPalRegisterFunctionTable;
+            versionEnd = kzPalRegisterFunctionTableEnd;
+        }
+#endif
+#if defined(KZ_HAVE_EU)
+        if (r == KzRegion::Eu)
+        {
+            registerTable = &kzEuRegisterFunctionTable;
+            versionEnd = kzEuRegisterFunctionTableEnd;
+        }
+#endif
+        if (!registerTable)
+            return fail(std::string("internal error: no generated function-table installer for ") + kzRegionSerial(r));
+
         const uint32_t base = g_ps2RecompiledFunctionTableBase;
         const uint32_t slots = g_ps2RecompiledFunctionTableSlotCount;
-        const uint32_t palEnd = kzPalRegisterFunctionTableEnd;
-        if (palEnd < base || ((palEnd - base) >> 2) > slots || palEnd > g_ps2RecompiledFunctionTableEnd)
+        if (versionEnd < base || ((versionEnd - base) >> 2) > slots || versionEnd > g_ps2RecompiledFunctionTableEnd)
         {
             std::ostringstream m;
             m << "internal error: the function table (0x" << std::hex << base << "..0x" << g_ps2RecompiledFunctionTableEnd
-              << ", " << std::dec << slots << " slots) does not cover the PAL code (end 0x" << std::hex << palEnd
+              << ", " << std::dec << slots << " slots) does not cover " << kzRegionSerial(r) << " (end 0x" << std::hex
+              << versionEnd
               << "); the US code must be generated with a table that covers it";
             return fail(m.str());
         }
-        kzPalRegisterFunctionTable(g_ps2RecompiledFunctionTable, base, slots);
-        std::cout << "[kz] function table: PAL code installed (" << ((palEnd - base) >> 2) << " of " << slots << " slots)" << std::endl;
+        registerTable(g_ps2RecompiledFunctionTable, base, slots);
+        std::cout << "[kz] function table: " << kzRegionSerial(r) << " code installed ("
+                  << ((versionEnd - base) >> 2) << " of " << slots << " slots)" << std::endl;
     }
-#endif
     g_region = r;
     kz_detail::g_addrs = &addrs;
     g_selected = true;

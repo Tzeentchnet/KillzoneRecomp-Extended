@@ -1,5 +1,6 @@
 #include "kz_testing.h"
 
+#include "kz_addrs.h"
 #include "kz_config.h"
 #include "kz_hook_addresses.h"
 #include "kz_input.h"
@@ -21,11 +22,11 @@
 //
 // Intro: main (0x140138) opens the Intro menu set, whose script switches screens with SwitchToMenu(menu, const char
 // *name, push) (0x1A9738): LanguageOutro -> Logos (about 23 s, not skippable with a button) -> MemoryCardTest ->
-// PlayGameIntro (the intro cinematic, about 58 s) -> the front end. The skip keeps every screen except those two: the
-// script's "Logos" switch is pointed at its own "MemoryCardTest" name, and the cinematic's movie open fails, which is the
-// path every movie takes without the IPU (kz_overrides.cpp). Skipping the whole Intro set instead (OpenMenu id 0) was
-// tried and rejected. Known issue (WIN-06): after the cinematic is skipped, loading chapter 11 crashes or corrupts
-// textures in about a third of runs; it does not happen with the intro played.
+// PlayGameIntro (about 58 s on SCUS-97402 and 191 s on SCES-52004) -> the front end. The skip keeps every screen except
+// those two: the script's "Logos" switch is pointed at its own "MemoryCardTest" name, and the cinematic's movie open
+// fails, which is the path every movie takes without the IPU (kz_overrides.cpp). Skipping the whole Intro set instead
+// (OpenMenu id 0) was tried and rejected. Known issue (WIN-06): after the cinematic is skipped, loading chapter 11
+// crashes or corrupts textures in about a third of runs; it does not happen with the intro played.
 //
 // Campaign unlocks: the PlayerProfile script methods (bound at 0x1D3558..) answer the menus. IsLevelUnlocked(profile,
 // globalLevel) (0x1D7190) is true for level 1 and for level N when the profile's per-level record +0x2D4[N-2] is > 0;
@@ -131,7 +132,7 @@ namespace
     // A call enters at the function's own address; a resume at an inner label (after a yield) runs the original as is.
     void switchToMenu(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
     {
-        if (ctx->pc == kz_hook::SwitchToMenu)
+        if (ctx->pc == kzAddrs().switchToMenu)
         {
             const uint32_t str = getRegU32(ctx, 5);
             if (inRam(str) && inRam(str + 64u))
@@ -167,7 +168,7 @@ namespace
     // SetLevelFile(gameInfo, const char *file): the campaign script passes "<chapter>.<name>" ("1.Trenches", "11.OTS").
     void setLevelFile(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt)
     {
-        if (ctx->pc == kz_hook::SetLevelFile)
+        if (ctx->pc == kzAddrs().setLevelFile)
         {
             const uint32_t str = getRegU32(ctx, 5);
             if (inRam(str) && inRam(str + 64u))
@@ -458,9 +459,9 @@ void kzTestingInstall(PS2Runtime &runtime, bool isolatedMemoryCard)
     g_skipMask = envInt("KZ_SKIP_INTRO_MASK", 3, 0, 3);
     if (g_skipIntro && !hook(runtime, kz_hook::MovieOpen, &movieOpen, &g_origMovieOpen))
         std::printf("[kz] testing: skip intro: HOOK FAILED\n");
-    if ((g_skipIntro || g_logFrontEnd) && !hook(runtime, kz_hook::SwitchToMenu, &switchToMenu, &g_origSwitchToMenu))
+    if ((g_skipIntro || g_logFrontEnd) && !hook(runtime, kzAddrs().switchToMenu, &switchToMenu, &g_origSwitchToMenu))
         std::printf("[kz] testing: front-end hook FAILED\n");
-    if ((g_startLevel > 0 || g_logFrontEnd) && !hook(runtime, kz_hook::SetLevelFile, &setLevelFile, &g_origSetLevelFile))
+    if ((g_startLevel > 0 || g_logFrontEnd) && !hook(runtime, kzAddrs().setLevelFile, &setLevelFile, &g_origSetLevelFile))
         std::printf("[kz] testing: level hook FAILED\n");
     if (g_skipIntro)
         std::printf("[kz] testing: skip intro\n");

@@ -30,8 +30,8 @@ private:
     uint32_t m_rootSize = 0;
 };
 
-// Result of checking that an image is a supported Killzone disc: US v1.00 (SCUS-97402, boot ELF SCUS_974.02, XOR CRC
-// CAAEC49C) or PAL (SCES-52893, boot ELF SCES_528.93, XOR CRC 69FE9BB6), chosen by SYSTEM.CNF's BOOT2 line (kz_region.h).
+// Result of checking a supported Killzone disc: SCUS-97402 (XOR CRC CAAEC49C), SCES-52893 (69FE9BB6), or
+// SCES-52004 (6624A78C), chosen by SYSTEM.CNF's BOOT2 line (kz_region.h).
 struct KzDiscCheck
 {
     bool ok = false;
@@ -40,8 +40,8 @@ struct KzDiscCheck
 };
 KzDiscCheck kzCheckDisc(const std::filesystem::path &iso);
 
-// The region of a boot ELF given directly (--elf): by file name (SCES_528.93 = PAL) and its XOR CRC. Returns false when
-// the file is neither boot ELF (region stays US then; message in *note).
+// The version of a boot ELF given directly (--elf), by file name and XOR CRC. Returns false for other executables
+// (region stays US then; message in *note).
 bool kzDetectElfRegion(const std::filesystem::path &elf, KzRegion &region, std::string *note);
 
 // Extracts the small boot files (SYSTEM.CNF, the boot ELF, IOP/*.IRX, IOP/IOPRP300.IMG) from the disc image into `dir`

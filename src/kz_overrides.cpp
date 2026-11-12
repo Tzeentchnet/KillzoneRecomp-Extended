@@ -1,5 +1,5 @@
-// Killzone runtime overrides, for the US (SCUS-97402) and the PAL (SCES-52893) boot ELF. The guest addresses come from
-// kzAddrs() (kz_addrs.h), the table of the version chosen at boot (kz_region.h).
+// Killzone runtime overrides for all supported boot ELFs. Guest addresses come from kzAddrs() (kz_addrs.h), the table
+// of the version chosen at boot (kz_region.h).
 //
 // Bindings made here take effect at load time without regenerating the recompiled code: every guest call goes
 // through PS2Runtime::dispatchGuestBranch, which looks up the function table that replaceFunction() patches.
@@ -93,7 +93,7 @@ namespace
         }};
     }
 
-    // These hand-mapped functions have not been verified in SCES_528.93, so install them only for the US executable.
+    // These hand-mapped functions have not been verified in either PAL executable, so install them only for US.
     constexpr CustomBinding kUsOnlyBindings[] = {
         {kz_hook::SifInitRpc, &returningBinding<&ps2_syscalls::SifInitRpc>, "sceSifInitRpc"},
         {kz_hook::McInit, &returningBinding<&ps2_stubs::sceMcInit>, "sceMcInit"},
@@ -101,6 +101,16 @@ namespace
         {kz_hook::McFormat, &returningBinding<&ps2_stubs::sceMcFormat>, "sceMcFormat"},
         {kz_hook::MpegGetPicture, &kzSceMpegGetPicture, "sceMpegGetPicture"},
         {kz_hook::MpegClearRefBuff, &kzSceMpegClearRefBuff, "sceMpegClearRefBuff"},
+    };
+
+    // Analyzer-identified SCES-52004 entries for the same library routines as kUsOnlyBindings.
+    constexpr CustomBinding kEuOnlyBindings[] = {
+        {0x002B3B58u, &returningBinding<&ps2_syscalls::SifInitRpc>, "sceSifInitRpc"},
+        {0x002BF188u, &returningBinding<&ps2_stubs::sceMcInit>, "sceMcInit"},
+        {0x002BFB80u, &returningBinding<&ps2_stubs::sceMcGetInfo>, "sceMcGetInfo"},
+        {0x002BFE58u, &returningBinding<&ps2_stubs::sceMcFormat>, "sceMcFormat"},
+        {0x003CE298u, &kzSceMpegGetPicture, "sceMpegGetPicture"},
+        {0x003CE540u, &kzSceMpegClearRefBuff, "sceMpegClearRefBuff"},
     };
 
     // KZ_TIMELINE: wrappers that log entry/exit of the frame pipeline's guest functions (patch 0025). The wrapper takes the
@@ -185,6 +195,14 @@ namespace
                     std::cerr << "[kz] failed to bind " << c.name << " @0x" << std::hex << c.address << std::dec << std::endl;
             }
         }
+        else if (kzRegion() == KzRegion::Eu)
+        {
+            for (const CustomBinding &c : kEuOnlyBindings)
+            {
+                if (!runtime.replaceFunction(c.address, c.fn))
+                    std::cerr << "[kz] failed to bind " << c.name << " @0x" << std::hex << c.address << std::dec << std::endl;
+            }
+        }
     }
 
     // The override that matched the loaded ELF must be the version chosen at boot (kz_main.cpp, kzSelectRegion): the
@@ -201,9 +219,12 @@ namespace
     }
     void applyKillzoneUs(PS2Runtime &runtime) { applyFor(runtime, KzRegion::Us); }
     void applyKillzonePal(PS2Runtime &runtime) { applyFor(runtime, KzRegion::Pal); }
+    void applyKillzoneEu(PS2Runtime &runtime) { applyFor(runtime, KzRegion::Eu); }
 }
 
 // ELF CRC32 (zlib) of SCUS_974.02 v1.00 = 0x114E85F8 (PCSX2-style XOR CRC is CAAEC49C).
 PS2_REGISTER_GAME_OVERRIDE("Killzone SCUS-97402", "SCUS_974.02", 0x00146F30u, 0x114E85F8u, applyKillzoneUs)
 // SCES_528.93 (PAL, En/Ru/El): ELF CRC32 (zlib) 0x39B8D221 (XOR CRC 69FE9BB6).
 PS2_REGISTER_GAME_OVERRIDE("Killzone SCES-52893", "SCES_528.93", 0x00146F10u, 0x39B8D221u, applyKillzonePal)
+// SCES_520.04 (PAL, En/Fr/De/Es/It/Nl): ELF CRC32 (zlib) 0xC8407F87 (XOR CRC 6624A78C).
+PS2_REGISTER_GAME_OVERRIDE("Killzone SCES-52004", "SCES_520.04", 0x00146F10u, 0xC8407F87u, applyKillzoneEu)

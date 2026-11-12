@@ -1,9 +1,9 @@
 // Killzone runner entry point. Replaces ps2xRuntime/src/main.cpp so we control boot paths.
 //
-// Usage: killzone.exe [--elf <path to SCUS_974.02 or SCES_528.93>] [--iso <path to Killzone ISO>] [--sample <seconds>]
+// Usage: killzone.exe [--elf <supported boot ELF>] [--iso <path to Killzone ISO>] [--sample <seconds>]
 //                     [--upscaler off|fsr1|fsr3|dlss|xess] [--upscaler-sharpening 0..100]
 // Defaults: the ELF extracted from the disc image (killzone.ini [Paths] ISO, or --iso) into the region-specific
-// boot folder next to the settings file. The disc or explicit ELF selects US SCUS-97402 or PAL SCES-52893.
+// boot folder next to the settings file. The disc or explicit ELF selects SCUS-97402, SCES-52893, or SCES-52004.
 // With an ISO, its extracted boot files are mounted as cdrom0: and the image backs raw sceCdRead sector reads.
 
 #include "ps2_runtime.h"
@@ -431,11 +431,13 @@ int main(int argc, char *argv[])
         kzPromptsInstall(runtime); // after kzWideInstall: wraps the same text function
         kzMoviesInstall(runtime, temporalDiagnostics);
         if (kzIsPal())
-            std::cout << "[kz] PAL disc (SCES-52893, En/Ru/El): every hook uses its SCES_528.93 address (src/kz_addrs.cpp). "
+            std::cout << "[kz] PAL disc (" << kzRegionSerial(kzRegion()) << "): every hook uses its "
+                      << kzRegionBootElf(kzRegion()) << " address (src/kz_addrs.cpp). "
                       << "On: mouse aim, keyboard text entry, frame-rate fixes, post-process switches, movie fixes, native 16:9; "
                       << "ultrawide " << (wide ? "on" : "off (aspect setting)") << "; button prompts "
                       << (cfg.buttonPrompts ? "on while the game's button atlas matches the known one" : "off (setting)")
-                      << "; game video forced to NTSC 60 Hz (config/killzone_pal.toml). Boot files and memory card: disc_pal" << std::endl;
+                      << "; game video forced to NTSC 60 Hz. Boot files and memory card: "
+                      << kzRegionBootFolder(kzRegion()) << std::endl;
         // Tests: a separate (e.g. empty) memory card folder. After loadELF, which resets the roots to the ELF folder.
         // [Testing] TestMemoryCard=1 does the same with "testcard" next to killzone.ini; KZ_MC_ROOT wins.
         std::filesystem::path mcRoot;
