@@ -9,8 +9,9 @@ The product self-test needs no retail content:
 ```
 
 It covers configuration migration and round-tripping, field-of-view math, renderer contracts, input, launcher
-behavior, and other pure product checks. Presentation-upscaler checks include defaults, strict INI/environment/CLI
-validation and precedence, canonical saves, and one-run override non-persistence.
+behavior, controller-family mapping and procedural controller glyphs, and other pure product checks.
+Presentation-upscaler checks include defaults, strict INI/environment/CLI validation and precedence, canonical
+saves, and one-run override non-persistence.
 
 ## ISO-free regression suite
 
@@ -100,6 +101,64 @@ masks. A `config` record follows changes observed after presentation, and its pi
 RCAS before the existing CAS pass. The summary uses the latest such configuration. D3D and software golden tests
 check that unavailable requests preserve the existing presentation, including CAS.
 
+### High-refresh campaign audit
+
+`tools\scripts\high_refresh_campaign_audit.ps1` runs chapter scenarios sequentially at 30, 60, 120 and 144 Hz.
+Every run receives a fresh copy of the supplied private memory card and writes its raw logs, captures, card, and
+`KZ_PARITY_LOG` trace only under ignored `work\`. It never runs rates concurrently. The 30 Hz run is the reference;
+`tools\scripts\high_refresh_analyze.py` compares game-time rate, configured guest-word transition sequences and
+transition times, and optional final player position. Its JSON summary contains counts, timing deltas, pass/fail
+reasons, and a scenario hash, not captures, memory values, positions, paths, or game data.
+
+The scenario manifest is intentionally required. A run that merely enters every chapter without crashing is a smoke
+test, not campaign timing parity; the analyzer reports `incomplete` unless every requested chapter supplies at least
+one of `audit_words`, `max_final_position_delta`, or a scenario-specific `required_log_patterns` check. Guest-word
+transitions are the strongest check for doors, platforms, dialogue states, waves, and completion conditions:
+
+```json
+{
+  "schema_version": 1,
+  "chapters": [
+    {
+      "chapter": 1,
+      "input_script": "g1:ly=-1:5",
+      "min_gameplay_seconds": 30,
+      "parity_words": ["c:0x100"],
+      "audit_words": [
+        {
+          "name": "c:0x100",
+          "min_transitions": 1,
+          "time_tolerance_s": 0.25
+        }
+      ],
+      "max_final_position_delta": 1.0,
+      "environment": {
+        "KZ_GOD": "1"
+      }
+    }
+  ]
+}
+```
+
+The address above is illustrative, not a discovered campaign state. Each chapter needs a private, researched route
+and observable specific to the sequence being audited. Run a selected set with:
+
+```powershell
+.\tools\scripts\high_refresh_campaign_audit.ps1 `
+  -Chapters 1,5,10 -Card .\work\audit-card -Scenario .\work\high-refresh-scenarios.json `
+  -Iso $env:KZ_ISO -Elf $env:KZ_GAME_ELF
+```
+
+Before a private run, validate the content-safe analyzer with:
+
+```powershell
+python .\tools\scripts\high_refresh_analyze.py --self-test
+```
+
+No complete 11-chapter scenario/result matrix has been recorded yet, so campaign-wide 30/60/120/144 Hz parity
+remains unverified. Do not add a fixed-step script hook from another port without first identifying this game's
+script update and message-delivery semantics and producing a failing local scenario.
+
 Focused FSR1 checks (the Vulkan tests require a Vulkan GPU and `VK_LAYER_KHRONOS_validation`):
 
 ```powershell
@@ -143,7 +202,8 @@ The pure synthetic contract test rejects missing, mismatched and invalid inputs 
 after a successful matching dispatch/present. Blocking and successfully queued non-blocking temporal VSync submissions
 copy guest metadata before returning. The product self-test covers guest build/kick camera candidates,
 menu/movie forwarding without logo-timer changes, and pending reset delivery. D3D11 WARP and Vulkan render synthetic color/depth triangles, exercise HW draw/display/present
-observations and duplicate/reset paths, and assert that no candidate becomes a valid temporal resource or history.
+observations and duplicate/reset paths, verify raw-matrix structural traits and reset-safe consecutive-build pairing,
+and assert that no candidate becomes a valid temporal resource or history.
 Vulkan uses standard validation, not synchronization validation, because of the existing synthetic GS index-upload
 hazard noted below. To print protected-content-safe diagnostics for this synthetic test only:
 
@@ -155,6 +215,22 @@ Remove-Item Env:\KZGS_TEMPORAL_DIAGNOSTICS
 
 These tests do not qualify real gameplay inputs, camera motion, or any vendor SDK/GPU. The current gate outcome and
 the restrictions on private gameplay captures are recorded in [the qualification findings](findings.md#temporal-qualification-instrumentation-fail--no-go-2026-11-10).
+
+An authorized SCES-52004 chapter-1 follow-up kept the ISO, generated code, card, captures, and raw logs under ignored
+`work\`. Its content-safe counts found no unambiguous depth frame in 5,213 presented world observations. A shorter
+post-change run found 927 reset-free consecutive same-camera matrix pairs, but only finite/nonzero structural traits,
+so no matrix semantics were promoted. With Vulkan, `KZ_UPSCALE=1`, FSR 3, and explicit `experimental` input policy,
+209/772 world observations carried matched jitter and 207 passed the approximation-only dispatch contract; unmatched
+VSyncs fell back. This is execution evidence for the experimental path, not strict temporal or image-quality
+qualification.
+
+`verify_capture_metadata.py` accepts FSR 3 status, validates either strict or experimental required-input masks, and
+requires an effective FSR 3 provider to report temporal validity and the `provider_fsr3` pipeline position:
+
+```powershell
+python .\tools\scripts\verify_capture_metadata.py --selftest
+python .\tools\scripts\verify_capture_metadata.py .\work\<private-run>
+```
 
 SDK-free vendor-adapter checks use independently authored test doubles and do not load a vendor SDK or require a GPU:
 

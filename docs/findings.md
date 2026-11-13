@@ -63,6 +63,20 @@ The ELF is stripped, so Sony library functions are identified by `ps2_analyzer`'
 - FMV/attract playback (`FUN_0026ecc8`) times itself with `FUN_001466f8` (ms timer), only uses vsync parity for fields.
 - Runtime: `ps2SetVblankPeriodMicros()` (runtime/ps2_host_gs.h) replaces the fixed 16667 us vblank period.
 
+### Campaign audit status (2026-11-12)
+
+The existing movement, weapon and camera parity evidence covers focused first-mission scenarios, not every mission
+script. `tools/scripts/high_refresh_campaign_audit.ps1` now provides a sequential 30/60/120/144 Hz matrix with a
+fresh private card for every chapter/rate, `KZ_PARITY_LOG` game-time traces, and required per-chapter scenarios.
+`tools/scripts/high_refresh_analyze.py` compares configured guest-word transition sequences/times and optional route
+end positions to the 30 Hz reference, rejects exception/timeout/short-run evidence, and reports smoke-only scenarios
+as `incomplete`. Its synthetic matching, mismatched-transition and insufficient-evidence cases pass.
+
+The full BYOD campaign matrix has not been run: there is no checked-in route/state manifest, and private game files
+and captures must remain outside the repository. Vekta's 30 Hz `OnUpdate` issue is therefore a hypothesis for this
+PS2 build, not evidence that the same hook or message-queue semantics apply. Keep the current dt-scaled timer and
+target any future fixed-step correction only after a local chapter scenario demonstrates a rate-dependent event.
+
 ## Widescreen (found 2026-09-29 with PCSX2 PINE)
 - Native 16:9 flag = word at `*(0x559178) + 0x34` (the global game object, which also holds the frame timer at +0x50..+0x70).
   The community pnach address 0x5DA364 is that field in PCSX2's heap layout; the runtime's heap differs, and writing
@@ -1465,6 +1479,16 @@ allocator, same limit: key-ons 0 from t=230 on, failures from t=420); movie audi
 
 **Verified (headless, presented frames 1280x720).** Menu legends (profiles, level select, difficulty, character select) and the first mission's tutorial prompts with keys and mouse buttons; a scheduled kbm/pad/kbm/pad switch flips the legends in the same scene within a frame; the PlayStation look comes back with the controller (same frames); the two word replacements; custom [Bindings] (Space, Tab, F5, Left Ctrl, Mouse4/5 map to their pictures in the log).
 
+**Opt-in controller-family extension (2026-11-12).** `[Input] ControllerGlyphs=1` is deliberately separate from
+keyboard/mouse prompt replacement and defaults off. SDL standard, Xbox 360 and Xbox One mappings receive
+A/B/X/Y, LB/RB, LT/RT and LS/RS labels. Switch Pro and Joy-Con mappings receive position-correct B/A/Y/X,
+L/R, ZL/ZR and LS/RS labels. PlayStation, GameCube, unknown and unsupported types keep the stock atlas. The
+replacement is generated procedurally into the same verified cells; D-pad arrows and unrecognized cells remain
+the game's own art. `KZ_PROMPT_MODE=pad|kbm|xbox|nintendo` and the same names in `KZ_PROMPT_SCHEDULE` provide
+explicit automation. The ISO-free product test covers configuration round-tripping, SDL-family classification,
+physical Nintendo face-button positions, label coverage and bounded glyph rendering. A BYOD visual pass on real
+Xbox, Switch and PlayStation devices remains required before changing the default.
+
 ## Frame cap hang (RTSS) and ultrawide sky/skyline flicker (2026-10-24, GitHub issues #9 and #13)
 
 **#9: loading screens hang under an external frame cap.** Reproduced with the real RivaTuner (RTSS 7.3.7, official installer from the winget manifest, SHA256 checked, signed by MSI): limit 100 on killzone.exe, `KZ_FPS=144`, level 2 script: the first level load never finishes (170 s and more on the loading screen), `KZGS_STATS=1` shows the GS thread presenting 100 frames/s while the guest ticks 144 vblanks/s. Cause: every guest vblank queues a vsync job behind the GIF packets on the VIF1 worker (`ps2RunAfterQueuedGif`), and the worker ran each job through the blocking `kzgsVsync`, which waits until the GS thread has less than 3 frames queued. With a cap below the vblank rate the worker drains jobs slower than they arrive, the backlog grows without bound (44 jobs/s at 144 vs 100: vsync counter 28139 against 19800 presented frames at t=195 s, the difference matches), the GIF packets the EE waits for sit behind thousands of vsync jobs, and the EE blocks in its VIF barriers. Stack samples of the frozen process (cdb): the worker inside `kzgsVsync` -> `std::atomic::wait`, the GS thread alive in `GSDevice11::EndPresent` -> `RTSSHooks64` / ImGui / RenderHW. Even a cap equal to the vblank rate stalled the load (144/144: stuck until t=185 s), a cap above it only delayed it (60/100: 20 s). The "200 s full freeze" seen once was this backlog draining. Fix (`src/kz_gs.cpp`): the worker uses `kzgsVsyncTry`, which drops a presentation when the GS thread is behind (packets and register writes stay pending, the next vblank shows the newest frame) and never waits. Default now; `KZ_GS_BLOCK=1` brings back the old throttle for A/B tests.
@@ -2213,10 +2237,10 @@ displayed gameplay sequence. No raw gameplay frames, memory, or traces are inclu
 | Acceptance gate | Evidence and result |
 |---|---|
 | World and merged color | **FAIL.** The composed present texture is observable by process-local ID, native/renderer format, size, and source rectangle. GFX-04 found HUD, weapon, transparency, and game effects already composed; no independently matched world-only image or trustworthy linear color encoding is available. |
-| Matched gameplay depth | **FAIL.** The existing gameplay inventory was 0/20. Display-target/draw/depth IDs can now be correlated as *candidates*, but no displayed gameplay match, coverage, or forward/reversed direction was demonstrated. A GS depth-test code or bound depth image is not a depth convention. |
-| Motion and previous frame | **FAIL.** There is no matched vector image, previous object/camera transform, or object identity. Moving synthetic geometry exercises the observer but does not validate velocity units, sign, jitter inclusion, disocclusion, skinning, or representative moving game objects. Optical-flow guesses, estimated motion, and zero-motion fallbacks are not used. |
-| World-only jitter and masks | **FAIL.** No world-only projection jitter has been applied or demonstrated; a global GS offset would also move UI and effects. The 2D/viewmodel markers are not per-pixel UI, reactive, or composition masks. None is supplied. |
-| Camera, frame time, and scene | **FAIL.** Near/far/FOV/aspect, two raw current render-camera matrices, and a game-timer delta are bounded *candidates* associated with a guest build/kick. Matrix layout/coordinate semantics, previous-frame pairing, scene identity, and correspondence to the displayed frame are not proven, so no camera or matched-frame-time input is supplied. The logged GS delivery interval remains a separate non-input. |
+| Matched gameplay depth | **FAIL.** The original gameplay inventory was 0/20. A later authorized SCES-52004 chapter-1 run observed 5,213 presented world frames: 5,190 had no display-correlated depth candidate and 23 had multiple candidates; none had exactly one. No coverage, forward/reversed direction, or displayed-world correspondence was demonstrated. A GS depth-test code or bound depth image is not a depth convention. |
+| Motion and previous frame | **FAIL.** There is no matched vector image, previous object/camera transform, or object identity. Moving synthetic geometry exercises the observer but does not validate velocity units, sign, jitter inclusion, disocclusion, skinning, or representative moving game objects. Optical flow, estimated motion, and zero-motion fallbacks are not accepted as strict inputs; experimental FSR 3 uses Optical Flow only with approximation provenance. |
+| World-only jitter and masks | **FAIL for strict qualification.** The experimental FSR 3 path now applies Halton jitter only while building the world camera; viewmodel and 2D hooks do not apply it. An authorized SCES-52004 run observed matched jitter on 209/772 presented world VSync observations and 207 experimental dispatch-valid frames. VSyncs without a new matched jitter/source build fell back. This proves the guarded experimental path executed, not per-pixel world/UI separation or strict image-quality correctness. The 2D/viewmodel markers are not UI, reactive, or composition masks. |
+| Camera, frame time, and scene | **FAIL.** Near/far/FOV/aspect, two raw current render-camera matrices, and a game-timer delta are bounded *candidates* associated with a guest build/kick. Metadata-only pairing now identifies consecutive presented build IDs with the same camera. In 1,406 SCES-52004 world observations, 1,404 matrix candidates produced 927 such pairs: both matrices were unchanged in 578 and changed together in 349. Both exposed only the finite/nonzero structural trait, not either tested affine/perspective row/column signature. This does not establish layout, coordinate semantics, transform roles, scene identity, or provider-compatible previous matrices, so strict camera and matched-frame-time inputs remain unavailable. The logged GS delivery interval remains a separate non-input. |
 | Lifecycle and failure behavior | **PASS, fail-closed only.** Synthetic tests cover missing/unmatched inputs, invalid formats/conventions, first use, duplicate/out-of-order frames, reset causes, failed dispatch/present, and transactional history. No invalid frame advances history. This does not qualify a real temporal image. |
 
 The ISO-free Vulkan observer test rendered two synthetic triangle frames and one duplicate: the first two each
@@ -2233,7 +2257,9 @@ validation; the direct FSR1 Vulkan vectors also passed with synchronization vali
 
 Strict dependency verification passed (31 checks); the generated resume table passed (132,656 dispatch entries,
 100,661 resume cases), and all 10 US hook entry points used here are registered. PAL generated code was not available
-in this build, so PAL hook execution was not tested. The separate `inventory_generated.py --check` remains **failing
+in the original 2026-11-10 build. The protected-content-safe SCES-52004 follow-up above used the later EU generated
+tree and an isolated memory card; no retail data, raw matrix value, trace, or capture is committed. The separate
+`inventory_generated.py --check` remains **failing
 at the pre-existing baseline**: it reports 35 legacy `kz_hook::` names as unused after the product moved to region
 tables. The same 35, with no extras, were reproduced on clean pre-upscaler `7f4f8263cc94d953d6a5ef8f3ff702e4a51fdb1a`
 with PCSX2 `d3e6982a3e36647d642bcd805d3ca5b442d0975c`. For example, `GameEntry` and `MoviePlay` were already absent
@@ -2258,6 +2284,18 @@ candidates or raw render-camera matrices are marked ambiguous. The simulation de
 seconds per tick, and time scale at the matching build limiter. None of these candidates is promoted to a provider
 camera/frame-time input. Hooked movie/menu behavior is unchanged unless the existing skip options are set.
 
+The raw matrices additionally expose only structural trait bits and an ordered pair candidate when two successfully
+presented world builds are consecutive, use the same camera ID, have no intervening reset, and both matrix candidates
+are finite and unambiguous. The pair reports only whether the `+0x310` and `+0x400` arrays changed; it never reports
+matrix elements or a transform interpretation. It is reset on failed/skipped presentation, discontinuity, invalid
+candidate, build gap, or camera change and remains diagnostic-only.
+
+Project Vekta's renderer-phase world/depth snapshot is not directly portable here. Killzone builds a double-buffered
+frame packet list and submits it later through approximately one DMA1 kick. The world, viewmodel, and 2D hooks run
+while that list is being built, not while its GS packets execute. Scheduling an after-queued-GIF callback from those
+hooks would therefore place a marker before the later frame chain, not at its world boundary. No speculative marker
+or depth snapshot was added; a future attempt needs a proven packet-chain boundary or an explicit safe in-stream tag.
+
 First use, source/output size and crop, aspect, provider, device, game/GS reset, explicit guest discontinuities,
 failed dispatch/presentation, missing inputs, skipped frames, and duplicate/out-of-order presentations invalidate
 history. Camera-identity changes, world/non-world build changes, menu-page changes, and movie entry additionally
@@ -2267,9 +2305,10 @@ exist for an eventual authoritative source; synthetic injection is not a claim t
 
 Set `KZGS_TEMPORAL_DIAGNOSTICS=1` **before launch** for one metadata-only line per delivered VSync; it also enables
 the guest hooks without changing the configured view. The line contains IDs, format codes, dimensions, crop,
-counts, candidate/validity flags, resets, the ordered game-delta candidate, and the separate delivery interval, not
-pixels, camera matrices/scalars, guest addresses, or menu/movie strings. `camera`, `guest_flags`, and fields named
-`candidate` describe candidates only; `scene=0` and resource ID zero mean unknown/unavailable. Do not combine a
+counts, candidate/validity flags, resets, the ordered game-delta candidate, raw-matrix structural traits/pair/change
+bits, and the separate delivery interval, not pixels, camera matrix elements/scalars, guest addresses, or
+menu/movie strings. `camera`, `guest_flags`, and fields named `candidate` describe candidates only; `scene=0` and
+resource ID zero mean unknown/unavailable. Do not combine a
 protected-content run with separate verbose game-specific logging such as `KZ_WIDE_LOG`, `KZ_MOVIE_LOG`, or
 `KZ_LOGO_LOG`. Do not commit any private capture, trace, game content, or unsanitized log.
 Hook installation is decided at startup, so restart after changing the diagnostic setting.
