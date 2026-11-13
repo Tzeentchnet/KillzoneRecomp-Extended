@@ -150,6 +150,17 @@ constexpr uint32_t KZGS_TEMPORAL_GUEST_FRAME_TIME_CANDIDATE = 1u << 6;
 constexpr uint32_t KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA_MATRICES = 1u << 7;
 constexpr uint32_t KZGS_TEMPORAL_GUEST_JITTER_APPLIED = 1u << 8;
 
+// Structural diagnostics for raw guest matrices. These describe element
+// patterns only; they do not establish matrix layout or transform semantics.
+constexpr uint32_t KZGS_TEMPORAL_MATRIX_TRAIT_FINITE_NONZERO = 1u << 0;
+constexpr uint32_t KZGS_TEMPORAL_MATRIX_TRAIT_LAST_ROW_0001 = 1u << 1;
+constexpr uint32_t KZGS_TEMPORAL_MATRIX_TRAIT_LAST_COLUMN_0001 = 1u << 2;
+constexpr uint32_t KZGS_TEMPORAL_MATRIX_TRAIT_LAST_ROW_00Z0 = 1u << 3;
+constexpr uint32_t KZGS_TEMPORAL_MATRIX_TRAIT_LAST_COLUMN_00Z0 = 1u << 4;
+
+constexpr uint32_t KZGS_TEMPORAL_MATRIX_CHANGED_310 = 1u << 0;
+constexpr uint32_t KZGS_TEMPORAL_MATRIX_CHANGED_400 = 1u << 1;
+
 // Guest build/kick observations travel with a VSync command, after its queued
 // GIF work. They are candidates, not proof that the displayed frame matches.
 struct alignas(16) KzgsTemporalGuestObservation
@@ -205,6 +216,9 @@ struct KzgsTemporalDiagnostics
 	bool cameraParametersCandidateAvailable = false;
 	bool cameraMatricesCandidateAvailable = false;
 	bool gameFrameTimeCandidateAvailable = false;
+	uint32_t cameraMatrix310Traits = 0, cameraMatrix400Traits = 0;
+	uint32_t cameraMatrixChangedMask = 0;
+	bool cameraMatrixPairCandidateAvailable = false;
 	bool candidateAmbiguous = false;
 	bool temporalValid = false;
 	bool presentSucceeded = false;

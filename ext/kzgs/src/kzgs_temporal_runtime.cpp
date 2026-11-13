@@ -50,9 +50,11 @@ namespace
 		bool enabled = false, log = false, inVsync = false, gotPresent = false, presentSucceeded = false;
 		bool overflow = false, hasPreviousGuest = false, sceneResetPending = true;
 		bool dispatchAttempted = false, dispatchBegan = false, dispatchRecorded = false;
+		bool hasPreviousPresentedMatrices = false;
 		uint64_t frameSequence = 0, sceneId = 0, deviceId = 0, providerId = 0;
 		KzgsConfigV1 config{};
 		KzgsTemporalGuestObservation guest{}, previousGuest{};
+		KzgsTemporalGuestObservation previousPresentedMatrices{};
 		KzgsTemporalFrame frame{};
 		Tracker tracker{};
 		Decision decision{};
@@ -96,6 +98,46 @@ namespace
 			nonzero |= value != 0.0f;
 		}
 		return nonzero;
+	}
+
+	uint32_t GuestMatrixTraits(const float (&matrix)[16])
+	{
+		if (!ValidGuestMatrix(matrix))
+			return 0;
+		const auto approximately = [](float value, float expected) {
+			return std::abs(value - expected) <= 0.0001f;
+		};
+		uint32_t traits = KZGS_TEMPORAL_MATRIX_TRAIT_FINITE_NONZERO;
+		if (approximately(matrix[12], 0.0f) && approximately(matrix[13], 0.0f) &&
+			approximately(matrix[14], 0.0f) && approximately(matrix[15], 1.0f))
+			traits |= KZGS_TEMPORAL_MATRIX_TRAIT_LAST_ROW_0001;
+		if (approximately(matrix[3], 0.0f) && approximately(matrix[7], 0.0f) &&
+			approximately(matrix[11], 0.0f) && approximately(matrix[15], 1.0f))
+			traits |= KZGS_TEMPORAL_MATRIX_TRAIT_LAST_COLUMN_0001;
+		if (approximately(matrix[12], 0.0f) && approximately(matrix[13], 0.0f) &&
+			!approximately(matrix[14], 0.0f) && approximately(matrix[15], 0.0f))
+			traits |= KZGS_TEMPORAL_MATRIX_TRAIT_LAST_ROW_00Z0;
+		if (approximately(matrix[3], 0.0f) && approximately(matrix[7], 0.0f) &&
+			!approximately(matrix[11], 0.0f) && approximately(matrix[15], 0.0f))
+			traits |= KZGS_TEMPORAL_MATRIX_TRAIT_LAST_COLUMN_00Z0;
+		return traits;
+	}
+
+	bool ValidGuestMatrixCandidate(const KzgsTemporalGuestObservation& guest)
+	{
+		return (guest.flags & KZGS_TEMPORAL_GUEST_CAMERA_MATRICES_CANDIDATE) &&
+			!(guest.flags & (KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA |
+				KZGS_TEMPORAL_GUEST_AMBIGUOUS_CAMERA_MATRICES)) &&
+			ValidGuestMatrix(guest.renderCameraMatrix310) &&
+			ValidGuestMatrix(guest.renderCameraMatrix400);
+	}
+
+	bool GuestMatrixChanged(const float (&current)[16], const float (&previous)[16])
+	{
+		for (size_t i = 0; i < 16; ++i)
+			if (current[i] != previous[i])
+				return true;
+		return false;
 	}
 
 	bool ValidGuestFrameTime(const KzgsTemporalGuestObservation& guest)
@@ -354,6 +396,7 @@ namespace kzgs
 			s.tracker = {};
 			s.drawTargets = s.displayTargets = s.drawCount = 0;
 			s.hasPreviousGuest = false;
+			s.hasPreviousPresentedMatrices = false;
 			Install();
 		}
 		if (s.enabled && s.providerId && s.providerId != ProviderIdentity(config.upscaler))
@@ -384,6 +427,7 @@ namespace kzgs
 		if (!s.enabled || !reasons)
 			return;
 		s.tracker.Invalidate(reasons);
+		s.hasPreviousPresentedMatrices = false;
 		if (reasons & kSceneResetReasons)
 			s.sceneResetPending = true;
 		{
@@ -393,6 +437,8 @@ namespace kzgs
 				s_snapshot.resetReasons |= reasons;
 				s_snapshot.historyFrameId = 0;
 				s_snapshot.temporalValid = false;
+				s_snapshot.cameraMatrixPairCandidateAvailable = false;
+				s_snapshot.cameraMatrixChangedMask = 0;
 			}
 		}
 		if (s.inVsync)
@@ -587,10 +633,28 @@ namespace kzgs
 			(s.guest.flags & KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE) &&
 			!cameraAmbiguous && ValidGuestCameraParameters(s.guest);
 		snapshot.cameraMatricesCandidateAvailable =
-			(s.guest.flags & KZGS_TEMPORAL_GUEST_CAMERA_MATRICES_CANDIDATE) &&
-			!cameraAmbiguous && !matricesAmbiguous &&
-			ValidGuestMatrix(s.guest.renderCameraMatrix310) &&
-			ValidGuestMatrix(s.guest.renderCameraMatrix400);
+			ValidGuestMatrixCandidate(s.guest);
+		if (snapshot.cameraMatricesCandidateAvailable)
+		{
+			snapshot.cameraMatrix310Traits = GuestMatrixTraits(s.guest.renderCameraMatrix310);
+			snapshot.cameraMatrix400Traits = GuestMatrixTraits(s.guest.renderCameraMatrix400);
+		}
+		if (s.presentSucceeded && snapshot.cameraMatricesCandidateAvailable &&
+			s.hasPreviousPresentedMatrices && !s.frame.resetReasons &&
+			s.guest.buildId && s.previousPresentedMatrices.buildId != UINT64_MAX &&
+			s.guest.buildId == s.previousPresentedMatrices.buildId + 1 &&
+			s.guest.cameraId && s.guest.cameraId == s.previousPresentedMatrices.cameraId &&
+			(s.guest.flags & KZGS_TEMPORAL_GUEST_WORLD) &&
+			(s.previousPresentedMatrices.flags & KZGS_TEMPORAL_GUEST_WORLD))
+		{
+			snapshot.cameraMatrixPairCandidateAvailable = true;
+			if (GuestMatrixChanged(s.guest.renderCameraMatrix310,
+				s.previousPresentedMatrices.renderCameraMatrix310))
+				snapshot.cameraMatrixChangedMask |= KZGS_TEMPORAL_MATRIX_CHANGED_310;
+			if (GuestMatrixChanged(s.guest.renderCameraMatrix400,
+				s.previousPresentedMatrices.renderCameraMatrix400))
+				snapshot.cameraMatrixChangedMask |= KZGS_TEMPORAL_MATRIX_CHANGED_400;
+		}
 		snapshot.gameFrameTimeCandidateAvailable =
 			(s.guest.flags & KZGS_TEMPORAL_GUEST_FRAME_TIME_CANDIDATE) &&
 			ValidGuestFrameTime(s.guest);
@@ -619,7 +683,8 @@ namespace kzgs
 				"depth=%llu/%llu depth_psm=%u depth_format=%u size=%ux%u depth_direction=%u ztest_mask=0x%x "
 				"world=%llu/%u motion=%llu/%u units=%u direction=%u jitter_inclusion_known=%u "
 				"masks=%llu/%u,%llu/%u,%llu/%u jitter_available=%u matched_delta_available=%u camera_parameters_available=%u "
-				"guest_camera_candidate=%u guest_matrix_candidate=%u guest_delta_candidate=%u/%.3f "
+				"guest_camera_candidate=%u guest_matrix_candidate=%u guest_matrix_traits=0x%x/0x%x "
+				"guest_matrix_pair=%u guest_matrix_changed=0x%x guest_delta_candidate=%u/%.3f "
 				"camera=%llu guest_flags=0x%x delivery_ms=%.3f valid=0x%llx qualified=0x%llx approximate=0x%llx policy=%u missing=0x%llx "
 				"invalid_inputs=0x%llx invalid=0x%llx reset=0x%llx history=%llu/%llu temporal_valid=%u presented=%u overflow=%u\n",
 				static_cast<unsigned long long>(snapshot.frameId),
@@ -650,6 +715,9 @@ namespace kzgs
 				snapshot.matchedFrameTimeAvailable ? 1u : 0u, snapshot.cameraParametersAvailable ? 1u : 0u,
 				snapshot.cameraParametersCandidateAvailable ? 1u : 0u,
 				snapshot.cameraMatricesCandidateAvailable ? 1u : 0u,
+				snapshot.cameraMatrix310Traits, snapshot.cameraMatrix400Traits,
+				snapshot.cameraMatrixPairCandidateAvailable ? 1u : 0u,
+				snapshot.cameraMatrixChangedMask,
 				snapshot.gameFrameTimeCandidateAvailable ? 1u : 0u, snapshot.gameFrameTimeCandidateMs,
 				static_cast<unsigned long long>(snapshot.cameraId),
 				snapshot.guestFlags, snapshot.deliveryDeltaMs, static_cast<unsigned long long>(snapshot.validInputs),
@@ -664,6 +732,15 @@ namespace kzgs
 				static_cast<unsigned long long>(snapshot.committedHistoryFrames), snapshot.temporalValid ? 1u : 0u,
 				snapshot.presentSucceeded ? 1u : 0u,
 				snapshot.observationOverflow ? 1u : 0u);
+		}
+		if (!s.presentSucceeded || !snapshot.cameraMatricesCandidateAvailable || s.frame.resetReasons)
+			s.hasPreviousPresentedMatrices = false;
+		if (s.presentSucceeded && snapshot.cameraMatricesCandidateAvailable &&
+			(!s.hasPreviousPresentedMatrices ||
+				s.guest.buildId != s.previousPresentedMatrices.buildId))
+		{
+			s.previousPresentedMatrices = s.guest;
+			s.hasPreviousPresentedMatrices = true;
 		}
 		s.inVsync = false;
 		s.drawTargets = s.displayTargets = s.drawCount = 0;

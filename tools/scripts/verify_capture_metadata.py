@@ -34,6 +34,9 @@ PIPELINE_ORDER = [
     "present_filter",
 ]
 TEMPORAL_REQUIRED = (1 << 10) - 1
+FSR3_EXPERIMENTAL_REQUIRED = (
+    (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 6) | (1 << 7)
+)
 
 
 def load_records(directory: Path) -> list[dict[str, Any]]:
@@ -82,7 +85,9 @@ def validate_upscaler_pipeline(effective_config: dict[str, Any]) -> None:
         if not isinstance(upscaler, dict) or not isinstance(upscaler.get("reported"), bool):
             raise ValueError("presentation_upscaler must report whether its status is available")
         for key in ("requested", "effective"):
-            if not isinstance(upscaler.get(key), str) or upscaler[key] not in {"off", "fsr1", "dlss", "xess"}:
+            if not isinstance(upscaler.get(key), str) or upscaler[key] not in {
+                "off", "fsr1", "fsr3", "dlss", "xess"
+            }:
                 raise ValueError(f"presentation_upscaler.{key} is invalid")
         if not isinstance(upscaler.get("reason"), str) or not upscaler["reason"]:
             raise ValueError("presentation_upscaler.reason must be a nonempty string")
@@ -112,9 +117,12 @@ def validate_upscaler_pipeline(effective_config: dict[str, Any]) -> None:
             valid = upscaler["temporal_valid_inputs"]
             missing = upscaler["temporal_missing_inputs"]
             invalid = upscaler["temporal_invalid_inputs"]
-            vendor = upscaler["requested"] in {"dlss", "xess"}
-            if vendor:
-                if missing != (TEMPORAL_REQUIRED & ~valid) or invalid & ~valid:
+            temporal_request = upscaler["requested"] in {"fsr3", "dlss", "xess"}
+            if temporal_request:
+                allowed_missing = {TEMPORAL_REQUIRED & ~valid}
+                if upscaler["requested"] == "fsr3":
+                    allowed_missing.add(FSR3_EXPERIMENTAL_REQUIRED & ~valid)
+                if missing not in allowed_missing or invalid & ~valid:
                     raise ValueError("temporal input masks are inconsistent")
                 if upscaler["temporal_observed"] != (upscaler["temporal_frame"] != 0):
                     raise ValueError("temporal observation must identify its frame")
@@ -124,7 +132,7 @@ def validate_upscaler_pipeline(effective_config: dict[str, Any]) -> None:
                     raise ValueError("a valid temporal contract cannot have missing or invalid inputs")
             elif any(upscaler[key] for key in temporal_fields):
                 raise ValueError("non-temporal requests cannot report vendor temporal diagnostics")
-            if upscaler["effective"] in {"dlss", "xess"} and not upscaler["temporal_valid"]:
+            if upscaler["effective"] in {"fsr3", "dlss", "xess"} and not upscaler["temporal_valid"]:
                 raise ValueError("an effective temporal provider requires matched temporal validity")
         if upscaler["reported"] and upscaler["effective"] not in {"off", upscaler["requested"]}:
             raise ValueError("effective presentation upscaler differs from the requested provider")
@@ -136,7 +144,7 @@ def validate_upscaler_pipeline(effective_config: dict[str, Any]) -> None:
                 expected_pipeline.remove("sharp_prescale_if_upscaling")
             insertion = expected_pipeline.index("cas")
             expected_pipeline[insertion:insertion] = passes
-        elif upscaler["effective"] in {"dlss", "xess"}:
+        elif upscaler["effective"] in {"fsr3", "dlss", "xess"}:
             if pipeline_contract == 2:
                 expected_pipeline.remove("sharp_prescale_if_upscaling")
             insertion = expected_pipeline.index("cas")
@@ -460,14 +468,19 @@ def test_upscaler_pipeline() -> None:
         pass
     else:
         raise ValueError("self-test accepted an active FSR1 status without its pipeline")
-    for provider in ("dlss", "xess"):
+    for provider in ("dlss", "xess", "fsr3"):
         status.update(requested=provider, effective=provider, sharpening_effective=0)
         config["pipeline"] = active_prefix + [f"provider_{provider}"] + PIPELINE_ORDER[4:]
         validate_upscaler_pipeline(config)
+        missing = (
+            FSR3_EXPERIMENTAL_REQUIRED & ~1
+            if provider == "fsr3"
+            else TEMPORAL_REQUIRED & ~1
+        )
         status.update(
             effective="off", reason="required_input_unavailable", sharpening_requested=37,
             temporal_observed=True, temporal_valid=False, temporal_frame=42,
-            temporal_valid_inputs=1, temporal_missing_inputs=TEMPORAL_REQUIRED & ~1,
+            temporal_valid_inputs=1, temporal_missing_inputs=missing,
             temporal_invalid_inputs=1, temporal_invalid_reasons=513,
         )
         config["pipeline"] = PIPELINE_ORDER

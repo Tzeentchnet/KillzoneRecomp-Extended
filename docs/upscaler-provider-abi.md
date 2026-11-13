@@ -209,9 +209,11 @@ images before ABI dispatch.
 The guest observation path carries bounded camera near/far/FOV/aspect, raw current render-camera matrices copied
 from game-object offsets `+0x310` and `+0x400`, simulation delta, and the matched jitter state. They are
 double-buffered with the game's build, latched at its kick, and copied with the ordered VSync command. Matrix
-layout/coordinate semantics and previous-frame pairing are still not proven, so the matrices remain diagnostic and
-multiple incompatible candidates fail closed. Experimental FSR 3 uses only the bounded scalar camera values and
-frame time, marking them approximate.
+layout/coordinate semantics and provider-compatible previous transforms are still not proven, so the matrices remain
+diagnostic and multiple incompatible candidates fail closed. Metadata may report finite/nonzero and simple last-row
+or last-column structural traits, plus a pair/change mask for consecutive successfully presented world builds with
+the same camera and no reset. It never exposes matrix elements or promotes that pair into `valid_inputs`.
+Experimental FSR 3 uses only the bounded scalar camera values and frame time, marking them approximate.
 
 When supplied, depth is Vulkan's zero-to-one normalized device depth with the camera's reverse-depth/infinite-far flags; motion RG values
 times `motion_scale_x/y` are current-to-previous displacement in source pixels, excluding jitter; jitter is the

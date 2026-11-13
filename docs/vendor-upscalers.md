@@ -43,7 +43,9 @@ uses the SDK's jitter-cancellation path. Exposure may be omitted when auto expos
 transparency/composition masks are optional API resources but important for this game's particles, alpha blending,
 weapon, HUD, and post-processing. The strict-mode blockers remain:
 
-- gameplay depth was observed in 0/20 measured frames and has no qualified direction or displayed-frame match;
+- the original gameplay depth inventory was 0/20; a later 5,213-frame SCES-52004 world inventory found 5,190 frames
+  with no display-correlated candidate and 23 with multiple candidates, never exactly one, with no qualified
+  direction or displayed-frame match;
 - the GS has transformed vertices but no object identity or previous transforms, so dynamic/skinned motion is absent;
 - no qualified world-only color, UI/composition masks, or complete scene-cut source exists;
 - the presented texture already contains world, weapon, HUD, transparency, effects, and post-processing.
@@ -67,6 +69,11 @@ presentation. Rejected input, failed dispatch/presentation, redraw, or resize in
 
 The resulting image can ghost around HUD/viewmodel edges, particles, disocclusions, camera cuts, or newly exposed
 geometry. Experimental mode is an opt-in research path, not evidence that the strict input gate passed.
+
+In an authorized headless SCES-52004 chapter-1 probe at native internal scale, 209/772 presented world VSync
+observations carried the matched world-jitter candidate and 207 passed the experimental approximation contract.
+Other VSyncs fell back because a new matched source build/jitter bundle was unavailable. The run did not perform an
+A/B image-quality qualification, and every non-color input remained marked approximate.
 
 ### Locked source and shader generation
 

@@ -1172,6 +1172,12 @@ static void CheckTemporalObservations(HWND hwnd, const std::vector<uint8_t>& sce
 		!first.jitterAvailable && !first.matchedFrameTimeAvailable &&
 		!first.cameraParametersAvailable && first.cameraParametersCandidateAvailable &&
 		first.cameraMatricesCandidateAvailable && first.gameFrameTimeCandidateAvailable &&
+		first.cameraMatrix310Traits ==
+			(KZGS_TEMPORAL_MATRIX_TRAIT_FINITE_NONZERO |
+			 KZGS_TEMPORAL_MATRIX_TRAIT_LAST_ROW_0001 |
+			 KZGS_TEMPORAL_MATRIX_TRAIT_LAST_COLUMN_0001) &&
+		first.cameraMatrix400Traits == first.cameraMatrix310Traits &&
+		!first.cameraMatrixPairCandidateAvailable && !first.cameraMatrixChangedMask &&
 		std::fabs(first.gameFrameTimeCandidateMs - 1000.0f / 60.0f) < 0.001f &&
 		!first.historyFrameId && !first.committedHistoryFrames,
 		"strict observations retain scene identity without promoting temporal candidates");
@@ -1179,6 +1185,38 @@ static void CheckTemporalObservations(HWND hwnd, const std::vector<uint8_t>& sce
 	guest = {};
 	guest.guestVsync = 101;
 	guest.buildId = 8;
+	guest.cameraId = 11;
+	guest.flags = KZGS_TEMPORAL_GUEST_WORLD | KZGS_TEMPORAL_GUEST_2D |
+		KZGS_TEMPORAL_GUEST_CAMERA_CANDIDATE |
+		KZGS_TEMPORAL_GUEST_CAMERA_MATRICES_CANDIDATE |
+		KZGS_TEMPORAL_GUEST_FRAME_TIME_CANDIDATE;
+	guest.nearPlane = 0.1f;
+	guest.farPlane = 1000.0f;
+	guest.verticalFovDegrees = 60.0f;
+	guest.aspect = 1.5f;
+	guest.gameFrameTimeMs = 1000.0f / 60.0f;
+	for (size_t i = 0; i < 16; ++i)
+	{
+		guest.renderCameraMatrix310[i] = i % 5 == 0 ? 1.0f : 0.0f;
+		guest.renderCameraMatrix400[i] = i % 5 == 0 ? 1.0f : 0.0f;
+	}
+	guest.renderCameraMatrix310[0] = 2.0f;
+	kzgsGifTransfer(3, scene.data(), static_cast<uint32_t>(scene.size() / 16));
+	kzgsGifTransfer(3, depth.data(), static_cast<uint32_t>(depth.size() / 16));
+	kzgsVsyncTemporal(1, true, false, &guest);
+	kzgsSync();
+	KzgsTemporalDiagnostics paired;
+	check(kzgsGetTemporalDiagnostics(paired) &&
+		paired.cameraMatrixPairCandidateAvailable &&
+		paired.cameraMatrixChangedMask == KZGS_TEMPORAL_MATRIX_CHANGED_310 &&
+		paired.cameraMatrix310Traits == first.cameraMatrix310Traits &&
+		paired.cameraMatrix400Traits == first.cameraMatrix400Traits &&
+		!paired.temporalValid && !paired.historyFrameId,
+		"consecutive presented builds expose only sanitized raw-matrix pairing diagnostics");
+
+	guest = {};
+	guest.guestVsync = 102;
+	guest.buildId = 9;
 	guest.cameraId = 12;
 	guest.flags = KZGS_TEMPORAL_GUEST_2D;
 	guest.resetReasons = KZGS_TEMPORAL_RESET_CAMERA_CUT | KZGS_TEMPORAL_RESET_TELEPORT |
@@ -1193,17 +1231,18 @@ static void CheckTemporalObservations(HWND hwnd, const std::vector<uint8_t>& sce
 	guest.resetReasons = 0;
 	kzgsSync();
 	KzgsTemporalDiagnostics next;
-	check(kzgsGetTemporalDiagnostics(next) && next.guestVsync == 101 &&
-		next.guestBuildId == 8 && next.cameraId == 12 &&
+	check(kzgsGetTemporalDiagnostics(next) && next.guestVsync == 102 &&
+		next.guestBuildId == 9 && next.cameraId == 12 &&
 		(next.resetReasons & guestResets) == guestResets &&
 		(next.resetReasons & KZGS_TEMPORAL_RESET_CAMERA_CHANGE) &&
 		(next.resetReasons & KZGS_TEMPORAL_RESET_WORLD_TRANSITION),
 		"non-blocking VSync copies guest metadata and retains ordered discontinuities");
-	check(!next.temporalValid && !next.historyFrameId && !next.committedHistoryFrames,
+	check(!next.cameraMatrixPairCandidateAvailable && !next.cameraMatrixChangedMask &&
+		!next.temporalValid && !next.historyFrameId && !next.committedHistoryFrames,
 		"moving synthetic geometry is not treated as motion-vector evidence");
 
-	guest.guestVsync = 101;
-	guest.buildId = 8;
+	guest.guestVsync = 102;
+	guest.buildId = 9;
 	guest.cameraId = 12;
 	kzgsVsyncTemporal(1, false, false, &guest);
 	kzgsSync();
