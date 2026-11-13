@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -10,7 +11,6 @@
 namespace
 {
     constexpr uint32_t kSector = 2048;
-    constexpr KzRegion kRegions[] = {KzRegion::Us, KzRegion::Pal, KzRegion::Eu};
 
     bool isoAccessDisabled()
     {
@@ -58,7 +58,7 @@ namespace
             const size_t end = boot.find_first_of("\r\n", at);
             boot = boot.substr(at, end == std::string::npos ? std::string::npos : end - at);
         }
-        for (KzRegion r : kRegions)
+        for (KzRegion r : kKzRegions)
             if (boot.find(kzRegionBootElf(r)) != std::string::npos)
             {
                 region = r;
@@ -213,7 +213,7 @@ bool kzDetectElfRegion(const std::filesystem::path &elfPath, KzRegion &region, s
     std::vector<uint8_t> elf((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     const uint32_t crc = xorCrc(elf);
     const std::string name = upper(elfPath.filename().string());
-    for (KzRegion r : kRegions)
+    for (KzRegion r : kKzRegions)
         if (name == kzRegionBootElf(r))
         {
             region = r;
@@ -223,7 +223,7 @@ bool kzDetectElfRegion(const std::filesystem::path &elfPath, KzRegion &region, s
                 *note = std::string(kzRegionBootElf(r)) + " has an unexpected CRC (a different revision?)";
             return false;
         }
-    for (KzRegion r : kRegions)
+    for (KzRegion r : kKzRegions)
         if (crc == kzRegionBootElfXorCrc(r))
         {
             region = r;
@@ -280,4 +280,31 @@ std::filesystem::path kzPrepareDiscFiles(const std::filesystem::path &isoPath, c
         }
     }
     return dir / kzRegionBootElf(check.region);
+}
+
+int kzIsoSelfTest()
+{
+    int failures = 0;
+    const auto check = [&](bool condition, const std::string &label)
+    {
+        if (!condition)
+        {
+            std::fprintf(stderr, "[selftest] FAIL: ISO %s\n", label.c_str());
+            ++failures;
+        }
+    };
+
+    for (KzRegion expected : kKzRegions)
+    {
+        const std::string systemCnf =
+            std::string("BOOT2 = cdrom0:\\") + kzRegionBootElf(expected) + ";1\r\nVER = 1.00\r\n";
+        KzRegion detected = KzRegion::Us;
+        check(regionFromSystemCnf(systemCnf, detected) && detected == expected,
+              std::string("detects ") + kzRegionSerial(expected) + " from SYSTEM.CNF");
+    }
+
+    KzRegion detected = KzRegion::Us;
+    check(!regionFromSystemCnf("BOOT2 = cdrom0:\\SLUS_000.00;1\r\n", detected),
+          "rejects an unsupported boot executable");
+    return failures;
 }

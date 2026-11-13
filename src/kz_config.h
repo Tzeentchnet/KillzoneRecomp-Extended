@@ -103,7 +103,7 @@ struct KzConfig
     bool skipLogos = false;     // shorten the Sony and Guerrilla logo screens
 
     // Paths
-    std::string isoPath; // user's Killzone (USA) disc image
+    std::string isoPath; // user's supported Killzone disc image
 
     // Testing (docs/findings.md "Testing options"). All off by default; off = the original game.
     bool unlockAllLevels = false; // every campaign level, difficulty and animatic selectable; saves are not changed

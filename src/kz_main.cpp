@@ -162,6 +162,7 @@ namespace
         failures += kzInputSelfTest();
         failures += kzPromptsSelfTest();
         failures += kzTestingSelfTest();
+        failures += kzIsoSelfTest();
         failures += kzLauncherSelfTest();
         // disc check against the user's image when present (not required for the test to pass)
         const KzConfig saved = kzLoadConfig(kzConfigPath());

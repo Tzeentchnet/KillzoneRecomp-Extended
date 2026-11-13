@@ -5,6 +5,7 @@
 // the --elf file, before the ELF is loaded, and never changes afterwards. Guest addresses that differ between the
 // executables are in kz_addrs.h.
 
+#include <array>
 #include <cstdint>
 #include <string>
 
@@ -13,6 +14,14 @@ enum class KzRegion : uint8_t
     Us,
     Pal,
     Eu,
+};
+
+// Every retail executable recognized by the disc and ELF detectors. Keep region-aware UI and validation derived from
+// this list so adding a release cannot leave the launcher behind.
+inline constexpr std::array<KzRegion, 3> kKzRegions = {
+    KzRegion::Us,
+    KzRegion::Pal,
+    KzRegion::Eu,
 };
 
 KzRegion kzRegion();

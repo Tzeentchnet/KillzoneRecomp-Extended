@@ -173,6 +173,21 @@ namespace
         return 60;
     }
 
+    std::string launcherDiscPrompt()
+    {
+        std::string prompt = "Game disc (";
+        for (size_t i = 0; i < kKzRegions.size(); ++i)
+        {
+            if (i != 0)
+                prompt += i + 1 == kKzRegions.size() ? ", or " : ", ";
+            const KzRegion region = kKzRegions[i];
+            prompt += region == KzRegion::Us ? "NTSC-U " : "PAL ";
+            prompt += kzRegionSerial(region);
+        }
+        prompt += ")";
+        return prompt;
+    }
+
     void onFileChosen(void *userdata, const char *const *files, int)
     {
         auto *st = static_cast<LauncherState *>(userdata);
@@ -362,7 +377,8 @@ namespace
         ImGui::Separator();
 
         // Disc
-        ImGui::TextUnformatted("Game disc (your Killzone USA or Europe image)");
+        static const std::string discPrompt = launcherDiscPrompt();
+        ImGui::TextUnformatted(discPrompt.c_str());
         char buf[1024];
         std::snprintf(buf, sizeof(buf), "%s", cfg.isoPath.c_str());
         ImGui::SetNextItemWidth(-110);
@@ -1036,5 +1052,11 @@ int kzLauncherSelfTest()
     check(cfg.renderer == KzRenderer::Vulkan && cfg.masterVolume == 37 && cfg.startLevel == 7,
           "external frame generation preset preserves unrelated settings");
 
+    const std::string discPrompt = launcherDiscPrompt();
+    check(std::all_of(kKzRegions.begin(), kKzRegions.end(), [&](KzRegion region)
+                      { return discPrompt.find(kzRegionSerial(region)) != std::string::npos; }),
+          "disc prompt lists every supported release");
+    check(discPrompt.find("NTSC-U") != std::string::npos && discPrompt.find("PAL") != std::string::npos,
+          "disc prompt identifies the supported video standards");
     return failures;
 }
