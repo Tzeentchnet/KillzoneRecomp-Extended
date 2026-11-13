@@ -1,6 +1,8 @@
 #include "kz_gs.h"
 #include "kz_addrs.h"
+#include "kz_region.h"
 #include "kz_timing.h"
+#include "kz_testing.h"
 #include "kz_patches.h"
 #include "kz_gpu.h"
 #include "kz_widescreen.h"
@@ -389,8 +391,8 @@ namespace
             return value && *value ? std::atoi(value) : fallback;
         };
         const bool unlockAll = envBool("KZ_UNLOCK_ALL", c.unlockAllLevels);
-        const bool skipIntro = envBool("KZ_SKIP_INTRO", c.skipIntro);
         const int startLevel = std::clamp(envInt("KZ_START_LEVEL", c.startLevel), 0, 11);
+        const bool skipIntro = kzTestingSkipIntroRequested(envBool("KZ_SKIP_INTRO", c.skipIntro), startLevel);
         const int startDifficulty = std::clamp(envInt("KZ_START_DIFFICULTY", c.startDifficulty), 0, 2);
         const KzPostDetailSettings detail = kzPostResolveDetailSettings(c, false);
         const char *cardMode = std::getenv("KZ_MC_ROOT") && std::getenv("KZ_MC_ROOT")[0] != '\0'
@@ -398,7 +400,7 @@ namespace
                                    : c.testMemoryCard ? "test" : "normal";
         std::fprintf(
             s.measurementFile,
-            "{\"schema_version\":1,\"record\":\"%s\",\"source_id\":\"SCUS-97402\","
+            "{\"schema_version\":1,\"record\":\"%s\",\"source_id\":\"%s\","
             "\"clock\":\"guest_vsync\",\"timing_rate_hz\":%d,\"renderer\":\"%s\",\"adapter\":\"%s\","
             "\"guest_vsync\":%llu,\"present_seq\":%llu,"
             "\"effective_config\":{\"upscale\":%d,"
@@ -422,7 +424,7 @@ namespace
             "\"max_queued_frames\":%d},"
             "\"testing\":{\"unlock_all_levels\":%s,\"skip_intro\":%s,\"start_level\":%d,"
             "\"start_difficulty\":%d,\"memory_card\":\"%s\"}}\n",
-            record, kzTimingRate(), rendererName(k.renderer), adapter.c_str(),
+            record, kzRegionSerial(kzRegion()), kzTimingRate(), rendererName(k.renderer), adapter.c_str(),
             static_cast<unsigned long long>(s.currentGuestVsync.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(s.presentedSeq.load(std::memory_order_relaxed)), k.upscale,
             renderScaleModeName(s.activeScale.mode), s.activeScale.configuredScale, s.activeScale.effectiveScale,

@@ -6,6 +6,11 @@
 
 class PS2Runtime;
 
+constexpr bool kzTestingSkipIntroRequested(bool requested, int startLevel)
+{
+    return requested || startLevel > 0;
+}
+
 void kzTestingInstall(PS2Runtime &runtime, bool isolatedMemoryCard); // after loadELF and memory-card root selection
 void kzTestingPoll(); // host loop, next to kzInputPoll(): drives the start-in-level autopilot
 int kzTestingSelfTest();

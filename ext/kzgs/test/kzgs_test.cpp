@@ -13,6 +13,7 @@
 #include "kzgs_fsr1_runtime.h"
 #include "kzgs_internal.h"
 #include "kzgs_mock_control.h"
+#include "kzgs_pacing.h"
 #include "kzgs_provider_test_hooks.h"
 #include "kzgs_upscaler_provider.h"
 
@@ -33,6 +34,19 @@
 #ifndef KZGS_TEST_OUT_DIR
 #define KZGS_TEST_OUT_DIR "."
 #endif
+
+// Even pacing (kzgs_pacing.h): only early frames are held, to three quarters of a period after the previous present.
+namespace pacing_checks
+{
+	constexpr int64_t kPeriod = 16'666'668; // 60 Hz, divisible by 4
+	static_assert(kzgs::PacingHoldUntilNs(0, 5'000'000, kPeriod) == 0, "the first frame is never held");
+	static_assert(kzgs::PacingHoldUntilNs(100'000'000, 105'000'000, kPeriod) == 100'000'000 + 12'500'001,
+		"a bunched frame is spaced three quarters of a period after the previous");
+	static_assert(kzgs::PacingHoldUntilNs(100'000'000, 113'000'000, kPeriod) == 0,
+		"a frame past three quarters of a period is not held");
+	static_assert(kzgs::PacingHoldUntilNs(100'000'000, 140'000'000, kPeriod) == 0, "a late frame is never held");
+	static_assert(kzgs::PacingHoldUntilNs(100'000'000, 100'100'000, 0) == 0, "a zero period disables pacing");
+}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Minimal PNG writer (zlib stored blocks, no compression) so the test has no image-library dependency.

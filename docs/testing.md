@@ -155,6 +155,86 @@ Before a private run, validate the content-safe analyzer with:
 python .\tools\scripts\high_refresh_analyze.py --self-test
 ```
 
+### Presentation pacing
+
+`KZGS_PRESENT_LOG=<file>` writes one CSV row per GS-vsync completion when the game exits: completion time (QPC ns),
+field, and GS vsync duration (us). An even-pacing hold is excluded from the duration. A submission can be triggered
+by GIF packets or a display-register change without a new world image; the log and **Show FPS** measure
+presentation-side cadence, not unique game-frame rate or guaranteed display flips. Summarize a run with:
+
+```powershell
+python .\tools\scripts\present_pacing_analyze.py .\work\present.csv --target-hz 60 --skip-seconds 5
+python .\tools\scripts\present_pacing_analyze.py --self-test
+```
+
+The JSON summary reports interval percentiles, the share within 10% of the nominal period, bunched (< 0.5 period)
+and long (> 1.5 period) intervals, and an `even`/`uneven` verdict; the exit code is 1 for `uneven`. Without
+`--target-hz` the median interval is the nominal period. The thresholds are comparison heuristics, not a
+perceptual qualification. Logs from before 2026-11-13 can contain wrapped timestamps (64-bit overflow after about
+15 minutes of system uptime), which the analyzer rejects as non-monotonic.
+
+To select a guest-time window, pass the run's `capture.jsonl`; frame records map guest time to present-log rows
+through `present_seq`. Guest time alone does not establish that the scene is gameplay:
+
+```powershell
+python .\tools\scripts\present_pacing_analyze.py .\work\<run>\present.csv --target-hz 60 `
+  --capture-log .\work\<run>\capture.jsonl --from-guest-s 40 --to-guest-s 110
+```
+
+There must be a capture within 0.5 seconds of each requested boundary; missing boundaries, invalid sequences, and
+sequences beyond the log are errors. The summary records the requested and actual `first_guest_s`/`last_guest_s`
+anchors. The first capture's readback stall is excluded by beginning after its presentation; later captures inside
+the window can still stall rendering and skew pacing. For low-interference timing, use no screenshots inside the
+measured interval and align the scene separately. Historical EU/PAL capture logs from builds before this correction
+incorrectly label `source_id` as `SCUS-97402`; older logs can also report `skip_intro: false` when a start-level
+request implicitly enables it.
+
+`tools\scripts\present_pacing_campaign.ps1` runs pacing arms (`name:fps:pacing`) sequentially on fresh copies of a
+profile card with V-Sync off and the intro skipped, then summarizes each arm's window into ignored `work\`:
+
+```powershell
+.\tools\scripts\present_pacing_campaign.ps1 -Card .\work\<profile-card> -Iso $env:KZ_ISO -Elf $env:KZ_GAME_ELF `
+  -Chapter 1 -FromGuestS 40 -ToGuestS 110
+```
+
+Confirm from the captures that the window is gameplay and that paired runs contain the same scene. The campaign
+currently captures every 10 seconds, including inside the window, so its timing is not a readback-free benchmark.
+An empty card does not get past profile selection in this flow. Results and limitations are in
+[frame generation](frame-generation.md#measured-pacing-sces-52004-chapter-1).
+
+For a `KZ_TIMELINE` CSV, select the executable region to report guest frame-limiter and kick-hook counts separately
+from GS-vsync completions and asynchronous worker events:
+
+```powershell
+python .\tools\scripts\tl_analyze.py .\work\run\timeline.csv --region eu --vblank-hz 60 --window-s 0 29.5
+python .\tools\scripts\tl_analyze.py --self-test
+```
+
+`--region` accepts `us` (SCUS-97402, default), `pal` (SCES-52893), or `eu` (SCES-52004). When asynchronous D1
+events are absent, the per-kick breakdown uses the guest kick hook and marks worker timing unavailable. A kick or
+limiter entry is a game-work proxy, not proof of a unique image.
+
+`--window-s` selects the half-open interval `[start, end)` in seconds after the first recorded event and rejects an
+end beyond the trace; incomplete spans crossing either boundary and the first GS idle aggregate are omitted.
+`--vblank-hz` assumes that rate and
+its rounded host period stayed fixed throughout the selected trace and requires consecutive tick IDs. It uses the
+earliest observed phase to report a **lower bound** on deadline lateness, not exact lateness. It also counts long
+intervals whose latest pacing-wait return was within 0.1 ms of the vblank and reported no posted event. The trace
+does not record the requested wait deadline, so those observations cannot distinguish timer oversleep from delayed
+thread scheduling.
+
+On Windows, a standalone, ISO-free probe can compare short `std::condition_variable::wait_until` waits, a
+high-resolution waitable timer, and a successful `timeBeginPeriod(1)` request:
+
+```powershell
+.\tools\scripts\vsenv.bat cl.exe /nologo /EHsc /std:c++20 /O2 `
+  /Fo.\work\win_timer_probe.obj /Fe.\work\win_timer_probe.exe .\tools\scripts\win_timer_probe.cpp winmm.lib
+.\work\win_timer_probe.exe
+```
+
+Each case reports 50 elapsed-time samples after five warmups. This does not run the game, verify actual timer
+resolution, exercise scheduler event/stop wakeups, or prove that a different wait primitive improves gameplay.
+
 No complete 11-chapter scenario/result matrix has been recorded yet, so campaign-wide 30/60/120/144 Hz parity
 remains unverified. Do not add a fixed-step script hook from another port without first identifying this game's
 script update and message-delivery semantics and producing a failing local scenario.

@@ -499,6 +499,7 @@ namespace
         c.vsync = reader.boolean("Display", "VSync", c.vsync);
         c.fpsLimit = reader.integer("Display", "FpsLimit", c.fpsLimit, 0, std::numeric_limits<int>::max());
         c.showFps = reader.boolean("Display", "ShowFps", c.showFps);
+        c.framePacing = reader.boolean("Display", "FramePacing", c.framePacing);
         c.threadedGraphics = reader.integer("Display", "ThreadedGraphics", c.threadedGraphics, -1, 1);
         c.renderer = reader.enumeration("Graphics", "Renderer", c.renderer, kRenderers);
         c.upscale = reader.integer("Graphics", "Upscale", c.upscale, 0, 8);
@@ -644,7 +645,8 @@ namespace
         writeExtras("Config", false);
         o << "\n[Display]\nWindowMode=" << toName(kWindowModes, c.windowMode) << "\nWidth=" << c.width
           << "\nHeight=" << c.height << "\nVSync=" << (c.vsync ? 1 : 0) << "\nFpsLimit=" << c.fpsLimit
-          << "\nShowFps=" << (c.showFps ? 1 : 0) << "\nThreadedGraphics=" << c.threadedGraphics << '\n';
+          << "\nShowFps=" << (c.showFps ? 1 : 0) << "\nFramePacing=" << (c.framePacing ? 1 : 0)
+          << "\nThreadedGraphics=" << c.threadedGraphics << '\n';
         writeExtras("Display", false);
         o << "\n[Graphics]\nRenderer=" << toName(kRenderers, c.renderer) << "\nUpscale=" << c.upscale
           << "\nUpscaler=" << kzgsUpscalerName(c.upscaler)
@@ -719,7 +721,7 @@ namespace
     bool sameConfig(const KzConfig &a, const KzConfig &b)
     {
         return a.windowMode == b.windowMode && a.width == b.width && a.height == b.height && a.vsync == b.vsync &&
-               a.fpsLimit == b.fpsLimit && a.showFps == b.showFps &&
+               a.fpsLimit == b.fpsLimit && a.showFps == b.showFps && a.framePacing == b.framePacing &&
                a.threadedGraphics == b.threadedGraphics && a.renderer == b.renderer && a.upscale == b.upscale &&
                a.upscaler == b.upscaler && a.upscalerSharpening == b.upscalerSharpening &&
                a.fsr3InputMode == b.fsr3InputMode &&
@@ -908,6 +910,7 @@ int kzConfigSelfTest()
     editedBaseline.stickRange = 1.42f;
     editedBaseline.skipLongIntro = true;
     editedBaseline.showFps = true;
+    editedBaseline.framePacing = true;
     editedBaseline.threadedGraphics = 0;
     editedBaseline.aspect = KzAspect::UltrawideAuto;
     editedBaseline.fov = 100.0f;

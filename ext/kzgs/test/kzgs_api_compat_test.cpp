@@ -22,6 +22,7 @@ static_assert(KZGS_TEMPORAL_MATRIX_TRAIT_LAST_ROW_0001 == 2u);
 static_assert(KZGS_TEMPORAL_MATRIX_TRAIT_LAST_COLUMN_0001 == 4u);
 static_assert(KZGS_TEMPORAL_MATRIX_CHANGED_310 == 1u);
 static_assert(KZGS_TEMPORAL_MATRIX_CHANGED_400 == 2u);
+static_assert(std::is_same_v<decltype(&kzgsSetPresentPacing), void (*)(double)>);
 static_assert(std::is_same_v<decltype(&kzgsVsync), void (*)(int, bool, bool)>);
 static_assert(std::is_same_v<decltype(&kzgsVsyncTry), bool (*)(int, bool, bool)>);
 static_assert(std::is_same_v<decltype(&kzgsVsyncTemporal),

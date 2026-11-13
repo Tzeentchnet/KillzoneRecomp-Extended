@@ -18,6 +18,8 @@ The root [README](../README.md) is the project overview. Detailed guidance and t
 - [Vulkan upscaler provider ABI](upscaler-provider-abi.md) - versioning, negotiation, resource ownership, synchronization,
   optional inputs, and fallback rules.
 - [Local vendor SDK adapters](vendor-upscalers.md) - opt-in build, current blockers, and license/provenance fields.
+- [Frame generation research](frame-generation.md) - in-engine FSR 3.1/DLSS frame-generation gaps, proposed
+  temporal markers, and Lossless Scaling support (preset, even frame pacing, pacing analyzer).
 - [Upstream contribution candidates](upstream.md) - potential PS2Recomp and PCSX2 issues, PRs, RFCs, duplicate
   reports, and filing prerequisites.
 - [Findings](findings.md) - reverse-engineering evidence, runtime behavior, and measured experiments.

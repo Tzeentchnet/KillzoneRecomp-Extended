@@ -52,6 +52,7 @@ struct KzConfig
     bool vsync = true;
     int fpsLimit = 0; // 0 = unlimited (display refresh with vsync); otherwise a cap, e.g. 120, 144, 240
     bool showFps = false;
+    bool framePacing = false; // even spacing of presented frames at the game rate, for external frame generation
     int threadedGraphics = -1; // -1 = auto (US on, PAL off), 0 = off, 1 = on
 
     // Graphics

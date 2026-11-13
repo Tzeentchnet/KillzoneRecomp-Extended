@@ -477,6 +477,13 @@ int main(int argc, char *argv[])
         }
         const int fps = std::getenv("KZ_FPS") ? std::atoi(std::getenv("KZ_FPS")) : cfg.fpsLimit;
         kzTimingInit(fps, displayHz);
+        // Even pacing runs at the guest vblank rate, which is fixed from here on. KZ_FRAME_PACING=0|1 overrides one run.
+        bool framePacing = cfg.framePacing;
+        if (const char *value = std::getenv("KZ_FRAME_PACING"); value && *value)
+            framePacing = *value != '0';
+        kzgsSetPresentPacing(framePacing ? static_cast<double>(kzTimingRate()) : 0.0);
+        if (framePacing)
+            std::cout << "[kz] even frame pacing at " << kzTimingRate() << " Hz" << std::endl;
         uint64_t gameplayStopFrames = 0;
         if (headless)
         {

@@ -157,6 +157,17 @@ and 30% sharpening.
 
 ## Display and game options
 
+- **Frame rate** (`[Display] FpsLimit`) sets the game's own rate; `0` follows the monitor refresh. The list includes
+  72 and 82 fps (half of 144 and 165 Hz) for 2x external frame generation, and the INI accepts any integer.
+- **Even frame pacing** (`[Display] FramePacing=0|1`, experimental, default off) holds a frame that arrives less than
+  three quarters of a game frame after the previous presentation, unless another frame is already waiting, so frames
+  are not presented in quick pairs after a hitch. Late frames are never delayed. It is intended for external frame
+  generation with V-Sync off. Measured, it helped when the game ran below its frame-rate limit and was unreliable when
+  the game ran right at it ([measurements](frame-generation.md#measured-pacing-sces-52004-chapter-1)).
+  `KZ_FRAME_PACING=0|1` overrides it for one run.
+- The Display tab's **External frame generation** preset selects borderless window, V-Sync off, and a frame rate of
+  half the monitor refresh (at least 60 fps) for Lossless Scaling, AMD AFMF, or NVIDIA Smooth Motion. It does not
+  change even frame pacing. See [frame generation](frame-generation.md#external-frame-generation-lossless-scaling).
 - **Show FPS** displays a counter in the top-left corner.
 - **Skip intro movies** skips the long boot intro. Story cutscenes, menu backgrounds, and attract movies are unchanged.
 - **Skip logos** separately skips the Sony and Guerrilla logo screens.

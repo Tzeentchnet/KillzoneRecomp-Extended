@@ -147,6 +147,32 @@ namespace
         cfg.sharpen = 0;
     }
 
+    // Game rate for external frame generation (Lossless Scaling, AFMF, Smooth Motion): half the display refresh so a
+    // fixed 2x multiplier fills it, but never below 60 (frame generation needs a high base rate; slower displays use an
+    // adaptive multiplier instead). See docs/frame-generation.md.
+    int externalFrameGenerationFpsLimit(int refreshHz)
+    {
+        return std::max(60, refreshHz / 2);
+    }
+
+    void applyExternalFrameGenerationPreset(KzConfig &cfg, int refreshHz)
+    {
+        cfg.windowMode = KzWindowMode::Borderless; // the tools capture a window; exclusive fullscreen is not captured
+        cfg.vsync = false;                         // the frame-generation tool owns synchronization
+        cfg.fpsLimit = externalFrameGenerationFpsLimit(refreshHz);
+        // Even frame pacing is left unchanged: measured on SCES-52004 it helped when the game ran below its limit
+        // but was unreliable at 60 fps, which this preset picks for 120 Hz displays (docs/frame-generation.md).
+    }
+
+    int displayRefreshHz(SDL_Window *window)
+    {
+        const SDL_DisplayID display = window ? SDL_GetDisplayForWindow(window) : SDL_GetPrimaryDisplay();
+        if (const SDL_DisplayMode *mode = display ? SDL_GetDesktopDisplayMode(display) : nullptr)
+            if (mode->refresh_rate > 0.0f)
+                return static_cast<int>(std::lround(mode->refresh_rate));
+        return 60;
+    }
+
     void onFileChosen(void *userdata, const char *const *files, int)
     {
         auto *st = static_cast<LauncherState *>(userdata);
@@ -360,6 +386,15 @@ namespace
             {
                 if (beginTabBody("display"))
                 {
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextDisabled("Presets:");
+                    ImGui::SameLine();
+                    if (ImGui::Button("External frame generation"))
+                        applyExternalFrameGenerationPreset(cfg, displayRefreshHz(window));
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("For Lossless Scaling, AMD AFMF or NVIDIA Smooth Motion:\n"
+                                          "borderless window, V-Sync off, and the game at half the monitor refresh\n"
+                                          "(at least 60 fps). The HUD is interpolated too.");
                     if (beginRows("rows"))
                     {
                         row("Window mode");
@@ -385,7 +420,8 @@ namespace
                             ImGui::EndCombo();
                         }
                         row("Frame rate", "The game runs at this rate (the PS2 original ran at about 30).");
-                        static const int kFps[] = {0, 60, 120, 144, 165, 240, 360}; // 0 = monitor refresh
+                        // 72 and 82 are half of 144 and 165 Hz, for 2x external frame generation.
+                        static const int kFps[] = {0, 60, 72, 82, 120, 144, 165, 240, 360}; // 0 = monitor refresh
                         std::string fpsLabel = cfg.fpsLimit == 0 ? "Match monitor refresh" : std::to_string(cfg.fpsLimit) + " fps";
                         if (ImGui::BeginCombo("##fps", fpsLabel.c_str()))
                         {
@@ -395,6 +431,11 @@ namespace
                             ImGui::EndCombo();
                         }
                         toggleRow("V-Sync", "Removes tearing; adds a little input delay.", cfg.vsync);
+                        toggleRow("Even frame pacing",
+                                  "Experimental. Spaces out the catch-up frame after a hitch. Can help external frame "
+                                  "generation (Lossless Scaling) when the game runs below its frame-rate limit; can "
+                                  "hurt when it runs right at it. Usually unnecessary with V-Sync on.",
+                                  cfg.framePacing);
                         toggleRow("Show FPS", "Frame-rate counter in the top-left corner while playing.", cfg.showFps);
                         row("Threaded graphics", "Faster, but can cause graphics corruption or crashes on some missions. "
                                                  "Auto: on for the US disc, off for the European disc.");
@@ -979,5 +1020,21 @@ int kzLauncherSelfTest()
     check(!fsr3InputModeControlEnabled(cfg), "FSR 3 input mode control is disabled outside Vulkan");
     cfg.upscaler = KzgsUpscaler::XeSS;
     check(!providerSharpeningControlEnabled(cfg), "provider sharpening remains disabled for XeSS");
+
+    check(externalFrameGenerationFpsLimit(60) == 60 && externalFrameGenerationFpsLimit(100) == 60 &&
+              externalFrameGenerationFpsLimit(120) == 60 && externalFrameGenerationFpsLimit(144) == 72 &&
+              externalFrameGenerationFpsLimit(165) == 82 && externalFrameGenerationFpsLimit(240) == 120,
+          "external frame generation runs the game at half refresh, at least 60 fps");
+    cfg.windowMode = KzWindowMode::Fullscreen;
+    cfg.vsync = true;
+    cfg.fpsLimit = 0;
+    cfg.framePacing = false;
+    cfg.renderer = KzRenderer::Vulkan;
+    applyExternalFrameGenerationPreset(cfg, 144);
+    check(cfg.windowMode == KzWindowMode::Borderless && !cfg.vsync && cfg.fpsLimit == 72 && !cfg.framePacing,
+          "external frame generation preset display contract");
+    check(cfg.renderer == KzRenderer::Vulkan && cfg.masterVolume == 37 && cfg.startLevel == 7,
+          "external frame generation preset preserves unrelated settings");
+
     return failures;
 }

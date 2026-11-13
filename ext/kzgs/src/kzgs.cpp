@@ -4,6 +4,7 @@
 #include "kzgs.h"
 #include "kzgs_fsr1_runtime.h"
 #include "kzgs_internal.h"
+#include "kzgs_pacing.h"
 #include "kzgs_provider_runtime.h"
 #include "kzgs_temporal_runtime.h"
 
@@ -777,6 +778,38 @@ namespace
 			_mm_pause();
 	}
 
+	// kzgsSetPresentPacing: hold a frame that arrives less than one period after the previous present (see
+	// kzgs_pacing.h). Runs on the GS thread before GSvsync, so the hold lands before the swap-chain Present. External
+	// frame generation (Lossless Scaling) interpolates between captured frames and shows uneven spacing as judder.
+	static std::atomic<double> s_pacing_hz{0.0};
+	static void EvenPacePresent()
+	{
+		using clock = std::chrono::steady_clock;
+		static s64 last_ns = 0;
+		const double hz = s_pacing_hz.load(std::memory_order_relaxed);
+		if (hz <= 0.0)
+		{
+			last_ns = 0;
+			return;
+		}
+		const s64 period_ns = static_cast<s64>(1.0e9 / hz);
+		const s64 until_ns = kzgs::PacingHoldUntilNs(last_ns, StatNowNs(), period_ns);
+		// Never hold while another frame waits behind this one (s_queued_frames counts this frame too): the GS is
+		// already behind, and with the queue full the VIF1 worker drops the next VSync's presentation, which turns a
+		// short hold into a whole-frame gap (measured on SCES-52004 chapter 1 at 60 fps).
+		const auto behind = []() { return s_queued_frames.load(std::memory_order_acquire) > 1; };
+		if (until_ns && !behind())
+		{
+			const clock::time_point until{std::chrono::duration_cast<clock::duration>(std::chrono::nanoseconds(until_ns))};
+			// Sleep in 1 ms steps to 2 ms before the target (re-checking the queue), then spin the rest.
+			while (!behind() && clock::now() < until - std::chrono::milliseconds(2))
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			while (!behind() && clock::now() < until)
+				_mm_pause();
+		}
+		last_ns = StatNowNs();
+	}
+
 	// Test aid emulating an external frame limiter (RivaTuner/RTSS, the driver's limiter): those cap by blocking inside the
 	// game's Present call. KZ_TEST_PRESENT_FPS=<fps>: successive presents are at least 1/fps apart (sleep, then spin the last
 	// 2 ms, like RTSS). KZ_TEST_PRESENT_SLEEP_US=<us>: a plain sleep of that length per present. KZ_TEST_PRESENT_STALL=<n>,<ms>:
@@ -861,6 +894,7 @@ namespace
 					Trace(2, static_cast<u32>(s_trace_idle_ns / 1000)); // idle time (us) since the previous frame
 					s_trace_idle_ns = 0;
 					Trace(3);
+					EvenPacePresent(); // before the present-log timer: a pacing hold is not GS vsync work
 					LARGE_INTEGER t0, t1, fq;
 					if (s_present_log_path) QueryPerformanceCounter(&t0);
 					s_cur_field = static_cast<int>(hdr.a);
@@ -876,7 +910,9 @@ namespace
 					{
 						QueryPerformanceCounter(&t1);
 						QueryPerformanceFrequency(&fq);
-						s_present_log.push_back({static_cast<long long>(t1.QuadPart * 1000000000ll / fq.QuadPart), static_cast<long long>(hdr.a), static_cast<long long>((t1.QuadPart - t0.QuadPart) * 1000000ll / fq.QuadPart)});
+						// Split into whole seconds and remainder: ticks * 1e9 overflows 64 bits after ~15 minutes of uptime at 10 MHz.
+						const long long ns = t1.QuadPart / fq.QuadPart * 1000000000ll + t1.QuadPart % fq.QuadPart * 1000000000ll / fq.QuadPart;
+						s_present_log.push_back({ns, static_cast<long long>(hdr.a), static_cast<long long>((t1.QuadPart - t0.QuadPart) * 1000000ll / fq.QuadPart)});
 					}
 					FakeFifoPresent();
 					ExternalCapPresent();
@@ -1290,6 +1326,11 @@ extern std::atomic<bool> g_kzgs_show_fps; // shim/ImGuiShim.cpp
 void kzgsSetShowFps(bool show)
 {
 	g_kzgs_show_fps.store(show, std::memory_order_relaxed);
+}
+
+void kzgsSetPresentPacing(double hz)
+{
+	s_pacing_hz.store(std::isfinite(hz) && hz > 0.0 ? hz : 0.0, std::memory_order_relaxed);
 }
 
 void kzgsVsyncTemporal(int field, bool regsWritten, bool wide, const KzgsTemporalGuestObservation* temporal)

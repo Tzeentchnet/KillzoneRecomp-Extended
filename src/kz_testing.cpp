@@ -454,7 +454,7 @@ void kzTestingInstall(PS2Runtime &runtime, bool isolatedMemoryCard)
     }
     else if (g_startLevel > 0 && unlockExplicitlyDisabled)
         std::printf("[kz] testing: native profile unlock queries requested (KZ_UNLOCK_ALL=0)\n");
-    g_skipIntro = envFlag("KZ_SKIP_INTRO", cfg.skipIntro) || g_startLevel > 0;
+    g_skipIntro = kzTestingSkipIntroRequested(envFlag("KZ_SKIP_INTRO", cfg.skipIntro), g_startLevel);
     g_logFrontEnd = std::getenv("KZ_FRONTEND_LOG") != nullptr;
     g_skipMask = envInt("KZ_SKIP_INTRO_MASK", 3, 0, 3);
     if (g_skipIntro && !hook(runtime, kz_hook::MovieOpen, &movieOpen, &g_origMovieOpen))
@@ -491,6 +491,9 @@ int kzTestingSelfTest()
     check(installUnlockHooks(false, 1, false), "start-level automation enables unlock hooks by default");
     check(!installUnlockHooks(false, 1, true), "explicit unlock disable preserves native profile queries");
     check(installUnlockHooks(true, 0, false), "explicit unlock request installs hooks");
+    check(!kzTestingSkipIntroRequested(false, 0), "intro skip remains disabled without a request");
+    check(kzTestingSkipIntroRequested(true, 0), "explicit intro skip is enabled");
+    check(kzTestingSkipIntroRequested(false, 1), "start-level automation enables intro skip");
 
     g_isolatedProfileCreation = true;
     g_profileName = KzDefaultProfileName;

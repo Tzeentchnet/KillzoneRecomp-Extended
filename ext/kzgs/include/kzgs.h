@@ -265,6 +265,11 @@ bool kzgsDebugInjectDeviceLoss();
 // Frame-rate counter in the top-left corner of the window: presented frames per second, updated twice a second. Off by default.
 void kzgsSetShowFps(bool show);
 
+// Even frame pacing for external frame generation (docs/frame-generation.md). `hz` > 0: a frame that reaches the GS
+// thread less than one 1/hz period after the previous present is held until that period has passed; late frames are
+// never held. 0 (default) disables pacing. Takes effect at the next presented frame.
+void kzgsSetPresentPacing(double hz);
+
 // SMAA luma edge threshold (0.02..0.5, default 0.1 = SMAA's HIGH preset). Higher = only strong edges are smoothed and texture detail is kept;
 // the shaders are rebuilt on the next frame when it changes. Direct3D 11 only. See docs/findings.md ("Menu jitter and blur").
 
