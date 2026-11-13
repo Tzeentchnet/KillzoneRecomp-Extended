@@ -537,6 +537,7 @@ namespace
         c.stickDeadzone = reader.number("Input", "StickDeadzone", c.stickDeadzone, 0.0f, 0.9f);
         c.stickRange = reader.number("Input", "StickRange", c.stickRange, 1.0f, 1.5f);
         c.buttonPrompts = reader.boolean("Input", "ButtonPrompts", c.buttonPrompts);
+        c.controllerGlyphs = reader.boolean("Input", "ControllerGlyphs", c.controllerGlyphs);
         c.masterVolume = reader.integer("Audio", "MasterVolume", c.masterVolume, 0, 100);
         c.skipLongIntro = reader.boolean("Game", "SkipIntro", c.skipLongIntro);
         c.skipLogos = reader.boolean("Game", "SkipLogos", c.skipLogos);
@@ -665,7 +666,8 @@ namespace
           << "\nRawMouse=" << (c.rawMouse ? 1 : 0) << "\nAimMode=" << (c.holdAim ? "Hold" : "Toggle")
           << "\nSprintMode=" << (c.toggleSprint ? "Toggle" : "Hold")
           << "\nStickDeadzone=" << c.stickDeadzone << "\nStickRange=" << c.stickRange
-          << "\nButtonPrompts=" << (c.buttonPrompts ? 1 : 0) << '\n';
+          << "\nButtonPrompts=" << (c.buttonPrompts ? 1 : 0)
+          << "\nControllerGlyphs=" << (c.controllerGlyphs ? 1 : 0) << '\n';
         writeExtras("Input", false);
         o << "\n[Audio]\nMasterVolume=" << c.masterVolume << '\n';
         writeExtras("Audio", false);
@@ -734,7 +736,7 @@ namespace
                a.mouseSensitivity == b.mouseSensitivity && a.invertY == b.invertY && a.rawMouse == b.rawMouse &&
                a.holdAim == b.holdAim && a.toggleSprint == b.toggleSprint &&
                a.stickDeadzone == b.stickDeadzone && a.stickRange == b.stickRange &&
-               a.buttonPrompts == b.buttonPrompts &&
+               a.buttonPrompts == b.buttonPrompts && a.controllerGlyphs == b.controllerGlyphs &&
                a.masterVolume == b.masterVolume && a.skipLongIntro == b.skipLongIntro &&
                a.skipLogos == b.skipLogos &&
                a.isoPath == b.isoPath &&
@@ -911,6 +913,7 @@ int kzConfigSelfTest()
     editedBaseline.fov = 100.0f;
     editedBaseline.weaponFov = 85.0f;
     editedBaseline.buttonPrompts = false;
+    editedBaseline.controllerGlyphs = true;
     editedBaseline.skipLogos = true;
     editedBaseline.defaultProfile = "Automation_1";
     check(saveConfigFile(baselinePath, editedBaseline, false), "save launcher-edited baseline");

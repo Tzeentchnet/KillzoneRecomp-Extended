@@ -121,6 +121,7 @@ namespace
         std::deque<std::pair<int, uint64_t>> weaponSteps;
         std::array<bool, SDL_SCANCODE_COUNT> consumed{}; // held keys that must not act as pad buttons until released
         SDL_Gamepad *gamepad = nullptr;
+        KzControllerGlyphFamily controllerGlyphFamily = KzControllerGlyphFamily::Original;
         // latest gamepad snapshot, taken on the window thread
         uint16_t padButtons = 0; // active-high
         // [Input] SprintMode=Toggle (compose): latched sprint button, previous raw state, start of standing still
@@ -129,6 +130,24 @@ namespace
         uint64_t sprintIdleSince = 0;
         float lx = 0, ly = 0, rx = 0, ry = 0, l2 = 0, r2 = 0;
     };
+
+    KzControllerGlyphFamily controllerGlyphFamily(SDL_GamepadType type)
+    {
+        switch (type)
+        {
+        case SDL_GAMEPAD_TYPE_STANDARD:
+        case SDL_GAMEPAD_TYPE_XBOX360:
+        case SDL_GAMEPAD_TYPE_XBOXONE:
+            return KzControllerGlyphFamily::Xbox;
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO:
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT:
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR:
+            return KzControllerGlyphFamily::Nintendo;
+        default:
+            return KzControllerGlyphFamily::Original;
+        }
+    }
 
     State &state()
     {
@@ -616,6 +635,7 @@ void kzInputShutdown()
     if (s.gamepad)
         SDL_CloseGamepad(s.gamepad);
     s.gamepad = nullptr;
+    s.controllerGlyphFamily = KzControllerGlyphFamily::Original;
 }
 
 void kzInputSetCaptured(bool captured)
@@ -820,6 +840,8 @@ void kzInputOnEvent(const SDL_Event &e)
         if (!s.gamepad)
         {
             s.gamepad = SDL_OpenGamepad(e.gdevice.which);
+            s.controllerGlyphFamily = s.gamepad ?
+                controllerGlyphFamily(SDL_GetGamepadType(s.gamepad)) : KzControllerGlyphFamily::Original;
             if (s.gamepad && !s.kbmSeen)
                 s.usingKbm = false; // controller-only player: start with controller prompts
         }
@@ -829,6 +851,7 @@ void kzInputOnEvent(const SDL_Event &e)
         {
             SDL_CloseGamepad(s.gamepad);
             s.gamepad = nullptr;
+            s.controllerGlyphFamily = KzControllerGlyphFamily::Original;
         }
         break;
     default:
@@ -878,6 +901,13 @@ bool kzInputUsingKeyboardMouse()
     State &s = state();
     std::lock_guard<std::mutex> lock(s.mutex);
     return s.usingKbm;
+}
+
+KzControllerGlyphFamily kzInputControllerGlyphFamily()
+{
+    State &s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    return s.controllerGlyphFamily;
 }
 
 bool kzPadProvider(int port, int slot, uint8_t *data, size_t size)
@@ -952,6 +982,18 @@ int kzInputSelfTest()
           "stick range: circular diagonal expansion");
     stickToPs2(1.0f, 1.0f, 0.15f, 1.5f, stickX, stickY);
     check(stickX == 1.0f && stickY == 1.0f, "stick range: per-axis clamp");
+    check(controllerGlyphFamily(SDL_GAMEPAD_TYPE_STANDARD) == KzControllerGlyphFamily::Xbox &&
+              controllerGlyphFamily(SDL_GAMEPAD_TYPE_XBOX360) == KzControllerGlyphFamily::Xbox &&
+              controllerGlyphFamily(SDL_GAMEPAD_TYPE_XBOXONE) == KzControllerGlyphFamily::Xbox,
+          "controller glyph family: standard and Xbox");
+    check(controllerGlyphFamily(SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO) == KzControllerGlyphFamily::Nintendo &&
+              controllerGlyphFamily(SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR) ==
+                  KzControllerGlyphFamily::Nintendo,
+          "controller glyph family: Nintendo");
+    check(controllerGlyphFamily(SDL_GAMEPAD_TYPE_UNKNOWN) == KzControllerGlyphFamily::Original &&
+              controllerGlyphFamily(SDL_GAMEPAD_TYPE_PS5) == KzControllerGlyphFamily::Original &&
+              controllerGlyphFamily(SDL_GAMEPAD_TYPE_GAMECUBE) == KzControllerGlyphFamily::Original,
+          "controller glyph family: safe original fallback");
     s.bindings.clear();
     for (const auto &[k, v] : kDefaultBindings)
     {

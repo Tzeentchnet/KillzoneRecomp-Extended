@@ -22,6 +22,10 @@ is disabled, run `killzone.exe --launcher` or set `[Launcher] Show=1`.
 Bindings are stored under `[Bindings]` and can be changed in the launcher's Controls tab. Mouse aim supports hold and
 toggle modes. Sprint defaults to hold; toggle sprint releases on a second press or after 300 ms without movement.
 Controller input uses the original PS2 layout with adjustable radial dead zone and PS2-style stick range.
+Keyboard/mouse prompt replacement remains automatic by default. Controller-family glyph replacement is separately
+disabled by default; enable **Controller glyphs** or set `[Input] ControllerGlyphs=1` to use Xbox labels for SDL
+standard/Xbox devices and position-correct Nintendo labels for Switch devices. PlayStation, GameCube, unknown, and
+unsupported devices keep the game's original PlayStation artwork.
 
 ## File compatibility
 
@@ -156,7 +160,8 @@ and 30% sharpening.
 - **Show FPS** displays a counter in the top-left corner.
 - **Skip intro movies** skips the long boot intro. Story cutscenes, menu backgrounds, and attract movies are unchanged.
 - **Skip logos** separately skips the Sony and Guerrilla logo screens.
-- Keyboard/mouse button prompts switch back to PlayStation prompts when a controller is used.
+- Keyboard/mouse button prompts switch back to controller prompts when a controller is used. Controller prompts use
+  the original PlayStation artwork unless the opt-in controller-glyph setting recognizes an Xbox or Switch layout.
 
 The related one-run overrides include `KZ_FOV`, `KZ_WEAPON_FOV`, `KZ_RENDER_DISTANCE`,
 `KZ_SKIP_LONG_INTRO`, and `KZ_MOVIE_LOG`.

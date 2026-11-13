@@ -92,6 +92,7 @@ struct KzConfig
     float stickDeadzone = 0.15f;
     float stickRange = 1.33f; // expands a modern circular stick toward the DualShock 2's square-ish range
     bool buttonPrompts = true; // show keyboard/mouse prompts when the known game atlas is active
+    bool controllerGlyphs = false; // opt in to Xbox/Nintendo labels; PlayStation and unknown pads keep the stock atlas
 
     // Audio
     int masterVolume = 100; // 0..100

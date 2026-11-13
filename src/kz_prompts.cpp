@@ -21,7 +21,7 @@
 #include <unordered_map>
 #include <vector>
 
-// Keyboard and mouse button prompts (docs/findings.md "Button prompts").
+// Device-aware button prompts (docs/findings.md "Button prompts").
 //
 // How the game draws a button picture: the text markup <buttonimage name=cross|triangle|...|R3> (tag handler 0x26C4F0; <buttonfunction
 // function=primaryfire|...> resolves to the same through the player's controller map) appends ONE character, code 32 + button index, to the
@@ -33,9 +33,9 @@
 //   T+32  number of images (1)            T+40  list of {RAM address, qword count} chunks of the image   T+44  VRAM cookie
 //   T+48  transfer size 0x20080 (128x32 PSMCT32: the 256x64 PSMT8 atlas pre-swizzled into GS memory order)
 // The streamer (0x15A5E8) treats a cookie outside the ring window as "not resident" and uploads the RAM data again at the next draw.
-// While the last input was keyboard/mouse the atlas and palette in RAM are therefore replaced by a version whose cells hold the key or
-// mouse button bound to that action and the cookies are cleared, so the very draw that needs the picture uploads the new one. Switching
-// back restores the original bytes. The cell layout comes from the font's own glyph table, so every font that uses the atlas works.
+// While the last input was keyboard/mouse the atlas and palette in RAM are replaced by a version whose cells hold the key or mouse button
+// bound to that action. An opt-in setting similarly substitutes Xbox or Nintendo labels for recognized controllers. PlayStation, unknown,
+// and unsupported controllers keep the original atlas. The cookies are cleared so the draw that needs the picture uploads the new bytes.
 namespace
 {
     constexpr uint32_t kRamMask = 0x01FFFFFFu;
@@ -53,7 +53,14 @@ namespace
     bool g_atlasSeen = false; // the stock button atlas was found at least once
     int g_mismatchLines = 0;
     bool g_enabled = true;
-    int g_forceMode = -1; // KZ_PROMPT_MODE=kbm|pad forces the device (automation)
+    enum class PromptMode
+    {
+        Original,
+        Keyboard,
+        Xbox,
+        Nintendo,
+    };
+    int g_forceMode = -1; // KZ_PROMPT_MODE=kbm|pad|xbox|nintendo forces the device (automation)
 
     uint32_t rd32(const uint8_t *rdram, uint32_t a)
     {
@@ -532,6 +539,137 @@ namespace
         return idx >= 0 && idx < kButtons ? t[idx] : nullptr;
     }
 
+    const char *controllerLabel(PromptMode mode, int idx)
+    {
+        static constexpr std::array<const char *, kButtons> xbox = {
+            "A", "Y", "X", "B", nullptr, nullptr, nullptr, nullptr, "LB", "LT",
+            "LS", "RB", "RT", "RS", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+        static constexpr std::array<const char *, kButtons> nintendo = {
+            "B", "X", "Y", "A", nullptr, nullptr, nullptr, nullptr, "L", "ZL",
+            "LS", "R", "ZR", "RS", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+        if (idx < 0 || idx >= kButtons)
+            return nullptr;
+        if (mode == PromptMode::Xbox)
+            return xbox[static_cast<size_t>(idx)];
+        if (mode == PromptMode::Nintendo)
+            return nintendo[static_cast<size_t>(idx)];
+        return nullptr;
+    }
+
+    using BitmapGlyph = std::array<uint8_t, 7>;
+
+    const BitmapGlyph *bitmapGlyph(char c)
+    {
+        static constexpr BitmapGlyph a = {0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11};
+        static constexpr BitmapGlyph b = {0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E};
+        static constexpr BitmapGlyph l = {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F};
+        static constexpr BitmapGlyph r = {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11};
+        static constexpr BitmapGlyph s = {0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E};
+        static constexpr BitmapGlyph t = {0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04};
+        static constexpr BitmapGlyph x = {0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11};
+        static constexpr BitmapGlyph y = {0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04};
+        static constexpr BitmapGlyph z = {0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F};
+        switch (c)
+        {
+        case 'A': return &a;
+        case 'B': return &b;
+        case 'L': return &l;
+        case 'R': return &r;
+        case 'S': return &s;
+        case 'T': return &t;
+        case 'X': return &x;
+        case 'Y': return &y;
+        case 'Z': return &z;
+        default: return nullptr;
+        }
+    }
+
+    void fillCircle(Image &image, float cx, float cy, float radius, const Px &colour)
+    {
+        const float radius2 = radius * radius;
+        for (int y = 0; y < image.h; ++y)
+            for (int x = 0; x < image.w; ++x)
+            {
+                const float dx = x + 0.5f - cx, dy = y + 0.5f - cy;
+                if (dx * dx + dy * dy <= radius2)
+                    image.at(x, y) = colour;
+            }
+    }
+
+    bool insideRoundedRect(float x, float y, float cx, float cy, float halfW, float halfH, float radius)
+    {
+        const float qx = std::fabs(x - cx) - (halfW - radius);
+        const float qy = std::fabs(y - cy) - (halfH - radius);
+        const float ox = std::max(qx, 0.0f), oy = std::max(qy, 0.0f);
+        return std::hypot(ox, oy) + std::min(std::max(qx, qy), 0.0f) <= radius;
+    }
+
+    void fillRoundedRect(Image &image, float cx, float cy, float halfW, float halfH, float radius,
+                         const Px &colour)
+    {
+        for (int y = 0; y < image.h; ++y)
+            for (int x = 0; x < image.w; ++x)
+                if (insideRoundedRect(x + 0.5f, y + 0.5f, cx, cy, halfW, halfH, radius))
+                    image.at(x, y) = colour;
+    }
+
+    void drawBitmapText(Image &image, const std::string &text, const Px &colour)
+    {
+        if (text.empty())
+            return;
+        const int logicalW = static_cast<int>(text.size()) * 6 - 1;
+        const int scale = std::max(1, std::min(image.w * 3 / 4 / logicalW, image.h / 2 / 7));
+        const int width = logicalW * scale, height = 7 * scale;
+        const int x0 = (image.w - width) / 2, y0 = (image.h - height) / 2;
+        for (size_t i = 0; i < text.size(); ++i)
+        {
+            const BitmapGlyph *glyph = bitmapGlyph(text[i]);
+            if (!glyph)
+                continue;
+            for (int row = 0; row < 7; ++row)
+                for (int column = 0; column < 5; ++column)
+                    if (((*glyph)[static_cast<size_t>(row)] & (1u << (4 - column))) != 0)
+                        for (int py = 0; py < scale; ++py)
+                            for (int px = 0; px < scale; ++px)
+                                image.at(x0 + (static_cast<int>(i) * 6 + column) * scale + px,
+                                         y0 + row * scale + py) = colour;
+        }
+    }
+
+    Image makeControllerGlyph(PromptMode mode, int idx, int size)
+    {
+        constexpr int supersample = 4;
+        Image high(size * supersample, size * supersample);
+        const float cx = high.w * 0.5f, cy = high.h * 0.5f;
+        const Px dark{18, 18, 24, 245}, white{235, 235, 235, 255};
+        const bool face = idx >= 0 && idx <= 3;
+        const bool stick = idx == 10 || idx == 13;
+        if (face || stick)
+        {
+            const float radius = std::min(high.w, high.h) * (stick ? 0.38f : 0.43f);
+            fillCircle(high, cx, cy, radius, dark);
+            fillCircle(high, cx, cy, radius * 0.86f, white);
+            fillCircle(high, cx, cy, radius * 0.69f, dark);
+        }
+        else
+        {
+            const float halfW = high.w * 0.45f, halfH = high.h * 0.30f;
+            fillRoundedRect(high, cx, cy, halfW, halfH, halfH * 0.55f, dark);
+            fillRoundedRect(high, cx, cy, halfW * 0.90f, halfH * 0.82f, halfH * 0.45f, white);
+            fillRoundedRect(high, cx, cy, halfW * 0.80f, halfH * 0.65f, halfH * 0.36f, dark);
+        }
+
+        Px label = white;
+        if (mode == PromptMode::Xbox && face)
+        {
+            static constexpr Px xboxColours[4] = {
+                {102, 217, 77, 255}, {255, 209, 64, 255}, {77, 153, 255, 255}, {242, 77, 64, 255}};
+            label = xboxColours[idx];
+        }
+        drawBitmapText(high, controllerLabel(mode, idx), label);
+        return resample(high, size);
+    }
+
     // ---- the replacement atlas ----
     struct Cell
     {
@@ -541,6 +679,7 @@ namespace
     {
         std::array<Cell, kButtons> cells{};
         std::array<bool, kButtons> valid{};
+        PromptMode mode = PromptMode::Keyboard;
         std::vector<uint8_t> stream;  // 16384
         std::vector<uint8_t> palette; // 1024, CSM1 order
         uint32_t streamCrc = 0, paletteCrc = 0;
@@ -549,8 +688,11 @@ namespace
     std::vector<uint8_t> g_origStream, g_origPalette; // the stock atlas, taken from RAM the first time it is seen
     std::vector<Atlas> g_atlases;
 
-    bool sameCells(const std::array<Cell, kButtons> &a, const std::array<bool, kButtons> &av, const Atlas &b)
+    bool sameCells(const std::array<Cell, kButtons> &a, const std::array<bool, kButtons> &av,
+                   PromptMode mode, const Atlas &b)
     {
+        if (mode != b.mode)
+            return false;
         for (int i = 0; i < kButtons; ++i)
         {
             if (av[i] != b.valid[i])
@@ -577,41 +719,63 @@ namespace
         return img;
     }
 
-    Atlas buildAtlas(const std::array<Cell, kButtons> &cells, const std::array<bool, kButtons> &valid)
+    Atlas buildAtlas(const std::array<Cell, kButtons> &cells, const std::array<bool, kButtons> &valid,
+                     PromptMode mode)
     {
         Atlas at;
         at.cells = cells;
         at.valid = valid;
+        at.mode = mode;
         Image img = decodeOriginal();
-        std::map<std::string, Image> keyCache;
         bool changed = false;
         for (int i = 0; i < kButtons; ++i)
         {
-            const char *target = targetOfButton(i);
-            if (!target || !valid[i])
+            if (!valid[i])
                 continue;
-            const std::string icon = iconForSource(sourceFor(target));
-            Image src;
-            if (icon.empty() || !loadIcon(icon, src))
-            {
-                std::printf("[kz] button prompts: no picture for %s (%s in resources/prompts), keeping the controller button\n", target, icon.empty() ? "no key bound" : icon.c_str());
-                continue;
-            }
             const Cell &c = cells[i];
             const int n = std::min(std::min(c.w, 24), c.h);
             if (n < 10)
                 continue;
-            const Image key = makeKey(src, n);
+
+            Image replacement;
+            if (mode == PromptMode::Keyboard)
+            {
+                const char *target = targetOfButton(i);
+                if (!target)
+                    continue;
+                const std::string source = sourceFor(target);
+                const std::string icon = iconForSource(source);
+                Image src;
+                if (icon.empty() || !loadIcon(icon, src))
+                {
+                    std::printf("[kz] button prompts: no picture for %s (%s in resources/prompts), keeping the controller button\n",
+                                target, icon.empty() ? "no key bound" : icon.c_str());
+                    continue;
+                }
+                replacement = makeKey(src, n);
+                if (g_log)
+                    std::printf("[kz-prompt] button %d (%s) -> %s (%s), %dx%d in cell %d,%d %dx%d\n",
+                                i, target, source.c_str(), icon.c_str(), n, n, c.u, c.v, c.w, c.h);
+            }
+            else
+            {
+                const char *label = controllerLabel(mode, i);
+                if (!label)
+                    continue;
+                replacement = makeControllerGlyph(mode, i, n);
+                if (g_log)
+                    std::printf("[kz-prompt] button %d -> %s, %dx%d in cell %d,%d %dx%d\n",
+                                i, label, n, n, c.u, c.v, c.w, c.h);
+            }
+
             for (int y = 0; y < c.h; ++y)
                 for (int x = 0; x < c.w; ++x)
                     img.at(c.u + x, c.v + y) = Px{};
             const int ox = c.u + (c.w - n) / 2, oy = c.v + (c.h - n) / 2;
             for (int y = 0; y < n; ++y)
                 for (int x = 0; x < n; ++x)
-                    img.at(ox + x, oy + y) = key.at(x, y);
+                    img.at(ox + x, oy + y) = replacement.at(x, y);
             changed = true;
-            if (g_log)
-                std::printf("[kz-prompt] button %d (%s) -> %s (%s), %dx%d in cell %d,%d %dx%d\n", i, target, sourceFor(target).c_str(), icon.c_str(), n, n, c.u, c.v, c.w, c.h);
         }
         if (!changed) // nothing to draw: the stock data stands in, no re-quantising (CRCs stay 0, so it never matches a texture)
         {
@@ -658,30 +822,66 @@ namespace
     {
         uint32_t list = 0, data = 0, res = 0;
         bool button = false;
-        int applied = -1; // -1 unknown, 0 original data, 1 keyboard/mouse atlas
+        int applied = -1; // -1 unknown; otherwise PromptMode
         int atlas = -1;   // index into g_atlases of the applied replacement
     };
     std::unordered_map<uint32_t, TexState> g_tex;
     int g_mode = -1; // last mode seen (for the log line)
 
-    // KZ_PROMPT_SCHEDULE="110:pad,114:kbm" switches the device at those seconds after start (automation: the live switch).
+    // KZ_PROMPT_SCHEDULE="110:pad,114:xbox,118:nintendo,122:kbm" switches prompt styles for automation.
     std::vector<std::pair<double, int>> g_schedule;
 
-    bool wantKeyboard()
+    int parsePromptMode(const char *name)
+    {
+        if (_stricmp(name, "pad") == 0 || _stricmp(name, "ps") == 0 ||
+            _stricmp(name, "playstation") == 0)
+            return static_cast<int>(PromptMode::Original);
+        if (_stricmp(name, "kbm") == 0 || _stricmp(name, "keyboard") == 0)
+            return static_cast<int>(PromptMode::Keyboard);
+        if (_stricmp(name, "xbox") == 0)
+            return static_cast<int>(PromptMode::Xbox);
+        if (_stricmp(name, "nintendo") == 0 || _stricmp(name, "switch") == 0)
+            return static_cast<int>(PromptMode::Nintendo);
+        return -1;
+    }
+
+    const char *promptModeName(PromptMode mode)
+    {
+        switch (mode)
+        {
+        case PromptMode::Keyboard: return "keyboard and mouse";
+        case PromptMode::Xbox: return "Xbox";
+        case PromptMode::Nintendo: return "Nintendo";
+        default: return "original PlayStation";
+        }
+    }
+
+    PromptMode desiredMode()
     {
         if (!g_schedule.empty())
         {
             const double t = SDL_GetTicks() / 1000.0;
-            int mode = 1;
+            int mode = static_cast<int>(PromptMode::Keyboard);
             for (const auto &[at, m] : g_schedule)
                 if (t >= at)
                     mode = m;
-            return mode == 1;
+            return static_cast<PromptMode>(mode);
         }
         if (g_forceMode >= 0)
-            return g_forceMode == 1;
-        return kzInputUsingKeyboardMouse();
+            return static_cast<PromptMode>(g_forceMode);
+        if (kzInputUsingKeyboardMouse())
+            return kzConfig().buttonPrompts ? PromptMode::Keyboard : PromptMode::Original;
+        if (!kzConfig().controllerGlyphs)
+            return PromptMode::Original;
+        switch (kzInputControllerGlyphFamily())
+        {
+        case KzControllerGlyphFamily::Xbox: return PromptMode::Xbox;
+        case KzControllerGlyphFamily::Nintendo: return PromptMode::Nintendo;
+        default: return PromptMode::Original;
+        }
     }
+
+    bool wantKeyboard() { return desiredMode() == PromptMode::Keyboard; }
 
     // Cells of the font's glyphs 32..51 (single part each).
     void readCells(const uint8_t *rdram, uint32_t font, std::array<Cell, kButtons> &cells, std::array<bool, kButtons> &valid)
@@ -739,7 +939,8 @@ namespace
         {
             for (size_t i = 0; i < g_atlases.size(); ++i)
                 if (g_atlases[i].streamCrc == dcrc && g_atlases[i].paletteCrc == pcrc)
-                    s.button = true, s.applied = 1, s.atlas = static_cast<int>(i); // shared buffers already switched by another font
+                    s.button = true, s.applied = static_cast<int>(g_atlases[i].mode),
+                    s.atlas = static_cast<int>(i); // shared buffers already switched by another font
         }
         // A font texture with the atlas's format but other data (another font's 256x64 8-bit page, or a button atlas that
         // differs from the US one): reported until the stock atlas has been seen once, at most 4 lines.
@@ -751,7 +952,7 @@ namespace
         }
         if (g_log)
             std::printf("[kz-prompt] texture %08x list %08x data %08x res %08x crc %08x/%08x -> %s\n", T, list, data, res, dcrc, pcrc, s.button ? "button atlas" : "not the button atlas");
-        if (s.applied == 1)
+        if (s.applied > static_cast<int>(PromptMode::Original))
         {
             evict(rdram, T + 44), evict(rdram, res + 12); // this texture's own VRAM copy is the stock one
         }
@@ -760,8 +961,12 @@ namespace
     // Does the RAM still hold what this texture state says? (A texture reloaded in place puts the stock data back.)
     bool stillHolds(const uint8_t *rdram, const TexState &s)
     {
-        const std::vector<uint8_t> &sd = s.applied == 1 && s.atlas >= 0 ? g_atlases[static_cast<size_t>(s.atlas)].stream : g_origStream;
-        const std::vector<uint8_t> &pd = s.applied == 1 && s.atlas >= 0 ? g_atlases[static_cast<size_t>(s.atlas)].palette : g_origPalette;
+        const bool replacement = s.applied > static_cast<int>(PromptMode::Original) && s.atlas >= 0 &&
+            static_cast<size_t>(s.atlas) < g_atlases.size();
+        const std::vector<uint8_t> &sd =
+            replacement ? g_atlases[static_cast<size_t>(s.atlas)].stream : g_origStream;
+        const std::vector<uint8_t> &pd =
+            replacement ? g_atlases[static_cast<size_t>(s.atlas)].palette : g_origPalette;
         if (sd.size() != kAtlasBytes || pd.size() != kPaletteBytes)
             return true;
         const uint8_t *d = rdram + (s.data & kRamMask), *p = rdram + ((s.res + 16) & kRamMask);
@@ -780,7 +985,8 @@ namespace
             return;
         const uint32_t data = rd32(rdram, list);
         TexState &s = g_tex[T];
-        const bool want = wantKeyboard();
+        const PromptMode wanted = desiredMode();
+        const int wantedValue = static_cast<int>(wanted);
         if (s.list != list || s.data != data || s.res != res || (s.button && s.applied >= 0 && !stillHolds(rdram, s)))
         {
             // a new or reloaded texture: is it the button atlas?
@@ -790,25 +996,25 @@ namespace
         }
         if (!s.button)
             return;
-        if (g_mode != (want ? 1 : 0))
+        if (g_mode != wantedValue)
         {
-            g_mode = want ? 1 : 0;
-            std::printf("[kz] button prompts: %s\n", want ? "keyboard and mouse" : "controller");
+            g_mode = wantedValue;
+            std::printf("[kz] button prompts: %s\n", promptModeName(wanted));
         }
-        if ((want ? 1 : 0) == s.applied)
+        if (wantedValue == s.applied)
             return;
-        if (want)
+        if (wanted != PromptMode::Original)
         {
             std::array<Cell, kButtons> cells{};
             std::array<bool, kButtons> valid{};
             readCells(rdram, font, cells, valid);
             int ai = -1;
             for (size_t i = 0; i < g_atlases.size(); ++i)
-                if (sameCells(cells, valid, g_atlases[i]))
+                if (sameCells(cells, valid, wanted, g_atlases[i]))
                     ai = static_cast<int>(i);
             if (ai < 0)
             {
-                g_atlases.push_back(buildAtlas(cells, valid));
+                g_atlases.push_back(buildAtlas(cells, valid, wanted));
                 ai = static_cast<int>(g_atlases.size()) - 1;
             }
             const Atlas &a = g_atlases[static_cast<size_t>(ai)];
@@ -822,10 +1028,11 @@ namespace
         {
             std::memcpy(rdram + (s.data & kRamMask), g_origStream.data(), kAtlasBytes);
             std::memcpy(rdram + ((s.res + 16) & kRamMask), g_origPalette.data(), kPaletteBytes);
+            s.atlas = -1;
         }
         evict(rdram, T + 44); // not resident: the next draw uploads the data again
         evict(rdram, s.res + 12);
-        s.applied = want ? 1 : 0;
+        s.applied = wantedValue;
         // other textures that share the buffers are brought along when they are next drawn
         for (auto &[t2, st] : g_tex)
             if (t2 != T && st.button && st.data == s.data)
@@ -975,14 +1182,60 @@ namespace
     }
 }
 
+int kzPromptsSelfTest()
+{
+    int failures = 0;
+    auto check = [&](bool ok, const char *what) {
+        if (!ok)
+        {
+            std::fprintf(stderr, "[kz-prompts selftest] FAIL: %s\n", what);
+            ++failures;
+        }
+    };
+
+    check(std::strcmp(controllerLabel(PromptMode::Xbox, 0), "A") == 0 &&
+              std::strcmp(controllerLabel(PromptMode::Xbox, 3), "B") == 0,
+          "Xbox face-button positions");
+    check(std::strcmp(controllerLabel(PromptMode::Nintendo, 0), "B") == 0 &&
+              std::strcmp(controllerLabel(PromptMode::Nintendo, 3), "A") == 0,
+          "Nintendo face-button positions");
+    check(controllerLabel(PromptMode::Original, 0) == nullptr &&
+              controllerLabel(PromptMode::Xbox, 6) == nullptr,
+          "original and D-pad glyphs stay untouched");
+
+    for (PromptMode mode : {PromptMode::Xbox, PromptMode::Nintendo})
+    {
+        int labels = 0;
+        for (int i = 0; i < kButtons; ++i)
+        {
+            const char *label = controllerLabel(mode, i);
+            if (!label)
+                continue;
+            ++labels;
+            for (const char *p = label; *p; ++p)
+                check(bitmapGlyph(*p) != nullptr, "controller label has a bitmap glyph");
+            const Image glyph = makeControllerGlyph(mode, i, 20);
+            const size_t visible = static_cast<size_t>(std::count_if(
+                glyph.px.begin(), glyph.px.end(), [](const Px &pixel) { return pixel.a != 0; }));
+            check(visible > 40 && visible < glyph.px.size(), "controller glyph has bounded visible pixels");
+        }
+        check(labels == 10, "controller family replaces ten labeled buttons");
+    }
+    return failures;
+}
+
 void kzPromptsInstall(PS2Runtime &runtime)
 {
     g_log = std::getenv("KZ_PROMPT_LOG") != nullptr;
-    g_enabled = kzConfig().buttonPrompts;
-    if (const char *v = std::getenv("KZ_PROMPTS"); v && v[0] == '0')
-        g_enabled = false;
+    g_enabled = kzConfig().buttonPrompts || kzConfig().controllerGlyphs;
     if (const char *v = std::getenv("KZ_PROMPT_MODE"))
-        g_forceMode = _stricmp(v, "kbm") == 0 ? 1 : (_stricmp(v, "pad") == 0 ? 0 : -1);
+    {
+        g_forceMode = parsePromptMode(v);
+        if (g_forceMode < 0)
+            std::fprintf(stderr, "[kz] KZ_PROMPT_MODE rejected value '%s'; expected pad, kbm, xbox or nintendo\n", v);
+        else
+            g_enabled = true;
+    }
     if (const char *v = std::getenv("KZ_PROMPT_SCHEDULE"))
     {
         std::string all(v);
@@ -994,9 +1247,19 @@ void kzPromptsInstall(PS2Runtime &runtime)
             pos = end == std::string::npos ? all.size() : end + 1;
             const size_t c = item.find(':');
             if (c != std::string::npos)
-                g_schedule.emplace_back(std::atof(item.c_str()), _stricmp(item.c_str() + c + 1, "kbm") == 0 ? 1 : 0);
+            {
+                const int mode = parsePromptMode(item.c_str() + c + 1);
+                if (mode >= 0)
+                    g_schedule.emplace_back(std::atof(item.c_str()), mode);
+                else
+                    std::fprintf(stderr, "[kz] KZ_PROMPT_SCHEDULE rejected style in '%s'\n", item.c_str());
+            }
         }
+        if (!g_schedule.empty())
+            g_enabled = true;
     }
+    if (const char *v = std::getenv("KZ_PROMPTS"); v && v[0] == '0')
+        g_enabled = false;
     const bool ok = hook(runtime, kzAddrs().text, &text, g_origText);
     std::printf("[kz] prompt hooks: %s\n", ok ? "installed" : "FAILED");
 }

@@ -639,8 +639,8 @@ namespace
                         toggleRow("Aim", "Hold the zoom button to aim: right mouse button, or R3 on a controller.", cfg.holdAim, "Hold to aim", "Press to toggle (as on PS2)");
                         toggleRow("Sprint", "Left Shift / L3. Toggle: press once, sprint stops when you stop moving or press again. Also applies to controllers.",
                                   cfg.toggleSprint, "Press to toggle", "Hold to sprint (as on PS2)");
-                        toggleRow("Button prompts", "The game's on-screen button pictures. Auto shows your keys and mouse buttons while you use them and the PlayStation buttons after controller input.",
-                                  cfg.buttonPrompts, "Auto (keys and mouse buttons)", "Always PlayStation buttons");
+                        toggleRow("Keyboard prompts", "Shows your bound keys and mouse buttons while you use them. Controller input restores controller buttons.",
+                                  cfg.buttonPrompts, "Auto (keys and mouse buttons)", "Always controller buttons");
                         ImGui::EndTable();
                     }
                     section("Controller");
@@ -650,6 +650,9 @@ namespace
                         ImGui::SliderFloat("##deadzone", &cfg.stickDeadzone, 0.0f, 0.5f, "%.2f");
                         row("Stick range", "1.33 gives full-speed diagonals like a PS2 pad; 1.00 keeps the controller's raw circle.");
                         ImGui::SliderFloat("##range", &cfg.stickRange, 1.0f, 1.5f, "%.2f");
+                        toggleRow("Controller glyphs",
+                                  "Opt in to detected Xbox or Nintendo button labels. PlayStation, GameCube and unknown controllers keep the game's original PlayStation artwork.",
+                                  cfg.controllerGlyphs, "Match detected controller", "PlayStation buttons (original)");
                         ImGui::EndTable();
                     }
                     section("Keys");

@@ -160,6 +160,7 @@ namespace
         failures += kzPostSelfTest();
         kzInputInit(std::filesystem::temp_directory_path() / "kz_missing.ini");
         failures += kzInputSelfTest();
+        failures += kzPromptsSelfTest();
         failures += kzTestingSelfTest();
         failures += kzLauncherSelfTest();
         // disc check against the user's image when present (not required for the test to pass)
@@ -435,7 +436,8 @@ int main(int argc, char *argv[])
                       << kzRegionBootElf(kzRegion()) << " address (src/kz_addrs.cpp). "
                       << "On: mouse aim, keyboard text entry, frame-rate fixes, post-process switches, movie fixes, native 16:9; "
                       << "ultrawide " << (wide ? "on" : "off (aspect setting)") << "; button prompts "
-                      << (cfg.buttonPrompts ? "on while the game's button atlas matches the known one" : "off (setting)")
+                      << (cfg.buttonPrompts ? "keyboard auto" : "keyboard off") << ", controller glyphs "
+                      << (cfg.controllerGlyphs ? "matched" : "original PlayStation")
                       << "; game video forced to NTSC 60 Hz. Boot files and memory card: "
                       << kzRegionBootFolder(kzRegion()) << std::endl;
         // Tests: a separate (e.g. empty) memory card folder. After loadELF, which resets the roots to the ELF folder.
