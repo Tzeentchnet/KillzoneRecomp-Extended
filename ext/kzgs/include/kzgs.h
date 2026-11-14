@@ -250,9 +250,14 @@ void kzgsSetLogCallback(KzgsLogFn fn);
 // Optional frame-pipeline trace sink (timeline recorder, patch 0025). Called from the GS thread and from the producer
 // thread, must be cheap and lock-free. id: 2 GS thread idle time in us since the previous frame (reported when a frame starts), 3/4 GS thread renders+presents a frame
 // begin/end, 5/6 producer waits for the GS thread (maxQueuedFrames) begin/end, 7/8 producer waits for ring space
-// begin/end, 9 frames queued (a) after a vsync was pushed. nullptr = off.
+// begin/end, 9 frames queued (a) after a vsync was pushed, 10 accumulated GIF upload/draw CPU time (a us),
+// 11 total GPU frame time (a us), 12/13 merge CPU begin/end, 14/15 presentation upscale CPU begin/end,
+// 16/17 sharpening CPU begin/end, 18/19 final presentation CPU begin/end. nullptr = off.
 using KzgsTraceFn = void (*)(int id, uint32_t a);
 void kzgsSetTraceHook(KzgsTraceFn fn);
+
+// Enables the renderer's asynchronous whole-frame GPU timestamp queries. May be changed while open; off by default.
+void kzgsSetGpuTimingEnabled(bool enabled);
 
 // SMAA edge-detection luma threshold (0.02 .. 0.5, default 0.1 = the HIGH preset); applied the next time the SMAA shaders are built.
 void kzgsSetSmaaThreshold(float threshold);

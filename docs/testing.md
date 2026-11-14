@@ -192,7 +192,8 @@ PNGs. Align and confirm the scene in separate image-capture runs. Historical EU/
 this correction incorrectly label `source_id` as `SCUS-97402`; older logs can also report `skip_intro: false` when a
 start-level request implicitly enables it.
 
-`tools\scripts\present_pacing_campaign.ps1` runs arms (`name:fps:pacing[:precise-wait]`) sequentially on fresh
+`tools\scripts\present_pacing_campaign.ps1` runs arms
+(`name:fps:pacing[:precise-wait[:scale-policy]]`) sequentially on fresh
 copies of a profile card with V-Sync off and the intro skipped, then summarizes each arm's window into ignored
 `work\`. This example interleaves repeated condition-variable and precise-wait runs, emits one metadata-only anchor
 per guest second, and analyzes the matching timeline window:
@@ -210,6 +211,23 @@ backend/count, overshoot p95/p99, guest-vblank p95, and the percentage of guest-
 `<name>_summary.json`. A requested precise arm with no precise pacing waits is flagged in `problems`. An empty card does not
 get past profile selection in this flow. Results and limitations are in
 [frame generation](frame-generation.md#measured-pacing-sces-52004-chapter-1).
+
+`-HeadroomPreset` writes the exact 60 FPS headroom renderer contract and defaults automation to a 1920x1080 hidden
+window; `-WindowSize=WIDTHxHEIGHT` overrides that size. A fifth arm field can interleave `quality` and `balanced`
+automatic scale while keeping every other preset setting identical. `-GpuTiming` requires `-Timeline`, enables the
+renderer device's asynchronous whole-frame timestamp queries, and adds GPU count/p50/p95/p99/max plus CPU-stage p95
+values to the campaign summary:
+
+```powershell
+.\tools\scripts\present_pacing_campaign.ps1 -Card .\work\<profile-card> -Iso $env:KZ_ISO -Elf $env:KZ_GAME_ELF `
+  -Chapter 1 -FromGuestS 40 -ToGuestS 110 -Region us -ReadbackFree -Timeline -GpuTiming -HeadroomPreset `
+  -Arms 'quality-a:60:0:1:quality','balanced-a:60:0:1:balanced',`
+        'quality-b:60:0:1:quality','balanced-b:60:0:1:balanced'
+```
+
+The campaign checks the recorded effective 1080p contract: quality is 3x with no presentation upscale, balanced is
+2x with FSR1 active, and both use no AA, no separate CAS pass, and no texture replacements. A mismatch is reported
+in `problems`; do not use a row with problems as performance evidence.
 
 For a `KZ_TIMELINE` CSV, select the executable region to report guest frame-limiter and kick-hook counts separately
 from GS-vsync completions and asynchronous worker events:
@@ -230,8 +248,8 @@ end beyond the trace; incomplete spans crossing either boundary and the first GS
 `--guest-window-s` instead selects a half-open guest-time interval using VBLANK tick IDs and requires both
 boundaries to be present in the trace. Explicitly set `KZ_TL_START` and `KZ_TL_END` so the recorder covers that
 window; the campaign does this automatically. `--metrics-output` writes the selected window, vblank distribution,
-intervals above 25 ms, and scheduler-wait counts, causes, requested durations, signed error, and positive overshoot
-distributions as JSON.
+intervals above 25 ms, scheduler-wait counts, causes, requested durations, signed error and positive overshoot,
+whole-frame GPU time, and renderer CPU-stage distributions as JSON.
 `--vblank-hz` assumes that rate and its rounded host period stayed fixed throughout the selected trace and requires
 consecutive tick IDs. It uses the earliest observed phase to report a **lower bound** on vblank lateness. It also
 counts long intervals whose latest pacing-wait return was within 0.1 ms of the vblank and reported no posted event.
@@ -243,6 +261,13 @@ scheduled deadline/reschedule, or `4` wait failure. `SLEEP_E.c` is a signed 32-b
 microseconds. The wake timestamp is taken after the scheduler mutex is reacquired, because that is when the EE
 thread can act. `tl_analyze.py` reports signed error and positive overshoot p95/p99 by wait kind and backend, while
 continuing to recognize older traces that have no requested-deadline metadata.
+
+Set `KZ_GPU_TIMING=1` with `KZ_TIMELINE` for a direct run. D3D12 and Vulkan use their existing asynchronous
+command-list timestamp queries; this does not add a screenshot readback or a wait for the current GPU frame.
+`GPU_FRAME.a` is the positive whole-frame result in microseconds. `GS_UPLOAD_DRAW.a` is accumulated GS-thread CPU
+time spent consuming GIF transfers, while `GS_MERGE_B/E`, `GS_UPSCALE_B/E`, `GS_SHARPEN_B/E`, and
+`GS_PRESENT_B/E` are CPU spans. These markers separate CPU-side command recording and presentation work; they are
+not per-stage GPU timestamps.
 
 Windows 10/11 builds can opt into the high-resolution interruptible wait without changing the default:
 

@@ -227,18 +227,58 @@ fallback arms had deadline-wake overshoot p95 near 1.35 ms, not a recurring 15 m
 therefore cannot predict scheduler behavior under the running product, although the precise backend still provides
 a smaller and more consistent wake error here.
 
-These are headless observations on one machine (RTX 5070), in one no-input scene. CPU-side GS idle is not GPU time
-and does not establish additional GPU headroom. The runs do not measure desktop compositing, a visible swapchain,
-input latency, or perceived smoothness. The precise backend remains opt-in until repeated windowed gameplay and
-power behavior justify a default change. The EU/PAL asynchronous VIF1 worker remains disabled because of a known
-memory-corruption race, not as a performance recommendation.
+These are headless observations on one machine (RTX 5070), in one no-input scene. CPU-side GS idle is not GPU time;
+the separate GPU measurement below does not retroactively turn it into one. The scheduler runs do not measure
+desktop compositing, a visible swapchain, input latency, or perceived smoothness. The precise backend remains
+opt-in until repeated windowed gameplay and power behavior justify a default change. The EU/PAL asynchronous VIF1
+worker remains disabled because of a known memory-corruption race, not as a performance recommendation.
+
+#### Matched GPU-headroom A/B (SCUS-97402, chapter 1)
+
+The renderer now exposes its existing D3D12/Vulkan asynchronous command-list timestamp result as a positive
+whole-frame GPU sample. Enabling it does not read back the presented image or wait for the current GPU frame.
+Separate timeline markers measure GS-thread CPU time for GIF upload/draw consumption, merge, presentation
+upscaling, sharpening, and final presentation; those markers are CPU spans, not per-stage GPU timestamps.
+
+Four 1920x1080 Vulkan arms ran in quality/balanced/quality/balanced order from fresh copies of the same profile card.
+All used the otherwise identical 60 FPS headroom contract, precise scheduler wait, V-Sync off, and guest seconds
+40-110. Quality selected 3x automatic rendering and did not need presentation upscaling. Balanced selected 2x and
+used FSR1 EASU plus one 15% RCAS pass. Both had no AA, no separate CAS pass, no texture replacements, 1x view
+distance, and clean effects. Capture metadata verified those effective settings. Every arm wrote zero PNGs and
+reported no GS frame-throttle or command-ring-full waits.
+
+| Metric | Quality A / B | Balanced A / B |
+|---|---:|---:|
+| Whole-frame GPU median | 1.525 / 1.553 ms | **1.205 / 1.204 ms** |
+| Whole-frame GPU p95 | 1.977 / 2.207 ms | **1.400 / 1.307 ms** |
+| Whole-frame GPU p99 | 2.215 / 2.692 ms | **1.601 / 1.445 ms** |
+| Whole-frame GPU maximum | 2.622 / 4.757 ms | **1.857 / 2.025 ms** |
+| Final-presentation CPU p95 | 2.697 / 3.455 ms | **2.095 / 2.402 ms** |
+| Presentation interval p95 | 17.138 / 17.556 ms | **17.098 / 17.353 ms** |
+| Guest-vblank interval p95 | 17.021 / 17.035 ms | **17.019 / 17.021 ms** |
+| GS frame-throttle / ring-full waits | 0 / 0 in both arms | 0 / 0 in both arms |
+
+Balanced reduced whole-frame GPU p95 by **29.2%** in pair A and **40.8%** in pair B, adding 0.577 ms and 0.900 ms
+of measured margin against a 12 ms budget. Its two p95 values, 1.400 and 1.307 ms, pass the provisional GPU gate
+with about 10.6 ms of margin on this machine. The raster-pixel reduction is 55.6%; fixed GPU costs and FSR1 explain
+why GPU-time reduction need not match that percentage.
+
+The earlier roughly 220 ms GS-vsync/ring stall did not recur. Across these arms, GS-vsync maxima were 5.26-6.44 ms,
+final-presentation CPU maxima were 5.20-6.41 ms, and GPU maxima were 1.86-4.76 ms. The longest presentation interval
+was instead 167.1 ms in balanced B, without a long measured renderer span, GPU spike, ring wait, or guest-vblank
+interval above 25 ms. That gap therefore does not support shader prewarming or another renderer fix.
+
+This is a repeated matched result, not a universal GPU estimate: it used one RTX 5070, one driver/machine, one
+no-input scene, an automated hidden window, and V-Sync off. It does not cover a visible desktop compositor, other
+output resolutions, other GPUs, power, input latency, or perceived image quality. Whole-frame timestamps also
+cannot attribute GPU cost to individual stages.
 
 ### Remaining work
 
 - Repeat matched gameplay segments with a window, real output sizes and render scales, V-Sync on and off, several
   runs per condition, and no in-window screenshot readbacks. Measure actual new game builds separately from presents.
 - Measure power use and interactive/windowed behavior of the opt-in precise wait before considering a default change.
-- Add GPU timestamps before interpreting renderer-stage cost or CPU-side GS idle as GPU headroom.
+- Design non-perturbing per-stage GPU timestamps; whole-frame GPU timing and CPU stage spans are now available.
 - Check whether 72/82 fps simulation behaves like 60 in the [high-refresh campaign audit](testing.md#high-refresh-campaign-audit).
 - Play-test with Lossless Scaling at fixed 2x and adaptive modes; record judder and HUD artifacts.
 - In every SCES-52004 headless run here, and in the earlier SCES-52004 temporal runs, the mouse-aim hook never logged

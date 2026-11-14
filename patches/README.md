@@ -723,6 +723,18 @@ resulting tree to equal the pinned submodule tree.
   while retaining reset and module-range invalidation. The standalone test mutates each validation input and checks
   both invalidation paths. Its synthetic 1,024-stub benchmark measured 4.59-4.85 us per cold scan versus
   7.87-7.98 ns per cached decode (576-616x); this demonstrates the cache mechanism, not a Killzone workload speedup.
+- **0037-Add-precise-interruptible-scheduler-waits.patch** - adds the opt-in `PS2X_PRECISE_WAIT=1` Windows
+  scheduler backend. A high-resolution waitable timer and auto-reset event preserve deadline, posted-event,
+  reschedule, and stop wakeups; a notification generation closes the event-before-wait race, and any timer creation
+  or wait failure reports the error and falls back to the condition variable. Timeline sleep records include the
+  requested duration, planned/actual backend, wake cause, and signed wake-minus-deadline error. Twelve focused
+  interrupt tests pass in both fallback and precise modes. In two interleaved 60 Hz pairs over guest seconds 40-110,
+  precise pacing reduced wake-overshoot p95 from 1.350-1.357 ms to 0.486-0.490 ms and guest-vblank p95 from
+  17.523-17.598 ms to 17.024-17.031 ms; the path remains opt-in pending windowed and power validation.
+- **0038-Add-renderer-timeline-events.patch** - reserves host timeline events for accumulated GIF upload/draw CPU
+  time, whole-frame GPU timestamp results, and begin/end markers around merge, presentation upscaling, sharpening,
+  and final presentation. The runtime only records events emitted by the host renderer, so this patch does not
+  enable GPU queries or alter emulation behavior by itself.
 - **experimental/ee-di-interrupt-gate.diff** (not applied; `git apply --directory=ext/PS2Recomp`) - makes
   `EeScheduler` honour Status.EIE: while the running context is inside `di`/`ei`, pending interrupt, SIF and stream
   invocations, time-slice preemption and event-driven thread switches wait for `ei` (50 ms safety valve,

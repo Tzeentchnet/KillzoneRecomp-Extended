@@ -4808,10 +4808,27 @@ index 0f19c9f..80f65d7 100644
  #define FPU_C_F_S(a, b) (0)
  #define FPU_C_UN_S(a, b) (isnan((float)(a)) || isnan((float)(b)))
 diff --git a/ps2xRuntime/include/runtime/ee_scheduler.h b/ps2xRuntime/include/runtime/ee_scheduler.h
-index f247ff9..ede4cb5 100644
+index f247ff9..9b46682 100644
 --- a/ps2xRuntime/include/runtime/ee_scheduler.h
 +++ b/ps2xRuntime/include/runtime/ee_scheduler.h
-@@ -266,6 +266,8 @@ public:
+@@ -9,6 +9,7 @@
+ #include <cstdint>
+ #include <deque>
+ #include <functional>
++#include <memory>
+ #include <mutex>
+ #include <optional>
+ #include <thread>
+@@ -166,6 +167,8 @@ struct EeAlarm
+     uint32_t sp = 0;
+ };
+ 
++class EeHostWait;
++
+ struct EeIrqHandler
+ {
+     int id = 0;
+@@ -266,6 +269,8 @@ public:
      static constexpr uint64_t kEeClockHz = 294912000ull;
      static constexpr uint32_t kGeneratedCheckpointCycles = 32u;
      static constexpr uint32_t kGuestDispatchCycles = 8u;
@@ -4820,6 +4837,26 @@ index f247ff9..ede4cb5 100644
      static constexpr uint64_t kDefaultTimeSliceCycles = 65536ull;
  
      explicit EeScheduler(PS2Runtime &runtime);
+@@ -390,6 +395,10 @@ private:
+     static int waitObjectId(const EeWaitState &wait);
+     void writeGuestU32(uint32_t address, uint32_t value);
+     void waitForEvent();
++    uint32_t waitForHost(std::unique_lock<std::mutex> &lock,
++                         std::optional<std::chrono::steady_clock::time_point> deadline,
++                         uint32_t kind);
++    void notifyEventWaiter(bool all = false);
+     void scheduleEvent(uint64_t deadlineCycle, std::chrono::steady_clock::time_point hostDeadline, EeEvent event);
+     void updateNextDeadline();
+     [[nodiscard]] bool hasReadyAtOrAbovePriority(int priority) const;
+@@ -436,6 +445,8 @@ private:
+ 
+     mutable std::mutex m_eventMutex;
+     std::condition_variable m_eventCv;
++    std::unique_ptr<EeHostWait> m_hostWait;
++    std::atomic<uint64_t> m_waitNotificationGeneration{0};
+     std::deque<EeEvent> m_events;
+     std::vector<ScheduledEvent> m_deadlines;
+     std::deque<GuestInvocation> m_pendingInvocations;
 diff --git a/ps2xRuntime/include/runtime/ps2_dma_stats.h b/ps2xRuntime/include/runtime/ps2_dma_stats.h
 new file mode 100644
 index 0000000..7259e3f
@@ -5077,10 +5114,10 @@ index 0000000..2833818
 +void ps2SetPadProvider(PS2PadProvider provider);
 diff --git a/ps2xRuntime/include/runtime/ps2_timeline.h b/ps2xRuntime/include/runtime/ps2_timeline.h
 new file mode 100644
-index 0000000..7251c41
+index 0000000..4f95404
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/ps2_timeline.h
-@@ -0,0 +1,181 @@
+@@ -0,0 +1,192 @@
 +#pragma once
 +// Frame-pipeline timeline recorder (patch 0025). Off unless KZ_TIMELINE=<file.csv> is set.
 +//
@@ -5105,8 +5142,9 @@ index 0000000..7251c41
 +    // id, lane, name. Pairs are *_B / *_E (begin / end).
 +#define PS2TL_EVENTS(X)                                                                                              \
 +    X(VBLANK, LaneEE)            /* a=vsync tick, b=guest vblank rate flag */                                        \
-+    X(SLEEP_B, LaneEE)           /* a=0 pacing sleep in processDueDeadlines, 1 idle wait */                          \
-+    X(SLEEP_E, LaneEE)                                                                                               \
++    X(SLEEP_B, LaneEE)           /* a=0 pacing/1 idle; b=remaining us, bit31 precise; c=EE cycle */                  \
++    X(SLEEP_E, LaneEE)           /* b=cause 0 deadline/1 event/2 stop/3 reschedule/4 error, bit31 precise; */         \
++                                 /* c=signed wake-minus-deadline us, or 0 without a deadline */                       \
 +    X(BARRIER_B, LaneEE)         /* a=Vif1BarrierReason; only logged when the worker was busy */                     \
 +    X(BARRIER_E, LaneEE)                                                                                             \
 +    X(APPLY_B, LaneEE)           /* applyCompletions: a=1 scheduler event, 2 barrier, 3 register poll */             \
@@ -5133,6 +5171,16 @@ index 0000000..7251c41
 +    X(GS_VSYNC_B, LaneGS)        /* GSvsync (render + present of one frame) */                                       \
 +    X(GS_VSYNC_E, LaneGS)                                                                                            \
 +    X(GS_QUEUED, LaneWorker)     /* frames queued in kzgs after this vsync was pushed */                            \
++    X(GS_UPLOAD_DRAW, LaneGS)     /* a = accumulated GIF upload/draw CPU time for the frame (us) */                  \
++    X(GPU_FRAME, LaneGS)          /* a = whole-frame GPU execution time (us) */                                      \
++    X(GS_MERGE_B, LaneGS)                                                                                            \
++    X(GS_MERGE_E, LaneGS)                                                                                            \
++    X(GS_UPSCALE_B, LaneGS)                                                                                          \
++    X(GS_UPSCALE_E, LaneGS)                                                                                          \
++    X(GS_SHARPEN_B, LaneGS)                                                                                          \
++    X(GS_SHARPEN_E, LaneGS)                                                                                          \
++    X(GS_PRESENT_B, LaneGS)                                                                                          \
++    X(GS_PRESENT_E, LaneGS)                                                                                          \
 +    X(IOP_B, LaneOther)                                                                                              \
 +    X(IOP_E, LaneOther)
 +
@@ -5262,16 +5310,74 @@ index 0000000..7251c41
 +        ~Span() { rec(e, a); }
 +    };
 +} // namespace ps2tl
+diff --git a/ps2xRuntime/src/lib/Kernel/EeHostWait.h b/ps2xRuntime/src/lib/Kernel/EeHostWait.h
+new file mode 100644
+index 0000000..00c7510
+--- /dev/null
++++ b/ps2xRuntime/src/lib/Kernel/EeHostWait.h
+@@ -0,0 +1,51 @@
++#pragma once
++
++#include <atomic>
++#include <chrono>
++#include <condition_variable>
++#include <cstdint>
++#include <mutex>
++#include <optional>
++
++enum class EeHostWaitResult : uint8_t
++{
++    Deadline,
++    Notified,
++    Failed,
++};
++
++struct EeHostWaitOutcome
++{
++    EeHostWaitResult result = EeHostWaitResult::Failed;
++    bool precise = false;
++};
++
++class EeHostWait
++{
++public:
++    explicit EeHostWait(bool preciseRequested);
++    ~EeHostWait();
++
++    EeHostWait(const EeHostWait &) = delete;
++    EeHostWait &operator=(const EeHostWait &) = delete;
++
++    [[nodiscard]] bool precise() const noexcept;
++    void notify() noexcept;
++    EeHostWaitOutcome wait(std::unique_lock<std::mutex> &lock,
++                           std::condition_variable &fallback,
++                           std::optional<std::chrono::steady_clock::time_point> deadline,
++                           const std::atomic<uint64_t> &notificationGeneration,
++                           uint64_t expectedGeneration);
++
++private:
++    EeHostWaitOutcome waitFallback(std::unique_lock<std::mutex> &lock,
++                                   std::condition_variable &fallback,
++                                   std::optional<std::chrono::steady_clock::time_point> deadline,
++                                   const std::atomic<uint64_t> &notificationGeneration,
++                                   uint64_t expectedGeneration);
++    void failPreciseWait(const char *operation, unsigned long error) noexcept;
++
++    void *m_wakeEvent = nullptr;
++    void *m_timer = nullptr;
++    std::atomic<bool> m_preciseFailed{false};
++};
 diff --git a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
-index c5e31c4..72017a4 100644
+index c5e31c4..4fd68d4 100644
 --- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
 +++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
-@@ -1,13 +1,240 @@
+@@ -1,13 +1,435 @@
 +#include "runtime/ps2_host_gs.h"
 +#include "runtime/ps2_timeline.h"
 +#include <atomic>
 +#include <cstdlib>
  #include "runtime/ee_scheduler.h"
++#include "EeHostWait.h"
  
  #include "ps2_log.h"
 +#include "../ps2_iop_post.h"
@@ -5291,13 +5397,207 @@ index c5e31c4..72017a4 100644
  #include <stdexcept>
 +#include <cstdio>
 +
++#ifdef _WIN32
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#if !defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0A00
++#undef _WIN32_WINNT
++#define _WIN32_WINNT 0x0A00
++#endif
++#include <windows.h>
++
++#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
++#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
++#endif
++#endif
++
 +extern bool g_ps2GuestUnwinding; // ps2_runtime.cpp
++
++EeHostWait::EeHostWait(bool preciseRequested)
++{
++    if (!preciseRequested)
++        return;
++#ifdef _WIN32
++    HANDLE wakeEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
++    if (!wakeEvent)
++    {
++        std::fprintf(stderr, "[ps2x] precise scheduler wait event creation failed with Windows error %lu; "
++                             "using condition-variable waits\n",
++                     GetLastError());
++        return;
++    }
++    HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
++                                          TIMER_MODIFY_STATE | SYNCHRONIZE);
++    if (!timer)
++    {
++        const DWORD error = GetLastError();
++        CloseHandle(wakeEvent);
++        std::fprintf(stderr, "[ps2x] high-resolution scheduler timer creation failed with Windows error %lu; "
++                             "using condition-variable waits\n",
++                     error);
++        return;
++    }
++    m_wakeEvent = wakeEvent;
++    m_timer = timer;
++#else
++    std::fprintf(stderr, "[ps2x] precise scheduler waits are unavailable on this host; "
++                         "using condition-variable waits\n");
++#endif
++}
++
++EeHostWait::~EeHostWait()
++{
++#ifdef _WIN32
++    if (m_timer)
++        CloseHandle(static_cast<HANDLE>(m_timer));
++    if (m_wakeEvent)
++        CloseHandle(static_cast<HANDLE>(m_wakeEvent));
++#endif
++}
++
++bool EeHostWait::precise() const noexcept
++{
++    return m_wakeEvent && m_timer && !m_preciseFailed.load(std::memory_order_acquire);
++}
++
++void EeHostWait::notify() noexcept
++{
++#ifdef _WIN32
++    if (m_wakeEvent && !SetEvent(static_cast<HANDLE>(m_wakeEvent)))
++        failPreciseWait("SetEvent", GetLastError());
++#endif
++}
++
++EeHostWaitOutcome EeHostWait::wait(std::unique_lock<std::mutex> &lock,
++                                   std::condition_variable &fallback,
++                                   std::optional<std::chrono::steady_clock::time_point> deadline,
++                                   const std::atomic<uint64_t> &notificationGeneration,
++                                   uint64_t expectedGeneration)
++{
++    if (!precise())
++        return waitFallback(lock, fallback, deadline, notificationGeneration, expectedGeneration);
++
++#ifdef _WIN32
++    if (notificationGeneration.load(std::memory_order_acquire) != expectedGeneration)
++        return {EeHostWaitResult::Notified, true};
++
++    HANDLE timer = static_cast<HANDLE>(m_timer);
++    if (deadline)
++    {
++        const auto remaining = *deadline - std::chrono::steady_clock::now();
++        if (remaining <= std::chrono::steady_clock::duration::zero())
++            return {EeHostWaitResult::Deadline, true};
++
++        const int64_t nanoseconds =
++            std::chrono::duration_cast<std::chrono::nanoseconds>(remaining).count();
++        LARGE_INTEGER due{};
++        due.QuadPart = -static_cast<LONGLONG>(std::max<int64_t>(1, (nanoseconds + 99) / 100));
++        if (!SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE))
++        {
++            failPreciseWait("SetWaitableTimer", GetLastError());
++            return {EeHostWaitResult::Failed, true};
++        }
++    }
++    else
++    {
++        CancelWaitableTimer(timer);
++    }
++
++    lock.unlock();
++    DWORD result = WAIT_FAILED;
++    if (deadline)
++    {
++        const HANDLE handles[] = {static_cast<HANDLE>(m_wakeEvent), timer};
++        result = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
++    }
++    else
++    {
++        result = WaitForSingleObject(static_cast<HANDLE>(m_wakeEvent), INFINITE);
++    }
++    const DWORD error = result == WAIT_FAILED ? GetLastError() : ERROR_SUCCESS;
++    lock.lock();
++
++    if (result == WAIT_OBJECT_0)
++        return {EeHostWaitResult::Notified, true};
++    if (deadline && result == WAIT_OBJECT_0 + 1)
++        return {EeHostWaitResult::Deadline, true};
++
++    failPreciseWait(deadline ? "WaitForMultipleObjects" : "WaitForSingleObject", error);
++    return {EeHostWaitResult::Failed, true};
++#else
++    return waitFallback(lock, fallback, deadline, notificationGeneration, expectedGeneration);
++#endif
++}
++
++EeHostWaitOutcome EeHostWait::waitFallback(std::unique_lock<std::mutex> &lock,
++                                           std::condition_variable &fallback,
++                                           std::optional<std::chrono::steady_clock::time_point> deadline,
++                                           const std::atomic<uint64_t> &notificationGeneration,
++                                           uint64_t expectedGeneration)
++{
++    const auto notified = [&]()
++    {
++        return notificationGeneration.load(std::memory_order_acquire) != expectedGeneration;
++    };
++    if (!deadline)
++    {
++        fallback.wait(lock, notified);
++        return {EeHostWaitResult::Notified, false};
++    }
++    return fallback.wait_until(lock, *deadline, notified)
++               ? EeHostWaitOutcome{EeHostWaitResult::Notified, false}
++               : EeHostWaitOutcome{EeHostWaitResult::Deadline, false};
++}
++
++void EeHostWait::failPreciseWait(const char *operation, unsigned long error) noexcept
++{
++    if (!m_preciseFailed.exchange(true, std::memory_order_acq_rel))
++    {
++        std::fprintf(stderr, "[ps2x] precise scheduler wait %s failed with Windows error %lu; "
++                             "using condition-variable waits\n",
++                     operation, error);
++    }
++}
 +
 +namespace
 +{
 +    // Number of events in m_events, readable without the lock: processPendingEvents runs on nearly every scheduler
 +    // iteration and used to lock twice, allocate a deque and read the host clock even with nothing to do.
 +    std::atomic<uint32_t> g_queuedEvents{0};
++
++    constexpr uint32_t kWaitDeadline = 0;
++    constexpr uint32_t kWaitEvent = 1;
++    constexpr uint32_t kWaitStop = 2;
++    constexpr uint32_t kWaitReschedule = 3;
++    constexpr uint32_t kWaitError = 4;
++    constexpr uint32_t kWaitPreciseFlag = 0x80000000u;
++    constexpr uint32_t kWaitValueMask = ~kWaitPreciseFlag;
++
++    uint32_t waitDurationMicros(std::chrono::steady_clock::duration duration)
++    {
++        if (duration <= std::chrono::steady_clock::duration::zero())
++            return 0;
++        const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
++        return static_cast<uint32_t>(std::clamp<int64_t>(std::max<int64_t>(1, micros), 1, kWaitValueMask));
++    }
++
++    uint32_t signedWaitErrorMicros(std::chrono::steady_clock::duration duration)
++    {
++        const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
++        const auto clamped = std::clamp<int64_t>(micros, std::numeric_limits<int32_t>::min(),
++                                                 std::numeric_limits<int32_t>::max());
++        return static_cast<uint32_t>(static_cast<int32_t>(clamped));
++    }
++
++    bool preciseWaitRequested()
++    {
++        const char *value = std::getenv("PS2X_PRECISE_WAIT");
++        return value && value[0] != '\0' && value[0] != '0';
++    }
 +}
 +
 +namespace
@@ -5507,7 +5807,7 @@ index c5e31c4..72017a4 100644
  
  namespace
  {
-@@ -31,7 +258,11 @@ namespace
+@@ -31,7 +453,11 @@ namespace
      constexpr uint32_t WEF_OR = 0x01u;
      constexpr uint32_t WEF_CLEAR = 0x10u;
      constexpr uint32_t WEF_CLEAR_ALL = 0x20u;
@@ -5520,7 +5820,7 @@ index c5e31c4..72017a4 100644
      constexpr auto kVBlankDuration = std::chrono::microseconds(500);
      constexpr uint64_t kAlarmTickMicroseconds = 64u;
      constexpr uint32_t kDebugPublishDispatchInterval = 4096u;
-@@ -50,7 +281,10 @@ namespace
+@@ -50,7 +476,10 @@ namespace
          return std::chrono::seconds(wholeSeconds) + std::chrono::nanoseconds(remainingNanoseconds);
      }
  
@@ -5532,7 +5832,23 @@ index c5e31c4..72017a4 100644
      constexpr uint64_t kVBlankDurationCycles = microsecondsToEeCycles(500u);
      constexpr uint64_t kAlarmTickCycles = microsecondsToEeCycles(kAlarmTickMicroseconds);
  
-@@ -88,6 +322,7 @@ void EeScheduler::reset(uint8_t *rdram, const R5900Context &mainContext)
+@@ -73,8 +502,14 @@ namespace
+ }
+ 
+ EeScheduler::EeScheduler(PS2Runtime &runtime)
+-    : m_runtime(runtime)
++    : m_runtime(runtime),
++      m_hostWait(std::make_unique<EeHostWait>(preciseWaitRequested()))
+ {
++    if (preciseWaitRequested())
++    {
++        std::fprintf(stderr, "[ps2x] precise scheduler waits %s\n",
++                     m_hostWait->precise() ? "enabled" : "requested but unavailable");
++    }
+ }
+ 
+ EeScheduler::~EeScheduler()
+@@ -88,6 +523,7 @@ void EeScheduler::reset(uint8_t *rdram, const R5900Context &mainContext)
      m_rdram = rdram;
      m_readyQueues = {};
      m_threads.clear();
@@ -5540,7 +5856,7 @@ index c5e31c4..72017a4 100644
      m_semaphores.clear();
      m_eventFlags.clear();
      m_alarms.clear();
-@@ -119,6 +354,7 @@ void EeScheduler::reset(uint8_t *rdram, const R5900Context &mainContext)
+@@ -119,6 +555,7 @@ void EeScheduler::reset(uint8_t *rdram, const R5900Context &mainContext)
      {
          std::lock_guard lock(m_eventMutex);
          m_events.clear();
@@ -5548,7 +5864,7 @@ index c5e31c4..72017a4 100644
          m_deadlines.clear();
          m_pendingInvocations.clear();
      }
-@@ -146,8 +382,8 @@ void EeScheduler::reset(uint8_t *rdram, const R5900Context &mainContext)
+@@ -146,8 +583,8 @@ void EeScheduler::reset(uint8_t *rdram, const R5900Context &mainContext)
      main.status = EeThreadStatus::Ready;
      m_threads.emplace(main.id, std::move(main));
      m_readyQueues[0].push_back(kMainThreadId);
@@ -5559,7 +5875,7 @@ index c5e31c4..72017a4 100644
                    EeEvent{EeEventType::VBlankStart, 0, 0});
      publishSnapshot();
  }
-@@ -157,9 +393,33 @@ void EeScheduler::run()
+@@ -157,9 +594,33 @@ void EeScheduler::run()
      assertExecutor();
      m_running.store(true, std::memory_order_release);
  
@@ -5594,7 +5910,7 @@ index c5e31c4..72017a4 100644
          if (m_stopRequested.load(std::memory_order_acquire))
          {
              break;
-@@ -173,7 +433,9 @@ void EeScheduler::run()
+@@ -173,7 +634,9 @@ void EeScheduler::run()
                  copyMainContextToRuntime();
                  publishIdleDebugContext();
                  publishSnapshot();
@@ -5604,7 +5920,7 @@ index c5e31c4..72017a4 100644
                  continue;
              }
              if (next)
-@@ -192,6 +454,7 @@ void EeScheduler::run()
+@@ -192,6 +655,7 @@ void EeScheduler::run()
                  {
                      SET_GPR_U32(&invocation.context, 29, invocationStackTop());
                  }
@@ -5612,7 +5928,7 @@ index c5e31c4..72017a4 100644
                  owner->invocations.push_back(std::move(invocation));
              }
          }
-@@ -204,6 +467,7 @@ void EeScheduler::run()
+@@ -204,6 +668,7 @@ void EeScheduler::run()
              running->resumeCompletion = {};
              try
              {
@@ -5620,7 +5936,7 @@ index c5e31c4..72017a4 100644
                  completion(running->activeContext());
              }
              catch (const EeDispatcherTransfer &)
-@@ -226,7 +490,10 @@ void EeScheduler::run()
+@@ -226,7 +691,10 @@ void EeScheduler::run()
              --m_debugPublishCountdown;
          }
  
@@ -5632,7 +5948,7 @@ index c5e31c4..72017a4 100644
  
          if (context.pc == 0u)
          {
-@@ -234,6 +501,8 @@ void EeScheduler::run()
+@@ -234,6 +702,8 @@ void EeScheduler::run()
              {
                  GuestInvocation completed = std::move(running->invocations.back());
                  running->invocations.pop_back();
@@ -5641,7 +5957,7 @@ index c5e31c4..72017a4 100644
                  if (completed.onComplete)
                  {
                      try
-@@ -254,7 +523,11 @@ void EeScheduler::run()
+@@ -254,7 +724,11 @@ void EeScheduler::run()
              continue;
          }
  
@@ -5654,7 +5970,7 @@ index c5e31c4..72017a4 100644
          {
              GuestInvocation invocation = std::move(m_pendingInvocations.front());
              m_pendingInvocations.pop_front();
-@@ -262,11 +535,21 @@ void EeScheduler::run()
+@@ -262,11 +736,21 @@ void EeScheduler::run()
              {
                  SET_GPR_U32(&invocation.context, 29, invocationStackTop());
              }
@@ -5677,7 +5993,7 @@ index c5e31c4..72017a4 100644
          {
              if (!running->invocations.empty())
              {
-@@ -274,6 +557,7 @@ void EeScheduler::run()
+@@ -274,6 +758,7 @@ void EeScheduler::run()
              }
              else
              {
@@ -5685,7 +6001,7 @@ index c5e31c4..72017a4 100644
                  m_runtime.reportMissingFunction(m_rdram,
                                                  &context,
                                                  context.pc,
-@@ -285,23 +569,98 @@ void EeScheduler::run()
+@@ -285,23 +770,98 @@ void EeScheduler::run()
              }
              continue;
          }
@@ -5786,7 +6102,7 @@ index c5e31c4..72017a4 100644
              m_guestExecuting.store(false, std::memory_order_release);
              m_insideInterrupt = false;
          }
-@@ -313,7 +672,8 @@ void EeScheduler::run()
+@@ -313,7 +873,8 @@ void EeScheduler::run()
              throw;
          }
  
@@ -5796,15 +6112,25 @@ index c5e31c4..72017a4 100644
          if (m_rescheduleRequested && m_currentThreadId != 0)
          {
              GuestThread *preempted = currentThread();
-@@ -349,6 +709,7 @@ void EeScheduler::postEvent(EeEvent event)
+@@ -335,7 +896,7 @@ void EeScheduler::requestStop()
+ {
+     m_stopRequested.store(true, std::memory_order_release);
+     m_checkpointPending.store(true, std::memory_order_release);
+-    m_eventCv.notify_all();
++    notifyEventWaiter(true);
+ }
+ 
+ void EeScheduler::postEvent(EeEvent event)
+@@ -349,18 +910,35 @@ void EeScheduler::postEvent(EeEvent event)
      {
          std::lock_guard lock(m_eventMutex);
          m_events.push_back(event);
 +        g_queuedEvents.fetch_add(1u, std::memory_order_release);
          m_checkpointPending.store(true, std::memory_order_release);
      }
-     m_eventCv.notify_one();
-@@ -356,11 +717,27 @@ void EeScheduler::postEvent(EeEvent event)
+-    m_eventCv.notify_one();
++    notifyEventWaiter();
+ }
  
  bool EeScheduler::checkpointDue(uint32_t cycles) noexcept
  {
@@ -5832,7 +6158,7 @@ index c5e31c4..72017a4 100644
          return true;
      }
  
-@@ -368,6 +745,7 @@ bool EeScheduler::checkpointDue(uint32_t cycles) noexcept
+@@ -368,6 +946,7 @@ bool EeScheduler::checkpointDue(uint32_t cycles) noexcept
      if (nextEventCycle != 0u && m_eeCycle >= nextEventCycle)
      {
          m_checkpointPending.store(true, std::memory_order_release);
@@ -5840,7 +6166,7 @@ index c5e31c4..72017a4 100644
          return true;
      }
  
-@@ -381,6 +759,7 @@ bool EeScheduler::checkpointDue(uint32_t cycles) noexcept
+@@ -381,6 +960,7 @@ bool EeScheduler::checkpointDue(uint32_t cycles) noexcept
      {
          m_rescheduleRequested = true;
          m_timeSliceExpired = true;
@@ -5848,7 +6174,7 @@ index c5e31c4..72017a4 100644
          return true;
      }
  
-@@ -388,12 +767,70 @@ bool EeScheduler::checkpointDue(uint32_t cycles) noexcept
+@@ -388,12 +968,70 @@ bool EeScheduler::checkpointDue(uint32_t cycles) noexcept
      return false;
  }
  
@@ -5921,7 +6247,7 @@ index c5e31c4..72017a4 100644
      if (m_pendingEeTimerInterrupts != 0u)
      {
          m_checkpointPending.store(true, std::memory_order_release);
-@@ -472,6 +909,7 @@ int EeScheduler::deleteThread(int id, uint32_t &ownedStack)
+@@ -472,6 +1110,7 @@ int EeScheduler::deleteThread(int id, uint32_t &ownedStack)
          ownedStack = it->second.stack;
      }
      m_threads.erase(it);
@@ -5929,7 +6255,7 @@ index c5e31c4..72017a4 100644
      publishSnapshot();
      return KE_OK;
  }
-@@ -520,6 +958,7 @@ int EeScheduler::startThread(int id, uint32_t arg, const R5900Context &caller, b
+@@ -520,6 +1159,7 @@ int EeScheduler::startThread(int id, uint32_t arg, const R5900Context &caller, b
      if (deleteThreadRecord && id != kMainThreadId)
      {
          m_threads.erase(id);
@@ -5937,7 +6263,7 @@ index c5e31c4..72017a4 100644
      }
      if (ownedStack != 0u)
      {
-@@ -1271,6 +1710,8 @@ void EeScheduler::dispatchIrq(bool dmac, uint32_t cause)
+@@ -1271,6 +1911,8 @@ void EeScheduler::dispatchIrq(bool dmac, uint32_t cause)
              matching.push_back(handler);
          }
      }
@@ -5946,7 +6272,7 @@ index c5e31c4..72017a4 100644
      std::sort(matching.begin(), matching.end(), [](const EeIrqHandler &left, const EeIrqHandler &right)
                { return left.order < right.order; });
      for (const EeIrqHandler &handler : matching)
-@@ -1430,7 +1871,13 @@ const EeEventFlag *EeScheduler::eventFlag(int id) const
+@@ -1430,7 +2072,13 @@ const EeEventFlag *EeScheduler::eventFlag(int id) const
  
  GuestThread *EeScheduler::currentThread()
  {
@@ -5961,7 +6287,7 @@ index c5e31c4..72017a4 100644
  }
  
  const GuestThread *EeScheduler::currentThread() const
-@@ -1743,6 +2190,7 @@ void EeScheduler::applyPendingPreemption()
+@@ -1743,6 +2391,7 @@ void EeScheduler::applyPendingPreemption()
  void EeScheduler::processPendingEvents()
  {
      assertExecutor();
@@ -5969,7 +6295,7 @@ index c5e31c4..72017a4 100644
      processDueDeadlines();
      const uint32_t timerInterrupts = m_pendingEeTimerInterrupts;
      m_pendingEeTimerInterrupts = 0u;
-@@ -1750,31 +2198,46 @@ void EeScheduler::processPendingEvents()
+@@ -1750,31 +2399,46 @@ void EeScheduler::processPendingEvents()
      {
          if ((timerInterrupts & (1u << timer)) != 0u)
          {
@@ -5978,13 +6304,13 @@ index c5e31c4..72017a4 100644
          }
      }
 -    std::deque<EeEvent> pending;
-+    if (g_queuedEvents.load(std::memory_order_acquire) != 0u)
-     {
+-    {
 -        std::lock_guard lock(m_eventMutex);
 -        pending.swap(m_events);
 -    }
 -    for (const EeEvent &event : pending)
--    {
++    if (g_queuedEvents.load(std::memory_order_acquire) != 0u)
+     {
 -        processEvent(event);
 +        std::deque<EeEvent> pending;
 +        {
@@ -6025,16 +6351,15 @@ index c5e31c4..72017a4 100644
      for (;;)
      {
          std::vector<ScheduledEvent> due;
-@@ -1800,9 +2263,19 @@ void EeScheduler::processDueDeadlines()
+@@ -1800,14 +2464,22 @@ void EeScheduler::processDueDeadlines()
  
              if (now < pacingDeadline)
              {
+-                m_eventCv.wait_until(lock, pacingDeadline, [this]()
+-                                     { return !m_events.empty() ||
+-                                              m_stopRequested.load(std::memory_order_acquire); });
 +                const uint64_t statSleep0 = g_schedStats.on ? __rdtsc() : 0u;
-+                ps2tl::rec(ps2tl::SLEEP_B, 0u, 0u, static_cast<uint32_t>(m_eeCycle));
-                 m_eventCv.wait_until(lock, pacingDeadline, [this]()
-                                      { return !m_events.empty() ||
-                                               m_stopRequested.load(std::memory_order_acquire); });
-+                ps2tl::rec(ps2tl::SLEEP_E, 0u, m_events.empty() ? 0u : 1u, static_cast<uint32_t>(m_eeCycle)); // b=1: woken by a posted event
++                const uint32_t wakeCause = waitForHost(lock, pacingDeadline, 0u);
 +                if (g_schedStats.on)
 +                {
 +                    g_schedStats.pacingSleepTsc += __rdtsc() - statSleep0;
@@ -6045,7 +6370,14 @@ index c5e31c4..72017a4 100644
                  if (!m_events.empty() || m_stopRequested.load(std::memory_order_acquire))
                  {
                      updateNextDeadline();
-@@ -1850,8 +2323,8 @@ void EeScheduler::processDueDeadlines()
+                     return;
+                 }
++                if (wakeCause != kWaitDeadline)
++                    continue;
+             }
+ 
+             const auto pacedNow = std::chrono::steady_clock::now();
+@@ -1850,8 +2522,8 @@ void EeScheduler::processDueDeadlines()
                  scheduleEvent(scheduled.deadlineCycle + kVBlankDurationCycles,
                                scheduled.hostDeadline + kVBlankDuration,
                                EeEvent{EeEventType::VBlankEnd, 0, m_vsyncTick + 1u});
@@ -6056,7 +6388,7 @@ index c5e31c4..72017a4 100644
                                EeEvent{EeEventType::VBlankStart, 0, 0});
              }
              processEvent(scheduled.event);
-@@ -1861,6 +2334,7 @@ void EeScheduler::processDueDeadlines()
+@@ -1861,6 +2533,7 @@ void EeScheduler::processDueDeadlines()
  
  void EeScheduler::processEvent(const EeEvent &event)
  {
@@ -6064,7 +6396,7 @@ index c5e31c4..72017a4 100644
      switch (event.type)
      {
      case EeEventType::Stop:
-@@ -1868,6 +2342,7 @@ void EeScheduler::processEvent(const EeEvent &event)
+@@ -1868,6 +2541,7 @@ void EeScheduler::processEvent(const EeEvent &event)
          break;
      case EeEventType::VBlankStart:
          ++m_vsyncTick;
@@ -6072,7 +6404,7 @@ index c5e31c4..72017a4 100644
          m_runtime.memory().gs().vsyncTick.store(m_vsyncTick, std::memory_order_release);
          if ((m_vsyncTick & 1u) != 0u)
          {
-@@ -1888,6 +2363,18 @@ void EeScheduler::processEvent(const EeEvent &event)
+@@ -1888,6 +2562,18 @@ void EeScheduler::processEvent(const EeEvent &event)
          }
          m_vsyncFlagAddress = 0u;
          m_vsyncTickAddress = 0u;
@@ -6091,7 +6423,7 @@ index c5e31c4..72017a4 100644
          completeVSync(m_vsyncTick);
          if (m_gsVSyncCallback != 0u && m_runtime.hasFunction(m_gsVSyncCallback))
          {
-@@ -1909,6 +2396,11 @@ void EeScheduler::processEvent(const EeEvent &event)
+@@ -1909,6 +2595,11 @@ void EeScheduler::processEvent(const EeEvent &event)
          dispatchIrq(false, 3u);
          break;
      case EeEventType::Dmac:
@@ -6103,19 +6435,160 @@ index c5e31c4..72017a4 100644
          break;
      case EeEventType::Alarm:
      {
-@@ -2036,9 +2528,11 @@ void EeScheduler::waitForEvent()
-         }
-     }
+@@ -1994,63 +2685,106 @@ void EeScheduler::writeGuestU32(uint32_t address, uint32_t value)
+     std::memcpy(m_rdram + physical, &value, sizeof(value));
+ }
  
-+    ps2tl::rec(ps2tl::SLEEP_B, 1u, 0u, static_cast<uint32_t>(m_eeCycle));
-     const bool signaled = m_eventCv.wait_until(lock, hostDeadline, [this]()
-                                                { return !m_events.empty() ||
-                                                         m_stopRequested.load(std::memory_order_acquire); });
-+    ps2tl::rec(ps2tl::SLEEP_E, 1u, signaled ? 1u : 0u, static_cast<uint32_t>(m_eeCycle));
-     if (!signaled)
++uint32_t EeScheduler::waitForHost(std::unique_lock<std::mutex> &lock,
++                                  std::optional<std::chrono::steady_clock::time_point> deadline,
++                                  uint32_t kind)
++{
++    const uint64_t expectedGeneration = m_waitNotificationGeneration.load(std::memory_order_acquire);
++    if (m_stopRequested.load(std::memory_order_acquire))
++        return kWaitStop;
++    if (!m_events.empty())
++        return kWaitEvent;
++
++    const auto begin = std::chrono::steady_clock::now();
++    uint32_t requestedMicros = deadline ? waitDurationMicros(*deadline - begin) : 0u;
++    if (m_hostWait->precise())
++        requestedMicros |= kWaitPreciseFlag;
++    ps2tl::rec(ps2tl::SLEEP_B, kind, requestedMicros, static_cast<uint32_t>(m_eeCycle));
++
++    const EeHostWaitOutcome outcome =
++        m_hostWait->wait(lock, m_eventCv, deadline, m_waitNotificationGeneration, expectedGeneration);
++    const auto woke = std::chrono::steady_clock::now();
++
++    uint32_t cause = kWaitReschedule;
++    if (m_stopRequested.load(std::memory_order_acquire))
++        cause = kWaitStop;
++    else if (!m_events.empty())
++        cause = kWaitEvent;
++    else if (outcome.result == EeHostWaitResult::Deadline)
++        cause = kWaitDeadline;
++    else if (outcome.result == EeHostWaitResult::Failed)
++        cause = kWaitError;
++
++    uint32_t encodedCause = cause;
++    if (outcome.precise)
++        encodedCause |= kWaitPreciseFlag;
++    const uint32_t wakeError = deadline ? signedWaitErrorMicros(woke - *deadline) : 0u;
++    ps2tl::rec(ps2tl::SLEEP_E, kind, encodedCause, wakeError);
++    return cause;
++}
++
++void EeScheduler::notifyEventWaiter(bool all)
++{
++    m_waitNotificationGeneration.fetch_add(1u, std::memory_order_release);
++    m_hostWait->notify();
++    if (all)
++        m_eventCv.notify_all();
++    else
++        m_eventCv.notify_one();
++}
++
+ void EeScheduler::waitForEvent()
+ {
+-    std::unique_lock lock(m_eventMutex);
+-    if (!m_events.empty() || m_stopRequested.load(std::memory_order_acquire))
+-    {
+-        return;
+-    }
+     const uint64_t timerCycles = m_runtime.memory().cyclesUntilNextEeTimerInterrupt();
+-    const bool hasTimerDeadline = timerCycles != std::numeric_limits<uint64_t>::max();
+-    if (m_deadlines.empty() && !hasTimerDeadline)
+-    {
+-        m_eventCv.wait(lock, [this]()
+-                       { return !m_events.empty() || m_stopRequested.load(std::memory_order_acquire); });
+-        return;
+-    }
++    const std::optional<std::chrono::steady_clock::time_point> timerHostDeadline =
++        timerCycles == std::numeric_limits<uint64_t>::max()
++            ? std::nullopt
++            : std::optional{std::chrono::steady_clock::now() + eeCyclesToHostDuration(timerCycles)};
+ 
+-    uint64_t deadlineCycle = 0u;
+-    auto hostDeadline = std::chrono::steady_clock::time_point::max();
+-    if (!m_deadlines.empty())
++    for (;;)
      {
+-        const auto next = std::min_element(m_deadlines.begin(), m_deadlines.end(),
+-                                           [](const ScheduledEvent &left, const ScheduledEvent &right)
+-                                           {
+-                                               if (left.deadlineCycle != right.deadlineCycle)
++        std::unique_lock lock(m_eventMutex);
++        if (!m_events.empty() || m_stopRequested.load(std::memory_order_acquire))
++            return;
++
++        uint64_t deadlineCycle = 0u;
++        std::optional<std::chrono::steady_clock::time_point> hostDeadline;
++        if (!m_deadlines.empty())
++        {
++            const auto next = std::min_element(m_deadlines.begin(), m_deadlines.end(),
++                                               [](const ScheduledEvent &left, const ScheduledEvent &right)
+                                                {
+-                                                   return left.deadlineCycle < right.deadlineCycle;
+-                                               }
+-                                               return left.sequence < right.sequence;
+-                                           });
+-        deadlineCycle = next->deadlineCycle;
+-        hostDeadline = next->hostDeadline;
+-    }
+-    if (hasTimerDeadline)
+-    {
+-        const auto timerHostDeadline = std::chrono::steady_clock::now() + eeCyclesToHostDuration(timerCycles);
+-        if (timerHostDeadline < hostDeadline)
++                                                   if (left.deadlineCycle != right.deadlineCycle)
++                                                       return left.deadlineCycle < right.deadlineCycle;
++                                                   return left.sequence < right.sequence;
++                                               });
++            deadlineCycle = next->deadlineCycle;
++            hostDeadline = next->hostDeadline;
++        }
++        if (timerHostDeadline && (!hostDeadline || *timerHostDeadline < *hostDeadline))
+         {
+             deadlineCycle = m_eeCycle + timerCycles;
+             hostDeadline = timerHostDeadline;
+         }
+-    }
+ 
+-    const bool signaled = m_eventCv.wait_until(lock, hostDeadline, [this]()
+-                                               { return !m_events.empty() ||
+-                                                        m_stopRequested.load(std::memory_order_acquire); });
+-    if (!signaled)
+-    {
++        const uint32_t wakeCause = waitForHost(lock, hostDeadline, 1u);
++        if (!m_events.empty() || m_stopRequested.load(std::memory_order_acquire))
++            return;
++        if (wakeCause != kWaitDeadline)
++            continue;
++
          const uint64_t elapsed = deadlineCycle > m_eeCycle ? deadlineCycle - m_eeCycle : 0u;
-@@ -2144,3 +2638,23 @@ void EeScheduler::publishIdleDebugContext()
+         lock.unlock();
+         uint64_t remaining = elapsed;
+         while (remaining > 0u)
+         {
+-            const uint32_t step = static_cast<uint32_t>(std::min<uint64_t>(remaining, std::numeric_limits<uint32_t>::max()));
++            const uint32_t step =
++                static_cast<uint32_t>(std::min<uint64_t>(remaining, std::numeric_limits<uint32_t>::max()));
+             accountCycles(step);
+             remaining -= step;
+         }
+         m_checkpointPending.store(true, std::memory_order_release);
++        return;
+     }
+ }
+ 
+@@ -2063,7 +2797,7 @@ void EeScheduler::scheduleEvent(uint64_t deadlineCycle,
+         m_deadlines.push_back(ScheduledEvent{deadlineCycle, hostDeadline, event, ++m_eventSequence});
+         updateNextDeadline();
+     }
+-    m_eventCv.notify_one();
++    notifyEventWaiter();
+ }
+ 
+ void EeScheduler::updateNextDeadline()
+@@ -2144,3 +2878,23 @@ void EeScheduler::publishIdleDebugContext()
          publishDebugContext(selected->activeContext());
      }
  }
@@ -13720,6 +14193,245 @@ index 4772f3f..52a9af5 100644
          tc.Run("sceSdRemote isolates voice transfers from block streaming state", [](TestCase &t)
          {
              std::vector<uint8_t> rdram(PS2_RAM_SIZE, 0u);
+diff --git a/ps2xTest/src/ps2_runtime_interrupt_tests.cpp b/ps2xTest/src/ps2_runtime_interrupt_tests.cpp
+index 4261bfa..5882abd 100644
+--- a/ps2xTest/src/ps2_runtime_interrupt_tests.cpp
++++ b/ps2xTest/src/ps2_runtime_interrupt_tests.cpp
+@@ -2,12 +2,18 @@
+ #include "ps2_runtime.h"
+ #include "ps2_syscalls.h"
+ #include "runtime/ee_scheduler.h"
++#include "Kernel/EeHostWait.h"
+ 
+ #include <atomic>
+ #include <chrono>
++#include <condition_variable>
+ #include <cstdint>
++#include <cstdlib>
+ #include <cstring>
+ #include <exception>
++#include <mutex>
++#include <optional>
++#include <string>
+ #include <string_view>
+ #include <thread>
+ #include <utility>
+@@ -37,6 +43,37 @@ namespace
+ 
+     static_assert(sizeof(Ps2EventFlagInfo) == 28u, "Unexpected Ps2EventFlagInfo layout.");
+ 
++    class ScopedEnvironmentVariable
++    {
++    public:
++        ScopedEnvironmentVariable(const char *name, const char *value) : m_name(name)
++        {
++            if (const char *oldValue = std::getenv(name))
++                m_oldValue = oldValue;
++#ifdef _WIN32
++            _putenv_s(name, value);
++#else
++            setenv(name, value, 1);
++#endif
++        }
++
++        ~ScopedEnvironmentVariable()
++        {
++#ifdef _WIN32
++            _putenv_s(m_name.c_str(), m_oldValue ? m_oldValue->c_str() : "");
++#else
++            if (m_oldValue)
++                setenv(m_name.c_str(), m_oldValue->c_str(), 1);
++            else
++                unsetenv(m_name.c_str());
++#endif
++        }
++
++    private:
++        std::string m_name;
++        std::optional<std::string> m_oldValue;
++    };
++
+     struct TestEnv
+     {
+         std::vector<uint8_t> rdram;
+@@ -379,6 +416,91 @@ void register_ps2_runtime_interrupt_tests()
+ {
+     MiniTest::Case("PS2RuntimeInterrupt", [](TestCase &tc)
+     {
++        tc.Run("host wait fallback preserves timeout and notification semantics", [](TestCase &t)
++        {
++            EeHostWait hostWait(false);
++            std::mutex mutex;
++            std::condition_variable cv;
++            std::atomic<uint64_t> generation{0};
++            std::unique_lock lock(mutex);
++
++            auto outcome = hostWait.wait(lock, cv, std::chrono::steady_clock::now() + std::chrono::milliseconds(2),
++                                         generation, generation.load(std::memory_order_acquire));
++            t.Equals(outcome.result, EeHostWaitResult::Deadline,
++                     "the fallback wait should report its deadline");
++            t.IsFalse(outcome.precise, "the fallback wait should report the condition-variable backend");
++
++            const uint64_t beforeGeneration = generation.load(std::memory_order_acquire);
++            generation.fetch_add(1u, std::memory_order_release);
++            outcome = hostWait.wait(lock, cv, std::chrono::steady_clock::now() + std::chrono::milliseconds(100),
++                                    generation, beforeGeneration);
++            t.Equals(outcome.result, EeHostWaitResult::Notified,
++                     "a notification published before fallback wait entry must not be lost");
++
++            const uint64_t duringGeneration = generation.load(std::memory_order_acquire);
++            std::thread notifier([&]()
++            {
++                std::this_thread::sleep_for(std::chrono::milliseconds(2));
++                generation.fetch_add(1u, std::memory_order_release);
++                cv.notify_one();
++            });
++            outcome = hostWait.wait(lock, cv, std::chrono::steady_clock::now() + std::chrono::milliseconds(250),
++                                    generation, duringGeneration);
++            lock.unlock();
++            notifier.join();
++            t.Equals(outcome.result, EeHostWaitResult::Notified,
++                     "a notification published during fallback wait must interrupt it");
++        });
++
++        tc.Run("precise host wait supports timeout notification and rearm", [](TestCase &t)
++        {
++            EeHostWait hostWait(true);
++#ifdef _WIN32
++            t.IsTrue(hostWait.precise(), "the Windows high-resolution timer and wake event should be available");
++#else
++            t.IsFalse(hostWait.precise(), "non-Windows hosts should use the condition-variable fallback");
++#endif
++            if (!hostWait.precise())
++                return;
++
++            std::mutex mutex;
++            std::condition_variable cv;
++            std::atomic<uint64_t> generation{0};
++            std::unique_lock lock(mutex);
++            for (int attempt = 0; attempt < 2; ++attempt)
++            {
++                const auto outcome =
++                    hostWait.wait(lock, cv, std::chrono::steady_clock::now() + std::chrono::milliseconds(2),
++                                  generation, generation.load(std::memory_order_acquire));
++                t.Equals(outcome.result, EeHostWaitResult::Deadline,
++                         "the precise timer should report each rearmed deadline");
++                t.IsTrue(outcome.precise, "the deadline should use the precise backend");
++            }
++
++            const uint64_t beforeGeneration = generation.load(std::memory_order_acquire);
++            generation.fetch_add(1u, std::memory_order_release);
++            auto outcome =
++                hostWait.wait(lock, cv, std::chrono::steady_clock::now() + std::chrono::milliseconds(100),
++                              generation, beforeGeneration);
++            t.Equals(outcome.result, EeHostWaitResult::Notified,
++                     "a notification published before precise wait entry must not be lost");
++
++            const uint64_t duringGeneration = generation.load(std::memory_order_acquire);
++            std::thread notifier([&]()
++            {
++                std::this_thread::sleep_for(std::chrono::milliseconds(2));
++                generation.fetch_add(1u, std::memory_order_release);
++                hostWait.notify();
++            });
++            outcome = hostWait.wait(lock, cv, std::chrono::steady_clock::now() + std::chrono::milliseconds(250),
++                                    generation, duringGeneration);
++            lock.unlock();
++            notifier.join();
++            t.Equals(outcome.result, EeHostWaitResult::Notified,
++                     "a notification published during precise wait must interrupt it");
++            t.IsTrue(outcome.precise, "the notification should use the precise backend");
++        });
++
+         tc.Run("negative interrupt-safe EE syscall ids dispatch", [](TestCase &t)
+         {
+             TestEnv env;
+@@ -706,46 +828,51 @@ void register_ps2_runtime_interrupt_tests()
+                      "the Timer2 handler should hand the semaphore directly to the waiter");
+         });
+ 
+-        tc.Run("scheduler stop wakes an idle VSync wait without a timeout", [](TestCase &t)
++        tc.Run("scheduler stop wakes fallback and precise idle waits", [](TestCase &t)
+         {
+-            TestEnv env;
+-            env.runtime.registerFunction(kIdleVSyncWaitPc, idleVSyncWait);
+-
+-            R5900Context mainContext{};
+-            mainContext.pc = kIdleVSyncWaitPc;
+-            std::atomic<bool> schedulerDone{false};
+-            std::atomic<bool> schedulerThrew{false};
+-            std::thread gameThread([&]()
++            for (const char *precise : {"0", "1"})
+             {
+-                try
++                ScopedEnvironmentVariable preciseWait("PS2X_PRECISE_WAIT", precise);
++                TestEnv env;
++                env.runtime.registerFunction(kIdleVSyncWaitPc, idleVSyncWait);
++
++                R5900Context mainContext{};
++                mainContext.pc = kIdleVSyncWaitPc;
++                std::atomic<bool> schedulerDone{false};
++                std::atomic<bool> schedulerThrew{false};
++                std::thread gameThread([&]()
+                 {
+-                    env.runtime.eeScheduler().reset(env.rdram.data(), mainContext);
+-                    env.runtime.eeScheduler().run();
+-                }
+-                catch (...)
+-                {
+-                    schedulerThrew.store(true, std::memory_order_release);
+-                }
+-                schedulerDone.store(true, std::memory_order_release);
+-            });
++                    try
++                    {
++                        env.runtime.eeScheduler().reset(env.rdram.data(), mainContext);
++                        env.runtime.eeScheduler().run();
++                    }
++                    catch (...)
++                    {
++                        schedulerThrew.store(true, std::memory_order_release);
++                    }
++                    schedulerDone.store(true, std::memory_order_release);
++                });
++
++                const bool becameIdle = waitUntil([&]() {
++                    const EeKernelSnapshot snapshot = env.runtime.eeScheduler().snapshot();
++                    return snapshot.runningThreadId == 0 &&
++                           !snapshot.threads.empty() &&
++                           snapshot.threads.front().waitReason == EeWaitReason::VSync;
++                }, std::chrono::milliseconds(80));
+ 
+-            const bool becameIdle = waitUntil([&]() {
+-                const EeKernelSnapshot snapshot = env.runtime.eeScheduler().snapshot();
+-                return snapshot.runningThreadId == 0 &&
+-                       !snapshot.threads.empty() &&
+-                       snapshot.threads.front().waitReason == EeWaitReason::VSync;
+-            }, std::chrono::milliseconds(80));
+-
+-            env.runtime.requestStop();
+-            gameThread.join();
++                env.runtime.requestStop();
++                gameThread.join();
+ 
+-            t.IsTrue(becameIdle, "VSync wait should leave the sole guest thread waiting");
+-            t.IsTrue(schedulerDone.load(std::memory_order_acquire),
+-                     "requestStop should wake the scheduler's event wait");
+-            t.IsFalse(schedulerThrew.load(std::memory_order_acquire),
+-                      "the scheduler stop path should not throw");
++                const std::string backend = precise[0] == '1' ? "precise" : "fallback";
++                t.IsTrue(becameIdle, backend + " VSync wait should leave the sole guest thread waiting");
++                t.IsTrue(schedulerDone.load(std::memory_order_acquire),
++                         "requestStop should wake the " + backend + " scheduler event wait");
++                t.IsFalse(schedulerThrew.load(std::memory_order_acquire),
++                          backend + " scheduler stop path should not throw");
+ 
+-            cleanupRuntime(env);
++                cleanupRuntime(env);
++            }
+         });
+     });
+ }
 diff --git a/ps2xTest/src/ps2_sif_rpc_tests.cpp b/ps2xTest/src/ps2_sif_rpc_tests.cpp
 index 7242e65..c99c049 100644
 --- a/ps2xTest/src/ps2_sif_rpc_tests.cpp

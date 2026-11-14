@@ -146,6 +146,27 @@ def distribution(values):
     }
 
 
+def render_samples(ev):
+    samples = {
+        'gpu_frame_ms': [a / 1000 for t, lane, name, a, b, c in ev if name == 'GPU_FRAME' and a > 0],
+        'upload_draw_cpu_ms': [
+            a / 1000 for t, lane, name, a, b, c in ev if name == 'GS_UPLOAD_DRAW'
+        ],
+    }
+    for label, begin, end in (
+        ('merge_cpu_ms', 'GS_MERGE_B', 'GS_MERGE_E'),
+        ('presentation_upscale_cpu_ms', 'GS_UPSCALE_B', 'GS_UPSCALE_E'),
+        ('sharpen_cpu_ms', 'GS_SHARPEN_B', 'GS_SHARPEN_E'),
+        ('final_presentation_cpu_ms', 'GS_PRESENT_B', 'GS_PRESENT_E'),
+    ):
+        samples[label] = [(finish - start) / 1000 for start, finish, a, b in spans(ev, begin, end)]
+    return samples
+
+
+def render_metrics(ev):
+    return {name: distribution(values) for name, values in render_samples(ev).items()}
+
+
 def scheduler_metrics(ev):
     vblank_times = [t for t, lane, name, a, b, c in ev if name == 'VBLANK']
     intervals_ms = [(right - left) / 1000 for left, right in zip(vblank_times, vblank_times[1:])]
@@ -163,6 +184,7 @@ def scheduler_metrics(ev):
             ),
         },
         'waits': {},
+        'renderer': render_metrics(ev),
     }
     labels = {0: 'pacing', 1: 'idle_timer'}
     for wait in waits:
@@ -347,6 +369,18 @@ def analyse(ev, region='us', vblank_hz=None):
     print('  GSvsync (render+present of one frame) ms:', stat([(e - s) / 1000 for s, e, a, b in gsv]))
     gi = sum(a for t, a in gidle_e) * 1000 / dur_us
     print('  idle: %.1f%% of the window => busy %.1f%% = %.2f ms per vblank (GS work is in the GIF transfers and draws, GSvsync itself is the present)' % (100 * gi, 100 * (1 - gi), (1 - gi) * dur_us / 1000 / len(vb)))
+    measured = render_samples(ev)
+    if any(measured.values()):
+        gpu = measured['gpu_frame_ms']
+        if gpu:
+            print('  total GPU frame ms:', stat(gpu), 'p95=%.2f p99=%.2f' % (pct(gpu, .95), pct(gpu, .99)))
+        else:
+            print('  total GPU frame ms: n=0 (GPU timing disabled or unsupported)')
+        for label in (
+            'upload_draw_cpu_ms', 'merge_cpu_ms', 'presentation_upscale_cpu_ms',
+            'sharpen_cpu_ms', 'final_presentation_cpu_ms',
+        ):
+            print('  %-35s %s' % (label.replace('_', ' ') + ':', stat(measured[label])))
 
     # ---- per frame ----
     def vcount(t0, t1):
@@ -450,12 +484,19 @@ def self_test():
     ])
     metric_events = sorted(exact_wait_events + [
         (0, 'EE', 'VBLANK', 1, 0, 0),
+        (1000, 'GS', 'GS_UPLOAD_DRAW', 3500, 0, 0),
+        (2000, 'GS', 'GS_MERGE_B', 0, 0, 0),
+        (2750, 'GS', 'GS_MERGE_E', 0, 0, 0),
+        (3000, 'GS', 'GPU_FRAME', 12500, 0, 0),
         (16667, 'EE', 'VBLANK', 2, 0, 0),
         (33334, 'EE', 'VBLANK', 3, 0, 0),
     ])
     metrics = scheduler_metrics(metric_events)
     assert metrics['exact_wait_telemetry'] and metrics['vblank']['interval_ms']['p95'] == 16.667
     assert metrics['waits']['pacing']['precise']['overshoot_ms']['p99'] == 0.5
+    assert metrics['renderer']['gpu_frame_ms']['p95'] == 12.5
+    assert metrics['renderer']['upload_draw_cpu_ms']['median'] == 3.5
+    assert metrics['renderer']['merge_cpu_ms']['max'] == 0.75
 
     addresses = REGION_HOOKS['eu']
     ev = []

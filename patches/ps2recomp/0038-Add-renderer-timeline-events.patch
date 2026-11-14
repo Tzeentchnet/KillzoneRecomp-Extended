@@ -1,0 +1,33 @@
+From 245098d60c500e1c7e5fa152f2343736f5758985 Mon Sep 17 00:00:00 2001
+From: Tzeentchnet <58480142+Tzeentchnet@users.noreply.github.com>
+Date: Fri, 13 Nov 2026 16:26:20 -0800
+Subject: [PATCH 38/38] Add renderer timeline events
+
+---
+ ps2xRuntime/include/runtime/ps2_timeline.h | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/ps2xRuntime/include/runtime/ps2_timeline.h b/ps2xRuntime/include/runtime/ps2_timeline.h
+index 00ee164..4f95404 100644
+--- a/ps2xRuntime/include/runtime/ps2_timeline.h
++++ b/ps2xRuntime/include/runtime/ps2_timeline.h
+@@ -51,6 +51,16 @@ namespace ps2tl
+     X(GS_VSYNC_B, LaneGS)        /* GSvsync (render + present of one frame) */                                       \
+     X(GS_VSYNC_E, LaneGS)                                                                                            \
+     X(GS_QUEUED, LaneWorker)     /* frames queued in kzgs after this vsync was pushed */                            \
++    X(GS_UPLOAD_DRAW, LaneGS)     /* a = accumulated GIF upload/draw CPU time for the frame (us) */                  \
++    X(GPU_FRAME, LaneGS)          /* a = whole-frame GPU execution time (us) */                                      \
++    X(GS_MERGE_B, LaneGS)                                                                                            \
++    X(GS_MERGE_E, LaneGS)                                                                                            \
++    X(GS_UPSCALE_B, LaneGS)                                                                                          \
++    X(GS_UPSCALE_E, LaneGS)                                                                                          \
++    X(GS_SHARPEN_B, LaneGS)                                                                                          \
++    X(GS_SHARPEN_E, LaneGS)                                                                                          \
++    X(GS_PRESENT_B, LaneGS)                                                                                          \
++    X(GS_PRESENT_E, LaneGS)                                                                                          \
+     X(IOP_B, LaneOther)                                                                                              \
+     X(IOP_E, LaneOther)
+ 
+-- 
+2.55.0.windows.5
+

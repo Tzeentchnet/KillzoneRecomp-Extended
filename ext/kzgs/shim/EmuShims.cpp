@@ -24,6 +24,11 @@
 #include "BuildVersion.h"
 #include "kz_host/core.h"
 
+namespace kzgs
+{
+	void ReportGpuPresent(float gpu_time);
+}
+
 // ---- EE globals that PCSX2 headers bind static references to (Dmac.h, R5900.h) ---------------------------------------
 alignas(__pagealignsize) u8 eeHw[Ps2MemSize::Hardware];
 alignas(16) cpuRegistersPack _cpuRegistersPack;
@@ -114,7 +119,10 @@ const std::vector<u32>& VMManager::Internal::GetSoftwareRendererProcessorList()
 
 // ---- PerformanceMetrics ---------------------------------------------------------------------------------------------
 void PerformanceMetrics::Update(bool gs_register_write, bool fb_blit, bool is_skipping_present) {}
-void PerformanceMetrics::OnGPUPresent(float gpu_time, u64 vs_invocations, u64 ps_invocations) {}
+void PerformanceMetrics::OnGPUPresent(float gpu_time, u64 vs_invocations, u64 ps_invocations)
+{
+	kzgs::ReportGpuPresent(gpu_time);
+}
 void PerformanceMetrics::SetGSSWThreadCount(u32 count) {}
 void PerformanceMetrics::SetGSSWThread(u32 index, Threading::ThreadHandle thread) {}
 PerformanceMetrics::InternalFPSMethod PerformanceMetrics::GetInternalFPSMethod() { return InternalFPSMethod::None; }

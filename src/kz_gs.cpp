@@ -952,8 +952,11 @@ namespace
     void onKzgsTrace(int id, uint32_t a)
     {
         using namespace ps2tl;
-        static const Id map[] = {Count, GS_IDLE_B, GS_IDLE_E, GS_VSYNC_B, GS_VSYNC_E, GS_THROTTLE_B, GS_THROTTLE_E, GS_RING_B, GS_RING_E, GS_QUEUED};
-        if (id >= 1 && id <= 9)
+        static const Id map[] = {
+            Count, GS_IDLE_B, GS_IDLE_E, GS_VSYNC_B, GS_VSYNC_E, GS_THROTTLE_B, GS_THROTTLE_E,
+            GS_RING_B, GS_RING_E, GS_QUEUED, GS_UPLOAD_DRAW, GPU_FRAME, GS_MERGE_B, GS_MERGE_E,
+            GS_UPSCALE_B, GS_UPSCALE_E, GS_SHARPEN_B, GS_SHARPEN_E, GS_PRESENT_B, GS_PRESENT_E};
+        if (id >= 1 && id < static_cast<int>(std::size(map)))
             rec(map[id], a);
     }
 
@@ -1175,6 +1178,8 @@ bool kzGsAttach(
     kzgsSetLogCallback(&onLog);
     if (const char *tl = std::getenv("KZ_TIMELINE"); tl && *tl) // the hook costs a clock read per GS idle wait: only when recording
         kzgsSetTraceHook(&onKzgsTrace);
+    const char *gpuTiming = std::getenv("KZ_GPU_TIMING");
+    kzgsSetGpuTimingEnabled(gpuTiming && *gpuTiming && *gpuTiming != '0');
     s.windowWidth = windowWidth;
     s.windowHeight = windowHeight;
     s.reportedResolution = {};

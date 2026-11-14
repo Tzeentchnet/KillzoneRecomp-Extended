@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-11",
+  "generated_at": "2026-11-13",
   "project": {
     "repository": "https://github.com/Tzeentchnet/KillzoneRecomp-Extended.git",
     "audited_baseline": "8dcb545d72ea3542023f4f5bcab00ef4240c05c7",
@@ -10,12 +10,12 @@
     "repository_path": "ext/PS2Recomp",
     "patch_directory": "patches/ps2recomp",
     "base_commit": "75d729ce40d7eed9649fd4bb05628dee520f3d0c",
-    "target_commit": "debadfe40ccb225623def3faacbe3185782190f3",
-    "target_tree": "2bdb505aca66ef64bdf1e7216d89fe8d4e117be4",
+    "target_commit": "245098d60c500e1c7e5fa152f2343736f5758985",
+    "target_tree": "ee1a3dfc7e02be2cbf9b27b7ef8d1a4451830492",
     "canonical_patch": {
       "path": "patches/ps2recomp/combined.lock.diff",
-      "changed_paths": 75,
-      "sha256": "fe0fb8312025f1ae017266431573cc8cb109c4fe1db7d931d9ae41f8f6a12b8c"
+      "changed_paths": 77,
+      "sha256": "8361f83aaf8746a681e3cedd2e0d5649c17830020cf50d818c00075e45edb59f"
     },
     "patches": [
       {
@@ -157,6 +157,14 @@
       {
         "path": "0036-iop-import-cache-validation.patch",
         "sha256": "c38b7c7135ba7945049c2a443a8721f5797b435cfd44859aafb76e21eb9ce341"
+      },
+      {
+        "path": "0037-Add-precise-interruptible-scheduler-waits.patch",
+        "sha256": "2971e033c6dfd9bb91f965b3bfd71fa69411cc60b0817dcf5a8c2354e1d7be41"
+      },
+      {
+        "path": "0038-Add-renderer-timeline-events.patch",
+        "sha256": "e4fe637fbfa0bb0e2641bf3f141cc51a0621544b1bf0cf0e6a298bf67eca77eb"
       }
     ]
   },
@@ -165,10 +173,11 @@
       "id": "ps2recomp",
       "kind": "git-submodule",
       "source_url": "https://github.com/Tzeentchnet/PS2Recomp.git",
-      "revision": "debadfe40ccb225623def3faacbe3185782190f3",
+      "revision": "245098d60c500e1c7e5fa152f2343736f5758985",
+      "publication_status": "unpublished",
       "license": "GPL-3.0-only",
       "redistribution": "Copyleft; distribute corresponding source and notices.",
-      "acquisition": "git submodule update --init --recursive",
+      "acquisition": "Remote publication is pending; use the local submodule checkout at the exact revision.",
       "local": {
         "path": "ext/PS2Recomp",
         "required_in_strict": true,
@@ -179,11 +188,11 @@
       "id": "pcsx2",
       "kind": "git-checkout",
       "source_url": "https://github.com/Tzeentchnet/pcsx2.git",
-      "revision": "1fb920189c12766af55bdc9178619c0c66eb1a5e",
-      "publication_status": "published",
+      "revision": "cd26d12eca00c52db03a1c65f57e726b458075d4",
+      "publication_status": "unpublished",
       "license": "GPL-3.0-or-later",
       "redistribution": "Copyleft; distribute corresponding source and notices.",
-      "acquisition": "Clone the exact revision from the Tzeentchnet/pcsx2 companion repository. Do not substitute upstream PCSX2.",
+      "acquisition": "Remote publication is pending; use the local companion checkout at the exact revision.",
       "local": {
         "path": "ext/pcsx2",
         "required_in_strict": true,

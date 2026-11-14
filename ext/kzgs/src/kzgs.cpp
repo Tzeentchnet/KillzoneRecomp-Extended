@@ -29,6 +29,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -154,11 +155,22 @@ namespace
 	static std::mutex s_upscaler_mutex;
 	static KzgsUpscalerStatus s_upscaler_status;
 	static KzgsTraceFn s_trace_fn = nullptr;
+	static std::atomic<bool> s_gpu_timing_enabled{false};
 	static s64 s_trace_idle_ns = 0; // GS thread only
+	static s64 s_trace_upload_draw_ns = 0; // GS thread only
 	static inline void Trace(int id, u32 a = 0)
 	{
 		if (KzgsTraceFn fn = s_trace_fn)
 			fn(id, a);
+	}
+	static u32 TraceMicroseconds(s64 nanoseconds)
+	{
+		return static_cast<u32>(std::clamp<s64>(
+			nanoseconds / 1000, 0, static_cast<s64>(std::numeric_limits<u32>::max())));
+	}
+	static void TraceRenderTiming(void*, GSRenderTimingStage stage, bool begin)
+	{
+		Trace(12 + static_cast<int>(stage) * 2 + (begin ? 0 : 1));
 	}
 
 	static bool ValidateUpscalerConfig(const KzgsConfigV1& cfg, std::string& error)
@@ -473,6 +485,7 @@ namespace
 		o.Adapter = cfg.useWarp ? std::string("Microsoft Basic Render Driver") : cfg.adapter;
 		o.DisableShaderCache = cfg.disableShaderCache;
 		o.UseDebugDevice = cfg.debugDevice;
+		o.OsdShowGPU = s_gpu_timing_enabled.load(std::memory_order_relaxed);
 
 		// Debug aid: KZGS_GS_OPTS="Name=0|1,..." flips PCSX2 GSOptions flags without a rebuild (used to bisect renderer bugs).
 		if (const char* dbg = std::getenv("KZGS_GS_OPTS"))
@@ -884,7 +897,17 @@ namespace
 					break;
 
 				case Cmd::Transfer:
-					DoTransfer(hdr.a, payload, hdr.b);
+					if (s_trace_fn)
+					{
+						const auto start = std::chrono::steady_clock::now();
+						DoTransfer(hdr.a, payload, hdr.b);
+						s_trace_upload_draw_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
+							std::chrono::steady_clock::now() - start).count();
+					}
+					else
+					{
+						DoTransfer(hdr.a, payload, hdr.b);
+					}
 					break;
 
 				case Cmd::Vsync:
@@ -893,6 +916,8 @@ namespace
 					ApplyVsyncRegs(*reinterpret_cast<const VsyncPayload*>(payload));
 					Trace(2, static_cast<u32>(s_trace_idle_ns / 1000)); // idle time (us) since the previous frame
 					s_trace_idle_ns = 0;
+					Trace(10, TraceMicroseconds(s_trace_upload_draw_ns));
+					s_trace_upload_draw_ns = 0;
 					Trace(3);
 					EvenPacePresent(); // before the present-log timer: a pacing hold is not GS vsync work
 					LARGE_INTEGER t0, t1, fq;
@@ -1060,6 +1085,9 @@ namespace
 		SetupFolders(cfg);
 		const Pcsx2Config::GSOptions opts = MakeOptions(cfg);
 		ApplyGlobals(cfg, opts);
+		s_trace_idle_ns = 0;
+		s_trace_upload_draw_ns = 0;
+		GSSetRenderTimingHooks({nullptr, &TraceRenderTiming});
 
 		const std::string shader_probe = Path::Combine(EmuFolders::Resources, "shaders/dx11/tfx.fx");
 		if (!FileSystem::FileExists(shader_probe.c_str()))
@@ -1076,6 +1104,7 @@ namespace
 		const bool ok = GSopen(opts, opts.Renderer, s_gs_regs, opts.VsyncEnable ? GSVSyncMode::FIFO : GSVSyncMode::Disabled, false);
 		if (!ok)
 		{
+			GSSetRenderTimingHooks({});
 			kzgs::Fsr1RemoveDeviceHooks();
 			kzgs::ProviderRemove();
 			result->error = kzgs::GetLastError();
@@ -1097,10 +1126,23 @@ namespace
 		kzgs::TemporalStop();
 		kzgs::PresentCapture(nullptr);
 		GSclose();
+		GSSetRenderTimingHooks({});
 		kzgs::Fsr1RemoveDeviceHooks();
 		kzgs::ProviderRemove();
 	}
 } // namespace
+
+namespace kzgs
+{
+	void ReportGpuPresent(float gpu_time)
+	{
+		if (!std::isfinite(gpu_time) || gpu_time <= 0.0f)
+			return;
+		const double gpu_time_us = static_cast<double>(gpu_time) * 1000.0;
+		Trace(11, static_cast<u32>(std::clamp(
+			gpu_time_us, 1.0, static_cast<double>(std::numeric_limits<u32>::max()))));
+	}
+}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Public API
@@ -1539,6 +1581,16 @@ void kzgsSetLogCallback(KzgsLogFn fn)
 void kzgsSetTraceHook(KzgsTraceFn fn)
 {
 	s_trace_fn = fn;
+}
+
+void kzgsSetGpuTimingEnabled(bool enabled)
+{
+	s_gpu_timing_enabled.store(enabled, std::memory_order_relaxed);
+	kzgs::RunOnGSThread([enabled] {
+		GSConfig.OsdShowGPU = enabled;
+		if (g_gs_device)
+			g_gs_device->SetGPUTimingEnabled(enabled);
+	});
 }
 
 void kzgsBurstArm(int count, int presentWidth, int presentHeight)

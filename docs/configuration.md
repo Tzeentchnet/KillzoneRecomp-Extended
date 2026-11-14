@@ -70,7 +70,10 @@ presentation upscaling where necessary:
 | 2560x1440 | 4x (1792p target) | 3x (1344p target) | 43.8% |
 | 3840x2160 | 5x (2240p target) | 4x (1792p target) | 36.0% |
 
-These are raster-pixel reductions, not measured GPU-time reductions. Explicit `Upscale=1..8` and the one-run
+The percentages in this table are raster-pixel reductions, not predictions of GPU-time savings. A controlled
+1080p measurement on one RTX 5070 found 29.2% and 40.8% lower whole-frame GPU p95 in two balanced-versus-quality
+pairs; see [frame generation](frame-generation.md#matched-gpu-headroom-ab-scus-97402-chapter-1). Hardware, drivers,
+scene, output mode, and fixed renderer costs can change that result. Explicit `Upscale=1..8` and the one-run
 `KZ_UPSCALE` override ignore the automatic policy. Ultrawide automatic modes also account for output width.
 Startup logs and capture metadata report `auto_output_height` for quality and `auto_balanced` for balanced.
 
