@@ -230,6 +230,18 @@ foreach ($arm in $Arms) {
     $upscaleGpu = if ($null -ne $metrics) { $metrics.renderer.presentation_upscale_gpu_ms } else { $null }
     $sharpenGpu = if ($null -ne $metrics) { $metrics.renderer.sharpen_gpu_ms } else { $null }
     $presentGpu = if ($null -ne $metrics) { $metrics.renderer.final_presentation_gpu_ms } else { $null }
+    $gpuStageMeanSum = 0.0
+    $gpuStageMetricCount = 0
+    foreach ($stageMetrics in @($uploadDrawGpu, $mergeGpu, $upscaleGpu, $sharpenGpu, $presentGpu)) {
+        if ($null -ne $stageMetrics) {
+            $gpuStageMeanSum += [double]$stageMetrics.mean
+            $gpuStageMetricCount++
+        }
+    }
+    if ($gpuStageMetricCount -eq 0) { $gpuStageMeanSum = $null }
+    $gpuStageMeanCoverage = if ($null -ne $gpuStageMeanSum -and $null -ne $gpuFrame -and $gpuFrame.mean -gt 0) {
+        100.0 * $gpuStageMeanSum / $gpuFrame.mean
+    } else { $null }
     if ($GpuTiming -and -not $DisableGpuStageTiming -and $HeadroomPreset -and $scalePolicy -eq 'balanced') {
         foreach ($stage in @(
             [pscustomobject]@{ name = 'upload/draw'; metrics = $uploadDrawGpu },
@@ -267,6 +279,8 @@ foreach ($arm in $Arms) {
         upscale_gpu_count = $upscaleGpu.count; upscale_gpu_p95_ms = $upscaleGpu.p95
         sharpen_gpu_count = $sharpenGpu.count; sharpen_gpu_p95_ms = $sharpenGpu.p95
         present_gpu_count = $presentGpu.count; present_gpu_p95_ms = $presentGpu.p95
+        measured_stage_gpu_mean_sum_ms = $gpuStageMeanSum
+        measured_stage_gpu_mean_coverage_pct = $gpuStageMeanCoverage
         upload_draw_cpu_p95_ms = $uploadDrawCpu.p95; merge_cpu_p95_ms = $mergeCpu.p95
         upscale_cpu_p95_ms = $upscaleCpu.p95; sharpen_cpu_p95_ms = $sharpenCpu.p95
         present_cpu_p95_ms = $presentCpu.p95
