@@ -10,12 +10,12 @@
     "repository_path": "ext/PS2Recomp",
     "patch_directory": "patches/ps2recomp",
     "base_commit": "75d729ce40d7eed9649fd4bb05628dee520f3d0c",
-    "target_commit": "245098d60c500e1c7e5fa152f2343736f5758985",
-    "target_tree": "ee1a3dfc7e02be2cbf9b27b7ef8d1a4451830492",
+    "target_commit": "bc60175edae53056d886522a3290f12037fe84fc",
+    "target_tree": "79bab11e7a7d6d8259136ca59f7edc485dfd5f9b",
     "canonical_patch": {
       "path": "patches/ps2recomp/combined.lock.diff",
       "changed_paths": 77,
-      "sha256": "8361f83aaf8746a681e3cedd2e0d5649c17830020cf50d818c00075e45edb59f"
+      "sha256": "cf8fc0104a45668bc32c477e85436621aa225cfcee3a3491d74dc4fd4662bf3a"
     },
     "patches": [
       {
@@ -165,6 +165,10 @@
       {
         "path": "0038-Add-renderer-timeline-events.patch",
         "sha256": "e4fe637fbfa0bb0e2641bf3f141cc51a0621544b1bf0cf0e6a298bf67eca77eb"
+      },
+      {
+        "path": "0039-Add-GPU-stage-timeline-events.patch",
+        "sha256": "fe5badb127c515e873a499b5f1cfdc2bd124c1b207b54f99fbf087f48149900d"
       }
     ]
   },
@@ -173,7 +177,7 @@
       "id": "ps2recomp",
       "kind": "git-submodule",
       "source_url": "https://github.com/Tzeentchnet/PS2Recomp.git",
-      "revision": "245098d60c500e1c7e5fa152f2343736f5758985",
+      "revision": "bc60175edae53056d886522a3290f12037fe84fc",
       "publication_status": "unpublished",
       "license": "GPL-3.0-only",
       "redistribution": "Copyleft; distribute corresponding source and notices.",
@@ -188,7 +192,7 @@
       "id": "pcsx2",
       "kind": "git-checkout",
       "source_url": "https://github.com/Tzeentchnet/pcsx2.git",
-      "revision": "cd26d12eca00c52db03a1c65f57e726b458075d4",
+      "revision": "c789f3960569c0703aa73514087d765cd16e6fc9",
       "publication_status": "unpublished",
       "license": "GPL-3.0-or-later",
       "redistribution": "Copyleft; distribute corresponding source and notices.",

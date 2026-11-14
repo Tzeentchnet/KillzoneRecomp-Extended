@@ -1,0 +1,28 @@
+From bc60175edae53056d886522a3290f12037fe84fc Mon Sep 17 00:00:00 2001
+From: Tzeentchnet <58480142+Tzeentchnet@users.noreply.github.com>
+Date: Fri, 13 Nov 2026 16:58:03 -0800
+Subject: [PATCH] Add GPU stage timeline events
+
+---
+ ps2xRuntime/include/runtime/ps2_timeline.h | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/ps2xRuntime/include/runtime/ps2_timeline.h b/ps2xRuntime/include/runtime/ps2_timeline.h
+index 4f95404..76d8a1c 100644
+--- a/ps2xRuntime/include/runtime/ps2_timeline.h
++++ b/ps2xRuntime/include/runtime/ps2_timeline.h
+@@ -53,6 +53,11 @@ namespace ps2tl
+     X(GS_QUEUED, LaneWorker)     /* frames queued in kzgs after this vsync was pushed */                            \
+     X(GS_UPLOAD_DRAW, LaneGS)     /* a = accumulated GIF upload/draw CPU time for the frame (us) */                  \
+     X(GPU_FRAME, LaneGS)          /* a = whole-frame GPU execution time (us) */                                      \
++    X(GPU_UPLOAD_DRAW, LaneGS)    /* a = Vulkan upload/draw GPU execution time (us) */                               \
++    X(GPU_MERGE, LaneGS)          /* a = Vulkan merge GPU execution time (us) */                                     \
++    X(GPU_UPSCALE, LaneGS)        /* a = Vulkan presentation-upscale GPU execution time (us) */                      \
++    X(GPU_SHARPEN, LaneGS)        /* a = Vulkan sharpening GPU execution time (us) */                                \
++    X(GPU_PRESENT, LaneGS)        /* a = Vulkan final-presentation GPU execution time (us) */                        \
+     X(GS_MERGE_B, LaneGS)                                                                                            \
+     X(GS_MERGE_E, LaneGS)                                                                                            \
+     X(GS_UPSCALE_B, LaneGS)                                                                                          \
+-- 
+2.55.0.windows.5
+

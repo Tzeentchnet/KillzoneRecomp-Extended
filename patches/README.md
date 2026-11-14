@@ -735,6 +735,9 @@ resulting tree to equal the pinned submodule tree.
   time, whole-frame GPU timestamp results, and begin/end markers around merge, presentation upscaling, sharpening,
   and final presentation. The runtime only records events emitted by the host renderer, so this patch does not
   enable GPU queries or alter emulation behavior by itself.
+- **0039-Add-GPU-stage-timeline-events.patch** - reserves host timeline events for asynchronous Vulkan timestamp
+  results covering upload/draw, merge, presentation upscaling, sharpening, and final presentation. Unsupported
+  renderer backends do not emit these events.
 - **experimental/ee-di-interrupt-gate.diff** (not applied; `git apply --directory=ext/PS2Recomp`) - makes
   `EeScheduler` honour Status.EIE: while the running context is inside `di`/`ei`, pending interrupt, SIF and stream
   invocations, time-slice preemption and event-driven thread switches wait for `ei` (50 ms safety valve,

@@ -252,7 +252,9 @@ void kzgsSetLogCallback(KzgsLogFn fn);
 // begin/end, 5/6 producer waits for the GS thread (maxQueuedFrames) begin/end, 7/8 producer waits for ring space
 // begin/end, 9 frames queued (a) after a vsync was pushed, 10 accumulated GIF upload/draw CPU time (a us),
 // 11 total GPU frame time (a us), 12/13 merge CPU begin/end, 14/15 presentation upscale CPU begin/end,
-// 16/17 sharpening CPU begin/end, 18/19 final presentation CPU begin/end. nullptr = off.
+// 16/17 sharpening CPU begin/end, 18/19 final presentation CPU begin/end, and positive Vulkan GPU time in
+// microseconds for 20 upload/draw, 21 merge, 22 presentation upscale, 23 sharpening, and 24 final presentation.
+// nullptr = off.
 using KzgsTraceFn = void (*)(int id, uint32_t a);
 void kzgsSetTraceHook(KzgsTraceFn fn);
 

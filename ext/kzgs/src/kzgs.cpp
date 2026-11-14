@@ -158,6 +158,7 @@ namespace
 	static std::atomic<bool> s_gpu_timing_enabled{false};
 	static s64 s_trace_idle_ns = 0; // GS thread only
 	static s64 s_trace_upload_draw_ns = 0; // GS thread only
+	static bool s_gpu_upload_draw_active = false; // GS thread only
 	static inline void Trace(int id, u32 a = 0)
 	{
 		if (KzgsTraceFn fn = s_trace_fn)
@@ -171,6 +172,24 @@ namespace
 	static void TraceRenderTiming(void*, GSRenderTimingStage stage, bool begin)
 	{
 		Trace(12 + static_cast<int>(stage) * 2 + (begin ? 0 : 1));
+	}
+	static void TraceRenderGpuTiming(void*, GSGPUTimingStage stage, float milliseconds)
+	{
+		if (!std::isfinite(milliseconds) || milliseconds <= 0.0f)
+			return;
+		int id = 0;
+		switch (stage)
+		{
+			case GSGPUTimingStage::UploadDraw: id = 20; break;
+			case GSGPUTimingStage::Merge: id = 21; break;
+			case GSGPUTimingStage::PresentationUpscale: id = 22; break;
+			case GSGPUTimingStage::Sharpen: id = 23; break;
+			case GSGPUTimingStage::FinalPresentation: id = 24; break;
+			case GSGPUTimingStage::Count: return;
+		}
+		const double microseconds = static_cast<double>(milliseconds) * 1000.0;
+		Trace(id, static_cast<u32>(std::clamp(
+			microseconds, 1.0, static_cast<double>(std::numeric_limits<u32>::max()))));
 	}
 
 	static bool ValidateUpscalerConfig(const KzgsConfigV1& cfg, std::string& error)
@@ -897,6 +916,11 @@ namespace
 					break;
 
 				case Cmd::Transfer:
+					if (!s_gpu_upload_draw_active && s_gpu_timing_enabled.load(std::memory_order_relaxed))
+					{
+						g_gs_device->BeginGPUTimingStage(GSGPUTimingStage::UploadDraw);
+						s_gpu_upload_draw_active = true;
+					}
 					if (s_trace_fn)
 					{
 						const auto start = std::chrono::steady_clock::now();
@@ -912,6 +936,11 @@ namespace
 
 				case Cmd::Vsync:
 				{
+					if (s_gpu_upload_draw_active)
+					{
+						g_gs_device->EndGPUTimingStage(GSGPUTimingStage::UploadDraw);
+						s_gpu_upload_draw_active = false;
+					}
 					kzgs::Fsr1InvalidateCapture();
 					ApplyVsyncRegs(*reinterpret_cast<const VsyncPayload*>(payload));
 					Trace(2, static_cast<u32>(s_trace_idle_ns / 1000)); // idle time (us) since the previous frame
@@ -1087,7 +1116,8 @@ namespace
 		ApplyGlobals(cfg, opts);
 		s_trace_idle_ns = 0;
 		s_trace_upload_draw_ns = 0;
-		GSSetRenderTimingHooks({nullptr, &TraceRenderTiming});
+		s_gpu_upload_draw_active = false;
+		GSSetRenderTimingHooks({nullptr, &TraceRenderTiming, &TraceRenderGpuTiming});
 
 		const std::string shader_probe = Path::Combine(EmuFolders::Resources, "shaders/dx11/tfx.fx");
 		if (!FileSystem::FileExists(shader_probe.c_str()))

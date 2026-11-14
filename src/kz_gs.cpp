@@ -955,7 +955,8 @@ namespace
         static const Id map[] = {
             Count, GS_IDLE_B, GS_IDLE_E, GS_VSYNC_B, GS_VSYNC_E, GS_THROTTLE_B, GS_THROTTLE_E,
             GS_RING_B, GS_RING_E, GS_QUEUED, GS_UPLOAD_DRAW, GPU_FRAME, GS_MERGE_B, GS_MERGE_E,
-            GS_UPSCALE_B, GS_UPSCALE_E, GS_SHARPEN_B, GS_SHARPEN_E, GS_PRESENT_B, GS_PRESENT_E};
+            GS_UPSCALE_B, GS_UPSCALE_E, GS_SHARPEN_B, GS_SHARPEN_E, GS_PRESENT_B, GS_PRESENT_E,
+            GPU_UPLOAD_DRAW, GPU_MERGE, GPU_UPSCALE, GPU_SHARPEN, GPU_PRESENT};
         if (id >= 1 && id < static_cast<int>(std::size(map)))
             rec(map[id], a);
     }

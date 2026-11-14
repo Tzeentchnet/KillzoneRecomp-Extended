@@ -4,7 +4,8 @@
 # KZGS_PRESENT_LOG and 10 s captures, and summarizes the guest-time window -FromGuestS..-ToGuestS with
 # present_pacing_analyze.py. -ReadbackFree replaces captures with guest-time/presentation-sequence metadata samples.
 # -Timeline records the same guest window and writes machine-readable scheduler/vblank/renderer metrics. -GpuTiming
-# enables asynchronous whole-frame GPU timestamp queries and requires -Timeline. Raw logs and captures stay under ignored work\.
+# enables asynchronous whole-frame timestamps plus Vulkan stage timestamps and requires -Timeline. Raw logs and captures
+# stay under ignored work\.
 #
 # The window is guest time, not gameplay time: on SCES-52004 the local player is not detected, so gameplay-relative
 # input ("g" script steps) and KZ_HEADLESS_GAMEPLAY_SECONDS never start. Check separate captures to confirm that the window
@@ -219,6 +220,23 @@ foreach ($arm in $Arms) {
         $problems += 'no GPU frame timing samples'
     }
     $uploadDrawCpu = if ($null -ne $metrics) { $metrics.renderer.upload_draw_cpu_ms } else { $null }
+    $uploadDrawGpu = if ($null -ne $metrics) { $metrics.renderer.upload_draw_gpu_ms } else { $null }
+    $mergeGpu = if ($null -ne $metrics) { $metrics.renderer.merge_gpu_ms } else { $null }
+    $upscaleGpu = if ($null -ne $metrics) { $metrics.renderer.presentation_upscale_gpu_ms } else { $null }
+    $sharpenGpu = if ($null -ne $metrics) { $metrics.renderer.sharpen_gpu_ms } else { $null }
+    $presentGpu = if ($null -ne $metrics) { $metrics.renderer.final_presentation_gpu_ms } else { $null }
+    if ($GpuTiming -and $HeadroomPreset -and $scalePolicy -eq 'balanced') {
+        foreach ($stage in @(
+            [pscustomobject]@{ name = 'upload/draw'; metrics = $uploadDrawGpu },
+            [pscustomobject]@{ name = 'merge'; metrics = $mergeGpu },
+            [pscustomobject]@{ name = 'presentation upscale'; metrics = $upscaleGpu },
+            [pscustomobject]@{ name = 'final presentation'; metrics = $presentGpu }
+        )) {
+            if ($null -eq $stage.metrics -or $stage.metrics.count -le 0) {
+                $problems += "no $($stage.name) GPU timing samples"
+            }
+        }
+    }
     $mergeCpu = if ($null -ne $metrics) { $metrics.renderer.merge_cpu_ms } else { $null }
     $upscaleCpu = if ($null -ne $metrics) { $metrics.renderer.presentation_upscale_cpu_ms } else { $null }
     $sharpenCpu = if ($null -ne $metrics) { $metrics.renderer.sharpen_cpu_ms } else { $null }
@@ -238,6 +256,11 @@ foreach ($arm in $Arms) {
         gpu_frame_count = $gpuFrame.count; gpu_frame_p50_ms = $gpuFrame.median
         gpu_frame_p95_ms = $gpuFrame.p95; gpu_frame_p99_ms = $gpuFrame.p99; gpu_frame_max_ms = $gpuFrame.max
         gpu_frame_under_12_ms = if ($null -ne $gpuFrame) { $gpuFrame.p95 -lt 12 } else { $null }
+        upload_draw_gpu_count = $uploadDrawGpu.count; upload_draw_gpu_p95_ms = $uploadDrawGpu.p95
+        merge_gpu_count = $mergeGpu.count; merge_gpu_p95_ms = $mergeGpu.p95
+        upscale_gpu_count = $upscaleGpu.count; upscale_gpu_p95_ms = $upscaleGpu.p95
+        sharpen_gpu_count = $sharpenGpu.count; sharpen_gpu_p95_ms = $sharpenGpu.p95
+        present_gpu_count = $presentGpu.count; present_gpu_p95_ms = $presentGpu.p95
         upload_draw_cpu_p95_ms = $uploadDrawCpu.p95; merge_cpu_p95_ms = $mergeCpu.p95
         upscale_cpu_p95_ms = $upscaleCpu.p95; sharpen_cpu_p95_ms = $sharpenCpu.p95
         present_cpu_p95_ms = $presentCpu.p95

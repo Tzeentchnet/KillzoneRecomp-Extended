@@ -5114,10 +5114,10 @@ index 0000000..2833818
 +void ps2SetPadProvider(PS2PadProvider provider);
 diff --git a/ps2xRuntime/include/runtime/ps2_timeline.h b/ps2xRuntime/include/runtime/ps2_timeline.h
 new file mode 100644
-index 0000000..4f95404
+index 0000000..76d8a1c
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/ps2_timeline.h
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,197 @@
 +#pragma once
 +// Frame-pipeline timeline recorder (patch 0025). Off unless KZ_TIMELINE=<file.csv> is set.
 +//
@@ -5173,6 +5173,11 @@ index 0000000..4f95404
 +    X(GS_QUEUED, LaneWorker)     /* frames queued in kzgs after this vsync was pushed */                            \
 +    X(GS_UPLOAD_DRAW, LaneGS)     /* a = accumulated GIF upload/draw CPU time for the frame (us) */                  \
 +    X(GPU_FRAME, LaneGS)          /* a = whole-frame GPU execution time (us) */                                      \
++    X(GPU_UPLOAD_DRAW, LaneGS)    /* a = Vulkan upload/draw GPU execution time (us) */                               \
++    X(GPU_MERGE, LaneGS)          /* a = Vulkan merge GPU execution time (us) */                                     \
++    X(GPU_UPSCALE, LaneGS)        /* a = Vulkan presentation-upscale GPU execution time (us) */                      \
++    X(GPU_SHARPEN, LaneGS)        /* a = Vulkan sharpening GPU execution time (us) */                                \
++    X(GPU_PRESENT, LaneGS)        /* a = Vulkan final-presentation GPU execution time (us) */                        \
 +    X(GS_MERGE_B, LaneGS)                                                                                            \
 +    X(GS_MERGE_E, LaneGS)                                                                                            \
 +    X(GS_UPSCALE_B, LaneGS)                                                                                          \
