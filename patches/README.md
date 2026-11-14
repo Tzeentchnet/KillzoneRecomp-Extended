@@ -753,12 +753,19 @@ resulting tree to equal the pinned submodule tree.
   unwinds another thread; normal builds compile out the hooks.
 - **0044-Isolate-EE-profiler-platform-clocks.patch** - moves Windows thread-cycle and CPU-time queries out of the
   profiler header so instrumented runtime translation units do not import conflicting Win32 declarations. Both the
-  compile-out and instrumented standalone suites pass 455/455; matched gameplay coverage and overhead remain
-  unqualified until an authorized BYOD run is available.
+  compile-out and instrumented standalone suites passed 455/455 at this point; later gameplay qualification is
+  described under patch 0046.
 - **0045-Add-host-controller-rumble-forwarding.patch** - retains each pad port's six-byte actuator alignment and
   forwards decoded small/large motor levels through a separate atomic host callback. Pad close, end, and
   reinitialization publish explicit stop commands. Focused tests cover custom and unmapped alignment, digital and
   analog motor values, invalid pointers and ports, and close-time shutoff; the standalone suite passes 456/456.
+- **0046-Batch-EE-profiler-report-output.patch** - builds each bounded 120-field profiler report in memory and sends
+  it to the unbuffered diagnostic stream with one write instead of flushing every formatted field and row
+  insertion. This preserves report contents and removes the periodic gameplay logging stalls: two matched arms
+  recovered from 52.613-53.288 to 59.885-59.914 FPS, p99 fell from 32.368-35.508 to 17.993-18.051 ms, and bunched
+  intervals fell from 36/36 to 2/0. Three normal controls covered 59.855-59.927 FPS and 17.182-17.276 ms p99. Both
+  instrumented arms emitted 63 report batches without dropped keys; `nested_calls=0` limits the current evidence to
+  outer scheduler dispatch attribution. The current instrumented standalone suite passes 456/456.
 - **experimental/ee-di-interrupt-gate.diff** (not applied; `git apply --directory=ext/PS2Recomp`) - makes
   `EeScheduler` honour Status.EIE: while the running context is inside `di`/`ei`, pending interrupt, SIF and stream
   invocations, time-slice preemption and event-driven thread switches wait for `ei` (50 ms safety valve,

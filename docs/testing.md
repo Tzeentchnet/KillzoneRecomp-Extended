@@ -117,15 +117,25 @@ $env:PS2X_EE_PROFILE = '1'
 Remove-Item Env:PS2X_EE_PROFILE
 ```
 
-The runtime samples one in 256 outer scheduler dispatches and nested guest calls. Every 120 fields it writes bounded
-`[ps2x:ee-profile]` rows to stderr with entry/caller PCs, sample counts, host CPU units, wall time, dropped-key count,
-and EE-thread CPU milliseconds per field. Outer and nested measurements are inclusive and overlap; never add them.
-On Windows, `cpu_units` are thread-cycle counts, not nanoseconds.
+The runtime samples one in 256 outer scheduler dispatches and nested guest calls. Every 120 fields it builds a bounded
+`[ps2x:ee-profile]` report and sends it to stderr with one insertion. Reports include entry/caller PCs, sample counts,
+host CPU units, wall time, dropped-key count, and EE-thread CPU milliseconds per field. Outer and nested measurements
+are inclusive and overlap; never add them. On Windows, `cpu_units` are thread-cycle counts, not nanoseconds.
 
-Both compile-out and instrumented standalone builds pass 455/455 tests, and an instrumented synthetic run emits the
-expected bounded summary. No authorized BYOD paths were available for the integration run, so gameplay coverage and
-overhead are not yet qualified. Keep existing performance workflows off `KZ_PROFILE`, but do not claim this sampled
-prototype as its measured replacement until a matched instrumented gameplay A/B passes.
+The current instrumented standalone suite passes 456/456 tests. A matched US chapter-1 campaign then compared two
+batched instrumented arms with two initial normal controls and a closing normal control over guest seconds 40-110.
+Before batching, repeated unbuffered insertions on the EE thread reduced mean FPS to 52.613-53.288, raised presentation
+p99 to 32.368-35.508 ms, and produced 36 bunched intervals in each arm. With one insertion per report, the instrumented
+arms recovered to 59.885/59.914 FPS, 17.114/17.241 ms p95, 18.051/17.993 ms p99, 2/0 bunched intervals, and 6/3 long
+intervals. The three normal controls covered 59.855-59.927 FPS, 17.081-17.110 ms p95, 17.182-17.276 ms p99, 0-3
+bunched intervals, and 2-7 long intervals. Instrumented process CPU time was 98.750-99.625 seconds, inside the normal
+77.516-104.547-second range; GPU p95 remained at or below 1.610 ms.
+
+Each 125-second instrumented arm emitted 63 report batches (62 complete 120-field batches and one final 60-field
+batch) with no dropped keys. Every batch reported `nested_calls=0`, so this gameplay path qualified outer scheduler
+dispatch attribution but did not exercise nested guest-call coverage. Use the sampled profiler instead of `KZ_PROFILE`
+for future opt-in EE attribution, keep it compiled out of normal builds, and do not add outer and nested totals if a
+future workload exercises both.
 
 ### High-refresh campaign audit
 
