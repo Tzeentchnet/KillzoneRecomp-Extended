@@ -5,8 +5,9 @@ This document records issues, pull requests, and design discussions that may be 
 [PCSX2/pcsx2](https://github.com/PCSX2/pcsx2). It tracks both filed submissions and candidates that still need
 evidence, design agreement, or independent human authorship.
 
-The PS2Recomp pull-request and fork review was refreshed on 2026-11-11. The PCSX2 source review remains from
-2026-11-10. The baselines are:
+The broad PS2Recomp pull-request and fork review was refreshed on 2026-11-11, and the broad PCSX2 source review
+remains from 2026-11-10. A focused scheduler-pacing and GPU-profiling review was completed on 2026-11-13. The
+baselines are:
 
 - PS2Recomp `main` at
   [`e5636981a1c9de368f6b71e819c3dc188dfedbf4`](https://github.com/ran-j/PS2Recomp/commit/e5636981a1c9de368f6b71e819c3dc188dfedbf4).
@@ -100,13 +101,15 @@ Recommended order for these three:
 | 1 | PCSX2 | Small PR | Store compute specialization-constant values | Blocked by PCSX2's LLM policy; requires independent human authorship |
 | 2 | PS2Recomp | Small PR | Wrap VIF MPG uploads within VU micro memory | Filed as [ran-j/PS2Recomp#437](https://github.com/ran-j/PS2Recomp/pull/437) |
 | 3 | PS2Recomp | Small analyzer PR | Discover fixed-stride handler tables | Technically ready; coordinate with AlenDavid and preserve original authorship |
-| 4 | PS2Recomp | PR for existing issue | Model all 32 VU integer/control-register slots | Existing issue has independent game evidence |
-| 5 | PS2Recomp | Small PR | Limit unresolved JALR resume points to the return PC | Filed as [ran-j/PS2Recomp#436](https://github.com/ran-j/PS2Recomp/pull/436) |
-| 6 | PS2Recomp | Stacked runtime PR | Preserve fragmented VIF1 command streams | Manually port after #437 and coordinate with Hardnyx |
-| 7 | PCSX2 | Issue | Vulkan index-upload synchronization hazard | Reproduce on current PCSX2 `master` first |
-| 8 | PS2Recomp | RFC issue | Namespaced output for multiple recompiled images | Filed as [ran-j/PS2Recomp#438](https://github.com/ran-j/PS2Recomp/issues/438) |
-| 9 | PCSX2 | RFC issue | Supported external presentation/integration hooks | Submit the design before splitting the companion branch |
-| 10 | PS2Recomp | Issue | Fixed IOP RPC instruction budgets can truncate valid handlers | Needs a minimal non-Killzone reproduction |
+| 4 | PS2Recomp | Focused runtime PR | Add opt-in interruptible high-resolution Windows waits | Extract the reusable waiter and tests from the fork; omit fork-only timeline events |
+| 5 | PS2Recomp | PR for existing issue | Model all 32 VU integer/control-register slots | Existing issue has independent game evidence |
+| 6 | PS2Recomp | Small PR | Limit unresolved JALR resume points to the return PC | Filed as [ran-j/PS2Recomp#436](https://github.com/ran-j/PS2Recomp/pull/436) |
+| 7 | PS2Recomp | Stacked runtime PR | Preserve fragmented VIF1 command streams | Manually port after #437 and coordinate with Hardnyx |
+| 8 | PCSX2 | Issue | Vulkan index-upload synchronization hazard | Reproduce on current PCSX2 `master` first |
+| 9 | PS2Recomp | RFC issue | Namespaced output for multiple recompiled images | Filed as [ran-j/PS2Recomp#438](https://github.com/ran-j/PS2Recomp/issues/438) |
+| 10 | PCSX2 | Feature issue | Add per-stage GPU timing to GS performance captures | Issue first; agree on stages, backend scope, and `PerformanceMetrics` integration |
+| 11 | PCSX2 | RFC issue | Supported external presentation/integration hooks | Submit the design before splitting the companion branch |
+| 12 | PS2Recomp | Issue | Fixed IOP RPC instruction budgets can truncate valid handlers | Needs a minimal non-Killzone reproduction |
 | - | PS2Recomp | Research before PR | Model VIF STCYCL zero fields | Current proposal contradicts PCSX2 and breaks existing UNPACK coverage |
 
 ## PS2Recomp
@@ -205,6 +208,41 @@ The local `MiniTest` runner can filter by suite, test, or `suite.test` through `
 hardware-vector and runtime debugging, but it is low priority and should be a separate tooling PR with tests for no
 matches and exact suite/test selection.
 
+#### Opt-in interruptible high-resolution Windows waits
+
+**Suggested title:** `Runtime: add opt-in interruptible high-resolution Windows waits`
+
+The fork's [`0037` scheduler patch](../patches/ps2recomp/0037-Add-precise-interruptible-scheduler-waits.patch) adds
+an `EeHostWait` abstraction backed on Windows by a high-resolution waitable timer and an auto-reset wake event.
+Posted events, newly scheduled deadlines, stop requests, and wait failures retain the condition-variable fallback.
+A notification generation counter closes the event-before-wait race. `PS2X_PRECISE_WAIT=1` keeps the behavior
+opt-in, and timer creation or wait failure reports the error before permanently falling back for that scheduler.
+
+This is general runtime work rather than a Killzone policy. Twelve focused interrupt/wait tests pass in both precise
+and fallback modes. In two interleaved 60 Hz pairs over the same guest-time window, precise waits reduced deadline
+wake-overshoot p95 from 1.350-1.357 ms to 0.486-0.490 ms and p99 from 1.470-1.473 ms to 0.511-0.513 ms. The evidence
+and limitations are recorded in [the frame-pacing analysis](frame-generation.md#matched-scheduler-wait-ab-scus-97402-chapter-1).
+
+Do not submit local commit `9e9e887` unchanged. It also encodes exact wake telemetry through the fork-only
+`ps2tl` event stream, whose surrounding timeline implementation is absent from canonical PS2Recomp. Prepare a clean
+branch from current canonical `main` containing only:
+
+1. The reusable `EeHostWait` implementation and platform-neutral fallback.
+2. The notification-generation/lost-wakeup protection.
+3. Scheduler integration for pacing and idle/deadline waits.
+4. The hermetic timeout, notification, stop, rearm, and fallback tests.
+5. Minimal failure logging, without project-specific timeline IDs.
+
+The relevant canonical scheduler files have not changed since the fork's locked base, so a focused port should be
+tractable, but it still needs an upstream-tree build and complete test run. Duplicate searches on 2026-11-13 found
+no issue or PR for a waitable timer, condition-variable wake precision, or wake overshoot.
+
+This does not resolve [ran-j/PS2Recomp#423](https://github.com/ran-j/PS2Recomp/issues/423). That issue's root cause
+is choosing timer-versus-VBlank order using host time instead of guest cycles. A more precise host wake may change
+how often the race appears, but it cannot make that ordering deterministic. Reference #423 only as adjacent
+scheduler evidence, and contribute exact wake telemetry there only after reproducing its test. The evidence-focused
+structure of [ran-j/PS2Recomp#328](https://github.com/ran-j/PS2Recomp/pull/328) is a useful model for the PR.
+
 ### New issue or RFC candidates
 
 #### Namespaced output for more than one recompiled image
@@ -270,7 +308,7 @@ privacy, release-build cost, and integration with existing runtime error reporti
 | [ran-j/PS2Recomp#418](https://github.com/ran-j/PS2Recomp/pull/418) | Add VU1 JR/JALR tests that mutate the source VI register in the paired instruction. This is separate from the EE unresolved-JALR resume-entry candidate above. |
 | [ran-j/PS2Recomp#419](https://github.com/ran-j/PS2Recomp/pull/419) | Compare post-transfer MADR values with synthetic chained and normal DMA tests; do not retain a fork-only MADR policy if this PR covers it. |
 | [ran-j/PS2Recomp#420](https://github.com/ran-j/PS2Recomp/pull/420) | Add provenance/build-script testing for nonzero generation failure; do not open a second false-success report. |
-| [ran-j/PS2Recomp#423](https://github.com/ran-j/PS2Recomp/issues/423) | Add Killzone deterministic-trace evidence only after reproducing the timer/VBlank ordering difference locally. |
+| [ran-j/PS2Recomp#423](https://github.com/ran-j/PS2Recomp/issues/423) | Add Killzone deterministic-trace or exact wake evidence only after reproducing the timer/VBlank ordering difference locally. Do not claim that the precise host-wait backend fixes its guest-cycle ordering root cause. |
 
 Standalone-entry resume support, improved floating-point semantics, SIF syscall dispatch, and GIF IMAGE2 behavior are
 already represented by [#271](https://github.com/ran-j/PS2Recomp/pull/271),
@@ -331,6 +369,54 @@ Do not file this yet. First:
 
 No matching open PCSX2 issue or PR was found for the exact validation message or copy/draw sequence.
 
+#### Per-stage GPU timing in GS performance captures
+
+**Suggested title:** `GS: expose per-stage GPU timings in performance captures`
+
+PCSX2 already has asynchronous whole-frame GPU timing. The merged
+[PCSX2/pcsx2#14814](https://github.com/PCSX2/pcsx2/pull/14814) added built-in GS performance captures and cleaned up
+Vulkan/D3D12 timing, making `PerformanceMetrics` and GS dump replay the natural upstream integration points.
+[PCSX2/pcsx2#14792](https://github.com/PCSX2/pcsx2/pull/14792) and
+[PCSX2/pcsx2#14809](https://github.com/PCSX2/pcsx2/pull/14809) also show that query enablement and backend cost need
+to remain explicit.
+
+The companion proof of concept measures upload/draw, merge, presentation upscaling, sharpening, and final
+presentation on Vulkan. Results are collected asynchronously when command-buffer resources are reused; logical
+stages survive command-buffer rollover, and nested stages are supported. Range starts use top-of-pipe timestamps and
+range ends use bottom-of-pipe timestamps. In the final same-build control:
+
+- Both arms produced 900 whole-frame samples with no screenshot readbacks or campaign problems.
+- The enabled arm produced 900 samples for every expected stage; the separate sharpening stage was correctly absent
+  because FSR1 RCAS ran inside presentation upscaling.
+- Stage means summed to 99.88% of whole-frame mean GPU time.
+- Enabling stage markers produced no measurable regression in that pair.
+- A separate `VK_LAYER_KHRONOS_validation` run produced the expected samples with no VUID, validation warning, or
+  validation error.
+
+See [the Vulkan stage-timing validation](frame-generation.md#vulkan-stage-timing-validation) for the measurements
+and caveats. They establish that the concept works; they do not define the correct upstream stage contract.
+
+Open an issue before preparing code. The current implementation is not a direct PR candidate because it reports
+through the companion-only `GSRenderTimingHooks`, begins upload/draw ranges in KzGS's command loop, and includes an
+external FSR1 presentation boundary. The companion branch also contains substantial unrelated renderer integration,
+while current PCSX2 `master` has newer Vulkan render-pass and synchronization changes. Do not cherry-pick local
+commits `c789f3960`, `81511c2ee`, or `aec325fcb` into upstream.
+Any issue text or later implementation must be independently written and verified under PCSX2's LLM policy described
+above; this planning section is not submission text.
+
+Ask maintainers to decide:
+
+1. Which upstream-native stages are useful and stable enough to expose.
+2. Whether a Vulkan-only first implementation is acceptable.
+3. Whether results belong in `PerformanceMetrics`, GS dump output, the OSD, or more than one of those surfaces.
+4. How unsupported stages and backends should be represented.
+5. Whether timestamps should exist only during an explicit performance capture.
+
+D3D12's existing timestamp path ends an active render pass. Forcing the same stage boundaries there would change the
+workload being measured, so this is not a D3D12 bug report. Record it as a backend limitation in the feature issue.
+If the design is accepted, reimplement it directly on current `master`, use built-in performance reporting rather
+than external callbacks, and keep unsupported backends explicit.
+
 #### Backend-independent final-present observation for embedders
 
 **Suggested title:** `RFC: expose successful-present status and final-image observation to embedding hosts`
@@ -372,6 +458,7 @@ reconstruction can work for arbitrary PS2 titles.
 - Killzone camera, scene, reset, and temporal-validity metadata.
 - The KzGS provider ABI and optional DLSS/XeSS packaging policy.
 - FSR1 configuration names and launcher/runtime diagnostics.
+- Balanced automatic scaling, the 60 FPS headroom preset, KzGS trace IDs, and the private-game campaign policy.
 - Protected-content-safe capture metadata and project release allowlists.
 - Companion-only guest versus optimized depth-test observations unless PCSX2 accepts a general diagnostics API.
 
