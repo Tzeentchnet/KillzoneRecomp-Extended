@@ -25,11 +25,12 @@ The supported executable builds are NTSC-U `SCUS-97402`, PAL `SCES-52893` (Engli
 2. Provision the exact inputs recorded in
    [`config/dependencies.lock.json`](../config/dependencies.lock.json):
 
-   - The separate [Tzeentchnet/pcsx2](https://github.com/Tzeentchnet/pcsx2) checkout under `ext\pcsx2`, at
-     companion commit `1fb920189c12766af55bdc9178619c0c66eb1a5e` on `feature/kzgs-upscaler-foundation`. It builds on
-     PCSX2 baseline `d3e6982a3e36647d642bcd805d3ca5b442d0975c` and contains the presentation and observation hooks.
-     This checkout is not the PS2Recomp submodule. The locked companion revision is published on
-     `feature/kzgs-upscaler-foundation` and can be acquired by a clean remote clone. Do not substitute upstream PCSX2.
+   - The separate [Tzeentchnet/pcsx2](https://github.com/Tzeentchnet/pcsx2) checkout under `ext\pcsx2`, at the exact
+     revision recorded in [`config/dependencies.lock.json`](../config/dependencies.lock.json). The companion branch
+     builds on PCSX2 baseline `d3e6982a3e36647d642bcd805d3ca5b442d0975c` and contains the presentation,
+     observation, renderer-timing, and selected upstream VU correctness changes used by the port. This checkout is
+     not the PS2Recomp submodule. The current locked revision is marked unpublished; retain the local checkout until
+     that branch is published. Do not substitute upstream PCSX2.
    - The locked PCSX2 Windows dependency archive retained and extracted under `ext\kzgs\deps`.
    - The locked SDL3 VC development archive retained and extracted under `ext\sdl3`.
    - FidelityFX SDK `v2.4.0`, the locked AMD shader toolchain, generated Vulkan shader headers, and miniz `3.1.2`

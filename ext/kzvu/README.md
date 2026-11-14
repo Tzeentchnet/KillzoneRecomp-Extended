@@ -10,8 +10,9 @@ kzvu is meant to replace PS2Recomp's cycle-accurate `VU1Interpreter`. Profiling 
 game-thread time. The rest of the emulator is replaced by small shims in `shim/`, so kzvu needs no EE, VIF, GIF unit,
 MTGS or MTVU.
 
-- PCSX2 source is `ext/pcsx2`, a depth-1 clone of PCSX2 master. This build was verified against commit `646df006a4`.
-  kzvu does not modify anything in `ext/pcsx2`.
+- PCSX2 source is `ext/pcsx2`, pinned in `config/dependencies.lock.json`. Its VU slice starts from commit
+  `646df006a4` and includes upstream fixes `62a79afff`, `854604401`, and `222285122` for 64-bit XGKICK timing,
+  interpreter cycle tracking, and the `nextBlockCycles` width. kzvu does not modify anything in `ext/pcsx2`.
 - kzvu has no external dependencies. It compiles the small `pcsx2/common` slice it needs, plus the x86 emitter and
   fmt, from `ext/pcsx2` itself. It does not use the `ext/kzgs/deps` bundle.
 

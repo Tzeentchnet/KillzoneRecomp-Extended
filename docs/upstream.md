@@ -5,21 +5,47 @@ This document records issues, pull requests, and design discussions that may be 
 [PCSX2/pcsx2](https://github.com/PCSX2/pcsx2). It tracks both filed submissions and candidates that still need
 evidence, design agreement, or independent human authorship.
 
-The broad PS2Recomp pull-request and fork review was refreshed on 2026-11-11, and the broad PCSX2 source review
-remains from 2026-11-10. A focused scheduler-pacing and GPU-profiling review was completed on 2026-11-13. The
-baselines are:
+The broad PS2Recomp, related-project, and PCSX2 source review was refreshed on 2026-11-13. A focused
+scheduler-pacing and GPU-profiling review was also completed that day. The baselines are:
 
 - PS2Recomp `main` at
   [`e5636981a1c9de368f6b71e819c3dc188dfedbf4`](https://github.com/ran-j/PS2Recomp/commit/e5636981a1c9de368f6b71e819c3dc188dfedbf4).
 - PCSX2 `master` at
-  [`c8081bf5d63b1b83b77112632e1113a25b81058c`](https://github.com/PCSX2/pcsx2/commit/c8081bf5d63b1b83b77112632e1113a25b81058c).
-- The published PS2Recomp
-  [`killzone` branch at `fbde3f0`](https://github.com/Tzeentchnet/PS2Recomp/commit/fbde3f0cbbdec560201bd1001919eda4c59376d4).
-- The published
-  [PCSX2 upscaler-foundation branch](https://github.com/Tzeentchnet/pcsx2/tree/feature/kzgs-upscaler-foundation).
+  [`0ab00c49b157be667a8a2f0bf4cda83f75a9198e`](https://github.com/PCSX2/pcsx2/commit/0ab00c49b157be667a8a2f0bf4cda83f75a9198e).
+- The locked local PS2Recomp revision `bc60175edae53056d886522a3290f12037fe84fc`; the latest published
+  [`killzone` branch is still `fbde3f0`](https://github.com/Tzeentchnet/PS2Recomp/commit/fbde3f0cbbdec560201bd1001919eda4c59376d4).
+- The locked local PCSX2 revision `edf0ea1be194755e76abc067e9aa773eeada0c18`; the published
+  [PCSX2 upscaler-foundation branch](https://github.com/Tzeentchnet/pcsx2/tree/feature/kzgs-upscaler-foundation)
+  still ends at `1fb920189c12766af55bdc9178619c0c66eb1a5e`.
 
 Before filing, rebase or reproduce against the then-current upstream head. Avoid including retail data, generated
 game code, screenshots, traces containing protected content, or paths to local disc images.
+
+## Local dependency and ecosystem refresh (2026-11-13)
+
+The first release-hygiene task is publication, not another merge. Both locked companion revisions are newer than
+their public branches. A clean clone cannot reproduce the current tree until those exact revisions are published;
+the dependency verifier therefore correctly reports both as unpublished.
+
+| Area | Decision | Evidence and scope |
+|---|---|---|
+| PS2Recomp canonical base | Keep the current patch base for now | Canonical `main` is still `e5636981`. Four behavior commits after the fork's `75d729ce` patch base are already represented semantically by the local resume-point, float, SIF, and GIF IMAGE2 work; the fifth only documents `.recomp.json`. Rebasing only to duplicate those changes would churn the 38-patch reconstruction series without adding behavior. |
+| PCSX2 VU slice | Integrated selectively | Upstream commits [`62a79afff`](https://github.com/PCSX2/pcsx2/commit/62a79afff984dcf919fbb5ba8bdb5679d181ca57), [`854604401`](https://github.com/PCSX2/pcsx2/commit/8546044011687f1d4d38d307cbd1c3d8355a4383), and [`222285122`](https://github.com/PCSX2/pcsx2/commit/2222851226644208117edf28754c821765098374) correct 64-bit XGKICK timing, interpreter cycle tracking, and the `nextBlockCycles` width. They are now in local companion `edf0ea1be`; KzVU passes 1,776 checks, the product self-test passes, and the MSVC product build completes. |
+| PCSX2 GS slice | Rebase on an isolated branch; do not cherry-pick the renderer piecemeal | The companion starts from `646df006`, while current `master` is 180 commits ahead of that base: 73 touch `pcsx2/GS`, three touch the KzVU slice, and none touch the KzIPU or KzSPU2 source slices. A merge probe found nine content-conflict hunks in `GSRenderer.cpp`, `GSDeviceVK.cpp`, and `GSTextureVK.cpp`. The new Vulkan render-pass/layout/feedback work is tightly coupled, so a coherent base refresh is safer than selecting individual GS commits. |
+| PCSX2 work still in review | Track, do not build on it yet | [PCSX2/pcsx2#15043](https://github.com/PCSX2/pcsx2/pull/15043) is a draft backend refactor and [PCSX2/pcsx2#14850](https://github.com/PCSX2/pcsx2/pull/14850) still proposes a broad TFX-shader unification. Re-evaluate them only after merge and after the current GS refresh is stable. |
+| Sampled EE guest-call profiling | Prototype as a separate diagnostic patch | Hardnyx's [`834f4965`](https://github.com/Hardnyx/PS2Recomp/commit/834f4965d6e5f8cc49f0fddedbc73e8ba9ed02f9) compiles out by default and samples dispatch entry/caller PCs without unwinding another thread. That directly addresses the unsafe mechanism behind the existing `KZ_PROFILE` crash history, but its output and overhead still need a matched Killzone run before retention. |
+| New PS2Recomp correctness reports | Track upstream; no current Killzone regeneration | [ran-j/PS2Recomp#439](https://github.com/ran-j/PS2Recomp/issues/439) fixes VU0 macro random-register semantics and [ran-j/PS2Recomp#440](https://github.com/ran-j/PS2Recomp/issues/440) fixes newlib-compatible `rand()`. Searches of the available US and SCES-52004 generated trees found no affected VU random operations or generated `rand`/`srand` calls. Revisit after an upstream implementation or evidence from the unavailable SCES-52893 executable. |
+
+### Related-project decisions
+
+| Source | Decision | Reason |
+|---|---|---|
+| [Vnnc1/gow-native-pc](https://github.com/Vnnc1/gow-native-pc) | Adapt the fixed-step test concept only | Its test-only fixed 1/60-second gameplay step made repeated combat trajectories deterministic and is relevant to matched campaigns. The implementation uses God of War-specific delta-time hooks, so Killzone needs an independently identified and guarded boundary. |
+| [Vnnc1/gow-native-pc frame-latency experiment](https://github.com/Vnnc1/gow-native-pc/commit/dd4562522d8c79679a90bc8077ce457253a7423b) | Do not adapt | The project's own RX 580 control made the two-frame default off after substantially worse GPU-bound p95/p99 pacing. Killzone's matched campaigns also found no recurring GS throttle or command-ring waits. |
+| [Destinity13/TimeSplitters-2-Native-Recomp-Windows-Linux-SteamDeck `505c4f9`](https://github.com/Destinity13/TimeSplitters-2-Native-Recomp-Windows-Linux-SteamDeck/commit/505c4f9d82d0a44aff58ad369b57d8396ca20e40) | Do not copy the dynamic automatic-scale guard | It lowers resolution from aggregate FPS after fixed time thresholds without separating CPU, guest-scheduler, or GPU pressure. The existing balanced policy is deterministic and backed by direct GPU timestamps. Dynamic scaling would need GPU-time thresholds, hysteresis, recovery, and visible transition testing. |
+| [w1284603830/PS2Recomp-Fixer](https://github.com/w1284603830/PS2Recomp-Fixer) | Reference individual mechanisms; never bulk-merge | Its series is based on `eb8688b`, combines about 17,000 added lines across runtime, renderer, game adapters, and generic tooling, and overlaps many Killzone patches. Runtime overlays and IOP message boxes may help other games, but Killzone has no current overlay or mailbox blocker. |
+| [Hardnyx/PS2Recomp](https://github.com/Hardnyx/PS2Recomp) and [ReSands/PS2Recomp](https://github.com/ReSands/PS2Recomp) GS work | Do not integrate into KzGS | Their current scanout, scanline-mask, and measured CPU-rasterizer precision work targets PS2Recomp's native GS. Keep it as hardware-reference evidence; KzGS follows PCSX2's renderer instead. |
+| [Korvonordico/shadow-of-rome-recompiled](https://github.com/Korvonordico/shadow-of-rome-recompiled) and other KzGS/KzVU adopters | Watch for independently validated shared fixes | These projects confirm that the PCSX2 GS plus microVU architecture generalizes, but their recent commits are launcher, game-patch, ReShade, and packaging changes rather than newer reusable renderer code. |
 
 ## PS2Recomp refresh (2026-11-11)
 
@@ -339,7 +365,7 @@ contributors from submitting AI-generated contribution content. `Tzeentchnet` ha
 this fix must be independently authored, tested, explained, and submitted by a human contributor under that policy.
 
 Current PCSX2 `master` still accepts `value` in
-[`ComputePipelineBuilder::SetSpecializationValue`](https://github.com/PCSX2/pcsx2/blob/c8081bf5d63b1b83b77112632e1113a25b81058c/pcsx2/GS/Renderers/Vulkan/VKBuilders.cpp)
+[`ComputePipelineBuilder::SetSpecializationValue`](https://github.com/PCSX2/pcsx2/blob/0ab00c49b157be667a8a2f0bf4cda83f75a9198e/pcsx2/GS/Renderers/Vulkan/VKBuilders.cpp)
 but only appends the `VkSpecializationMapEntry` and increases `dataSize`; it does not store `value` in
 `m_smap_constants`. A caller selecting two branches through a specialization constant can therefore receive the
 default/old data. Street Recomp found the same defect while selecting EASU versus RCAS.

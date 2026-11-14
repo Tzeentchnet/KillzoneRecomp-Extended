@@ -8,8 +8,8 @@ kzspu2 exists because the port's IOP emulator (`ext/PS2Recomp/ps2xIOP`) runs the
 (`LIBSD.IRX`, `SDRDRV.IRX`, `PSOUND_R.IRX`), but its SPU2 register block (0x1F900000) was a stub. SPU2 DMA only
 produced a fake completion interrupt, so the game ran without sound.
 
-- PCSX2 source: `ext/pcsx2`, a depth-1 clone of PCSX2 master (the same tree kzgs/kzvu/kzipu use). kzspu2 does not
-  modify anything in `ext/pcsx2`.
+- PCSX2 source: `ext/pcsx2`, pinned in `config/dependencies.lock.json` (the same tree kzgs/kzvu/kzipu use). The SPU2
+  slice is unchanged by the selectively integrated later VU fixes. kzspu2 does not modify anything in `ext/pcsx2`.
 - No external dependencies.
 
 ## Build

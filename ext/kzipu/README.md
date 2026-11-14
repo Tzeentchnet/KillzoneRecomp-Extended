@@ -7,8 +7,9 @@ DMA addresses and deliver two kinds of interrupt.
 kzipu exists because the recompiled game's runtime (PS2Recomp) has no IPU. Its register block at 0x10002000 is a stub,
 and DMA channels 3/4 are not processed, so Killzone's FMV player waits forever for decoded data.
 
-- PCSX2 source: `ext/pcsx2`, a depth-1 clone of PCSX2 master, verified against commit `646df006a4`. kzipu does not
-  modify anything in `ext/pcsx2`.
+- PCSX2 source: `ext/pcsx2`, pinned in `config/dependencies.lock.json`. The IPU slice was verified against commit
+  `646df006a4` and is unchanged by the selectively integrated later VU fixes. kzipu does not modify anything in
+  `ext/pcsx2`.
 - No external dependencies. kzipu does not even compile `pcsx2/common` (see "What is compiled").
 - The test executable uses the FFmpeg build under `build/RelWithDebInfo/ThirdParty/ffmpeg-prefix/...` as the reference
   decoder. Only the test links FFmpeg.

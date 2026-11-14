@@ -4,11 +4,11 @@ kzgs compiles PCSX2's `pcsx2/GS` renderer into one static library, `kzgs.lib`. I
 game's CPU software rasterizer. It uses the D3D11, D3D12 and Vulkan hardware renderers. The rest of the emulator is
 replaced by small stubs in `shim/`, so the library needs no BIOS, EE/IOP, VIF, DMAC or MTGS.
 
-- PCSX2 source: `ext/pcsx2`, pinned in `config/dependencies.lock.json` to
-  [Tzeentchnet/pcsx2](https://github.com/Tzeentchnet/pcsx2) companion commit
-  `1fb920189c12766af55bdc9178619c0c66eb1a5e`. It includes generic presentation, Vulkan device-negotiation,
-  completed-frame, and GS observation hooks. The revision is published on `feature/kzgs-upscaler-foundation` and is
-  available for clean remote acquisition. It is a separate checkout, not the PS2Recomp submodule.
+- PCSX2 source: `ext/pcsx2`, pinned to the exact [Tzeentchnet/pcsx2](https://github.com/Tzeentchnet/pcsx2)
+  companion revision in `config/dependencies.lock.json`. It includes generic presentation, Vulkan
+  device-negotiation, completed-frame, GS observation, and renderer-timing hooks. The current locked revision is
+  marked unpublished, so retain the local checkout until the companion branch is published. It is a separate
+  checkout, not the PS2Recomp submodule.
 - Dependencies: the official `pcsx2-windows-dependencies.7z` from the locked PCSX2 Windows dependency release,
   extracted to `ext/kzgs/deps` (so the headers are in
   `ext/kzgs/deps/deps/include`). It is not committed.
