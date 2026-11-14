@@ -12,20 +12,21 @@ scheduler-pacing and GPU-profiling review was also completed that day. The basel
   [`e5636981a1c9de368f6b71e819c3dc188dfedbf4`](https://github.com/ran-j/PS2Recomp/commit/e5636981a1c9de368f6b71e819c3dc188dfedbf4).
 - PCSX2 `master` at
   [`0ab00c49b157be667a8a2f0bf4cda83f75a9198e`](https://github.com/PCSX2/pcsx2/commit/0ab00c49b157be667a8a2f0bf4cda83f75a9198e).
-- The locked local PS2Recomp revision `bf7d2d5ca364130a166b35d6a6dd697dff1bc046`; the latest published
-  [`killzone` branch is still `fbde3f0`](https://github.com/Tzeentchnet/PS2Recomp/commit/fbde3f0cbbdec560201bd1001919eda4c59376d4).
-- The locked local PCSX2 revision `accbf0cd94a49d73130be4a17b1b3bee586de4af`; the published
-  [PCSX2 upscaler-foundation branch](https://github.com/Tzeentchnet/pcsx2/tree/feature/kzgs-upscaler-foundation)
-  still ends at `1fb920189c12766af55bdc9178619c0c66eb1a5e`.
+- The locked local PS2Recomp revision
+  [`bf7d2d5ca364130a166b35d6a6dd697dff1bc046`](https://github.com/Tzeentchnet/PS2Recomp/commit/bf7d2d5ca364130a166b35d6a6dd697dff1bc046),
+  published on `test/recommended-adaptations-2026-11-11`.
+- The locked local PCSX2 revision
+  [`accbf0cd94a49d73130be4a17b1b3bee586de4af`](https://github.com/Tzeentchnet/pcsx2/commit/accbf0cd94a49d73130be4a17b1b3bee586de4af), published on the
+  [PCSX2 upscaler-foundation branch](https://github.com/Tzeentchnet/pcsx2/tree/feature/kzgs-upscaler-foundation).
 
 Before filing, rebase or reproduce against the then-current upstream head. Avoid including retail data, generated
 game code, screenshots, traces containing protected content, or paths to local disc images.
 
 ## Local dependency and ecosystem refresh (2026-11-13)
 
-The first release-hygiene task is publication, not another merge. Both locked companion revisions are newer than
-their public branches. A clean clone cannot reproduce the current tree until those exact revisions are published;
-the dependency verifier therefore correctly reports both as unpublished.
+The first release-hygiene task is complete: both exact locked companion revisions are reachable from their public
+branches. A clean clone can now fetch the recorded commits, and strict dependency verification no longer reports
+unpublished-revision warnings.
 
 | Area | Decision | Evidence and scope |
 |---|---|---|
