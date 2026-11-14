@@ -10,12 +10,12 @@
     "repository_path": "ext/PS2Recomp",
     "patch_directory": "patches/ps2recomp",
     "base_commit": "75d729ce40d7eed9649fd4bb05628dee520f3d0c",
-    "target_commit": "46708c5cd018f007185e3e975bd65ef0db065845",
-    "target_tree": "db9b4cca885a9b87460ae07dd6224c665fed9178",
+    "target_commit": "6b11b9b672bc275b902e15bf4b7ef9e30df84c51",
+    "target_tree": "73dafbe7af8fae7eff979333e0357bae634834d4",
     "canonical_patch": {
       "path": "patches/ps2recomp/combined.lock.diff",
-      "changed_paths": 83,
-      "sha256": "d144102aab9b87d68dbbd53ca8aec76de33438dd3ac248ca3064ba1a4ef86c9d"
+      "changed_paths": 85,
+      "sha256": "f2a037005056988aac25aac192508d6c0ca14e087ab54c7a2b4b863d362def84"
     },
     "patches": [
       {
@@ -181,6 +181,14 @@
       {
         "path": "0042-Test-SIF-register-syscall-dispatch.patch",
         "sha256": "e6f387e6bfc432bbee5e0aebd553c81907040bde28a15fc9acb74d3e6a07bc37"
+      },
+      {
+        "path": "0043-feat-perf-add-opt-in-sampled-EE-guest-call-profiler.patch",
+        "sha256": "8c457f1b0f0e74ef067a7726575d999f8ea3666623e113d42bd1613e79540893"
+      },
+      {
+        "path": "0044-Isolate-EE-profiler-platform-clocks.patch",
+        "sha256": "28296e854c89ef8fb3ae5ebd0ed00359bad5ff41daac9ca7a43d1ecac20b9526"
       }
     ]
   },
@@ -189,7 +197,7 @@
       "id": "ps2recomp",
       "kind": "git-submodule",
       "source_url": "https://github.com/Tzeentchnet/PS2Recomp.git",
-      "revision": "46708c5cd018f007185e3e975bd65ef0db065845",
+      "revision": "6b11b9b672bc275b902e15bf4b7ef9e30df84c51",
       "publication_status": "unpublished",
       "license": "GPL-3.0-only",
       "redistribution": "Copyleft; distribute corresponding source and notices.",

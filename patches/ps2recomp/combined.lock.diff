@@ -4271,10 +4271,18 @@ index 509fd07..025a355 100644
  
      std::string CodeGenerator::translateVU_VMTIR(const Instruction &inst)
 diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
-index 589d768..7e3c0c7 100644
+index 589d768..1ac2312 100644
 --- a/ps2xRuntime/CMakeLists.txt
 +++ b/ps2xRuntime/CMakeLists.txt
-@@ -390,6 +390,8 @@ add_library(ps2_runtime STATIC
+@@ -11,6 +11,7 @@ option(PS2X_ENABLE_RUNNER_PCH "Precompile the heavy runtime headers for ps2Entry
+ option(PS2X_ENABLE_SCCACHE "Use sccache as compiler launcher when available" ON)
+ 
+ option(PS2X_ENABLE_RUNTIME_LOGS "Enable PS2 runtime logs" ON)
++option(PS2X_ENABLE_EE_DISPATCH_PROFILE "Compile the optional sampled EE guest-call profiler" OFF)
+ option(PS2X_ENABLE_AGRESSIVE_LOGS "Enable very verbose/agressive PS2 runtime logs" ON)
+ option(PS2X_ENABLE_IOP_RPC_TRACE "Log unhandled IOP/SIF RPC trace suggestions" ON)
+ option(PS2X_STRICT_RETURN_DIAGNOSTICS "Route generated JR $ra returns through runtime branch diagnostics" OFF)
+@@ -390,6 +391,8 @@ add_library(ps2_runtime STATIC
      src/lib/ps2_vfs.cpp
      src/lib/ps2_runtime.cpp
      src/lib/ps2_vif1_interpreter.cpp
@@ -4283,6 +4291,18 @@ index 589d768..7e3c0c7 100644
      src/lib/vu/ps2_vu1_core.cpp
      src/lib/vu/ps2_vu1_upper.cpp
      src/lib/vu/ps2_vu1_lower.cpp
+@@ -433,6 +436,11 @@ file(GLOB_RECURSE KERNEL_SRC_FILES CONFIGURE_DEPENDS
+     "${CMAKE_CURRENT_SOURCE_DIR}/src/lib/Kernel/*.cpp"
+ )
+ 
++if(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++    target_compile_definitions(ps2_runtime PRIVATE PS2X_ENABLE_EE_DISPATCH_PROFILE=1)
++    target_sources(ps2_runtime PRIVATE src/lib/ee_dispatch_profile.cpp)
++endif()
++
+ target_sources(ps2_runtime PRIVATE
+     ${KERNEL_SRC_FILES}
+ )
 diff --git a/ps2xRuntime/include/ps2_cg.h b/ps2xRuntime/include/ps2_cg.h
 new file mode 100644
 index 0000000..19f30f1
@@ -4807,6 +4827,266 @@ index 0f19c9f..80f65d7 100644
  #define FPU_CVT_L_S(a) ((int64_t)(float)(a))
  #define FPU_C_F_S(a, b) (0)
  #define FPU_C_UN_S(a, b) (isnan((float)(a)) || isnan((float)(b)))
+diff --git a/ps2xRuntime/include/runtime/ee_dispatch_profile.h b/ps2xRuntime/include/runtime/ee_dispatch_profile.h
+new file mode 100644
+index 0000000..df68e54
+--- /dev/null
++++ b/ps2xRuntime/include/runtime/ee_dispatch_profile.h
+@@ -0,0 +1,254 @@
++#pragma once
++
++// Optional diagnostics for recompiled EE call paths. Normal builds compile out
++// the hot-path hooks; an instrumented build still requires PS2X_EE_PROFILE=1.
++#include <compare>
++#include <cstddef>
++#include <cstdint>
++#include <map>
++
++#if defined(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++#include <algorithm>
++#include <array>
++#include <chrono>
++#include <cstdlib>
++#include <cstring>
++#include <iostream>
++#include <utility>
++#include <vector>
++#endif
++
++namespace ps2x::ee_profile
++{
++enum class CallKind : uint8_t
++{
++    Outer,
++    Nested,
++};
++
++struct CallKey
++{
++    CallKind kind = CallKind::Outer;
++    uint32_t caller = 0u;
++    uint32_t target = 0u;
++    auto operator<=>(const CallKey &) const = default;
++};
++
++struct CallTotals
++{
++    uint64_t samples = 0u;
++    uint64_t cpuSamples = 0u;
++    uint64_t cpuUnits = 0u;
++    uint64_t wallNanoseconds = 0u;
++};
++
++class Accumulator
++{
++public:
++    explicit Accumulator(size_t maxKeys = 256u) : m_maxKeys(maxKeys) {}
++
++    void add(CallKey key, uint64_t cpuUnits, uint64_t wallNanoseconds, bool hasCpu)
++    {
++        auto it = m_rows.find(key);
++        if (it == m_rows.end())
++        {
++            if (m_rows.size() >= m_maxKeys)
++            {
++                ++m_dropped;
++                return;
++            }
++            it = m_rows.emplace(key, CallTotals{}).first;
++        }
++        auto &row = it->second;
++        ++row.samples;
++        row.wallNanoseconds += wallNanoseconds;
++        if (hasCpu)
++        {
++            ++row.cpuSamples;
++            row.cpuUnits += cpuUnits;
++        }
++    }
++
++    [[nodiscard]] const std::map<CallKey, CallTotals> &rows() const noexcept { return m_rows; }
++    [[nodiscard]] uint64_t dropped() const noexcept { return m_dropped; }
++    void clear()
++    {
++        m_rows.clear();
++        m_dropped = 0u;
++    }
++
++private:
++    size_t m_maxKeys;
++    std::map<CallKey, CallTotals> m_rows;
++    uint64_t m_dropped = 0u;
++};
++
++#if defined(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++namespace detail
++{
++inline bool enabled() noexcept
++{
++    static const bool active = [] {
++        const char *value = std::getenv("PS2X_EE_PROFILE");
++        return value != nullptr && std::strcmp(value, "1") == 0;
++    }();
++    return active;
++}
++
++bool readSampleCpu(uint64_t &value) noexcept;
++bool readThreadCpuNs(uint64_t &value) noexcept;
++
++struct State
++{
++    Accumulator measurements;
++    std::array<uint64_t, 2> attempts{};
++    uint32_t randomState = 0x6d2b79f5u;
++    uint64_t firstField = 0u;
++    uint64_t cpuAtFirstFieldNs = 0u;
++    bool hasCpuStart = false;
++};
++
++inline State &state()
++{
++    static thread_local State instance;
++    return instance;
++}
++
++inline void resetWindow(State &s, uint64_t field)
++{
++    s.firstField = field;
++    s.measurements.clear();
++    s.attempts = {};
++    s.hasCpuStart = readThreadCpuNs(s.cpuAtFirstFieldNs);
++}
++
++inline void emit(State &s, uint64_t field)
++{
++    if (s.firstField == 0u || field <= s.firstField)
++        return;
++    uint64_t cpuNow = 0u;
++    const bool validCpu = s.hasCpuStart && readThreadCpuNs(cpuNow) && cpuNow >= s.cpuAtFirstFieldNs;
++    const double cpuMsPerField = validCpu
++        ? double(cpuNow - s.cpuAtFirstFieldNs) / (1000000.0 * double(field - s.firstField))
++        : -1.0;
++    std::cerr << "[ps2x:ee-profile] fields=" << (field - s.firstField)
++              << " end=" << field
++              << " ee_thread_cpu_ms_per_field=" << cpuMsPerField
++              << " outer_calls=" << s.attempts[0]
++              << " nested_calls=" << s.attempts[1]
++              << " dropped_keys=" << s.measurements.dropped() << '\n';
++
++    std::vector<std::pair<CallKey, CallTotals>> ranked(
++        s.measurements.rows().begin(), s.measurements.rows().end());
++    std::sort(ranked.begin(), ranked.end(), [](const auto &a, const auto &b) {
++        if (a.second.cpuUnits != b.second.cpuUnits)
++            return a.second.cpuUnits > b.second.cpuUnits;
++        return a.second.wallNanoseconds > b.second.wallNanoseconds;
++    });
++    std::array<unsigned, 2> printed{};
++    for (const auto &[key, totals] : ranked)
++    {
++        const size_t index = static_cast<size_t>(key.kind);
++        if (printed[index]++ >= 8u)
++            continue;
++        std::cerr << "[ps2x:ee-profile] kind=" << (index == 0u ? "outer" : "nested")
++                  << " caller=0x" << std::hex << key.caller
++                  << " target=0x" << key.target << std::dec
++                  << " samples=" << totals.samples
++                  << " cpu_samples=" << totals.cpuSamples
++                  << " cpu_units=" << totals.cpuUnits
++                  << " wall_ns=" << totals.wallNanoseconds << '\n';
++    }
++    // Inclusive nested and outer samples overlap: never add their totals.
++}
++} // namespace detail
++
++class ScopedCall
++{
++public:
++    ScopedCall(CallKind kind, uint32_t caller, uint32_t target) noexcept
++        : m_key{kind, caller, target}
++    {
++        if (!detail::enabled())
++            return;
++        auto &s = detail::state();
++        ++s.attempts[static_cast<size_t>(kind)];
++        uint32_t &rng = s.randomState;
++        rng ^= rng << 13;
++        rng ^= rng >> 17;
++        rng ^= rng << 5;
++        if ((rng & 255u) != 0u)
++            return;
++        m_hasCpu = detail::readSampleCpu(m_startCpu);
++        m_startWall = std::chrono::steady_clock::now();
++        m_sampled = true;
++    }
++
++    ScopedCall(const ScopedCall &) = delete;
++    ScopedCall &operator=(const ScopedCall &) = delete;
++
++    ~ScopedCall() noexcept
++    {
++        if (!m_sampled)
++            return;
++        uint64_t cpuEnd = 0u;
++        const bool validCpu = m_hasCpu && detail::readSampleCpu(cpuEnd) && cpuEnd >= m_startCpu;
++        const auto wall = std::chrono::duration_cast<std::chrono::nanoseconds>(
++            std::chrono::steady_clock::now() - m_startWall).count();
++        try
++        {
++            detail::state().measurements.add(
++                m_key, validCpu ? cpuEnd - m_startCpu : 0u,
++                wall > 0 ? static_cast<uint64_t>(wall) : 0u, validCpu);
++        }
++        catch (...)
++        {
++            // Diagnostics must never replace the guest exception or alter its state.
++        }
++    }
++
++private:
++    CallKey m_key;
++    bool m_sampled = false;
++    bool m_hasCpu = false;
++    uint64_t m_startCpu = 0u;
++    std::chrono::steady_clock::time_point m_startWall{};
++};
++
++inline void onField(uint64_t field) noexcept
++{
++    if (!detail::enabled())
++        return;
++    try
++    {
++        auto &s = detail::state();
++        if (s.firstField == 0u)
++            detail::resetWindow(s, field);
++        else if (field - s.firstField >= 120u)
++        {
++            detail::emit(s, field);
++            detail::resetWindow(s, field);
++        }
++    }
++    catch (...)
++    {
++        // Never disrupt VBlank delivery for optional logging.
++    }
++}
++
++inline void finish(uint64_t field) noexcept
++{
++    if (!detail::enabled())
++        return;
++    try
++    {
++        auto &s = detail::state();
++        detail::emit(s, field);
++        detail::resetWindow(s, 0u);
++    }
++    catch (...)
++    {
++    }
++}
++#endif
++} // namespace ps2x::ee_profile
 diff --git a/ps2xRuntime/include/runtime/ee_scheduler.h b/ps2xRuntime/include/runtime/ee_scheduler.h
 index f247ff9..9b46682 100644
 --- a/ps2xRuntime/include/runtime/ee_scheduler.h
@@ -5373,10 +5653,10 @@ index 0000000..00c7510
 +    std::atomic<bool> m_preciseFailed{false};
 +};
 diff --git a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
-index c5e31c4..4fd68d4 100644
+index c5e31c4..3ed1f16 100644
 --- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
 +++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
-@@ -1,13 +1,435 @@
+@@ -1,13 +1,438 @@
 +#include "runtime/ps2_host_gs.h"
 +#include "runtime/ps2_timeline.h"
 +#include <atomic>
@@ -5390,6 +5670,9 @@ index c5e31c4..4fd68d4 100644
  #include "ps2_runtime_macros.h"
 +#include "ps2_cg_dsp.h" // g_ps2DspStat, PS2_TAIL_MARK (includes ps2_cg.h)
 +#include "ps2_cg.h" // g_ps2EeBudget: the guest code's checkpoint budget (the dispatch loop charges through it as well)
++#if defined(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++#include "runtime/ee_dispatch_profile.h"
++#endif
  
  #include <algorithm>
 +#include <string_view>
@@ -5812,7 +6095,7 @@ index c5e31c4..4fd68d4 100644
  
  namespace
  {
-@@ -31,7 +453,11 @@ namespace
+@@ -31,7 +456,11 @@ namespace
      constexpr uint32_t WEF_OR = 0x01u;
      constexpr uint32_t WEF_CLEAR = 0x10u;
      constexpr uint32_t WEF_CLEAR_ALL = 0x20u;
@@ -5825,7 +6108,7 @@ index c5e31c4..4fd68d4 100644
      constexpr auto kVBlankDuration = std::chrono::microseconds(500);
      constexpr uint64_t kAlarmTickMicroseconds = 64u;
      constexpr uint32_t kDebugPublishDispatchInterval = 4096u;
-@@ -50,7 +476,10 @@ namespace
+@@ -50,7 +479,10 @@ namespace
          return std::chrono::seconds(wholeSeconds) + std::chrono::nanoseconds(remainingNanoseconds);
      }
  
@@ -5837,7 +6120,7 @@ index c5e31c4..4fd68d4 100644
      constexpr uint64_t kVBlankDurationCycles = microsecondsToEeCycles(500u);
      constexpr uint64_t kAlarmTickCycles = microsecondsToEeCycles(kAlarmTickMicroseconds);
  
-@@ -73,8 +502,14 @@ namespace
+@@ -73,8 +505,14 @@ namespace
  }
  
  EeScheduler::EeScheduler(PS2Runtime &runtime)
@@ -5853,7 +6136,7 @@ index c5e31c4..4fd68d4 100644
  }
  
  EeScheduler::~EeScheduler()
-@@ -88,6 +523,7 @@ void EeScheduler::reset(uint8_t *rdram, const R5900Context &mainContext)
+@@ -88,6 +526,7 @@ void EeScheduler::reset(uint8_t *rdram, const R5900Context &mainContext)
      m_rdram = rdram;
      m_readyQueues = {};
      m_threads.clear();
@@ -5861,7 +6144,7 @@ index c5e31c4..4fd68d4 100644
      m_semaphores.clear();
      m_eventFlags.clear();
      m_alarms.clear();
-@@ -119,6 +555,7 @@ void EeScheduler::reset(uint8_t *rdram, const R5900Context &mainContext)
+@@ -119,6 +558,7 @@ void EeScheduler::reset(uint8_t *rdram, const R5900Context &mainContext)
      {
          std::lock_guard lock(m_eventMutex);
          m_events.clear();
@@ -5869,7 +6152,7 @@ index c5e31c4..4fd68d4 100644
          m_deadlines.clear();
          m_pendingInvocations.clear();
      }
-@@ -146,8 +583,8 @@ void EeScheduler::reset(uint8_t *rdram, const R5900Context &mainContext)
+@@ -146,8 +586,8 @@ void EeScheduler::reset(uint8_t *rdram, const R5900Context &mainContext)
      main.status = EeThreadStatus::Ready;
      m_threads.emplace(main.id, std::move(main));
      m_readyQueues[0].push_back(kMainThreadId);
@@ -5880,7 +6163,7 @@ index c5e31c4..4fd68d4 100644
                    EeEvent{EeEventType::VBlankStart, 0, 0});
      publishSnapshot();
  }
-@@ -157,9 +594,33 @@ void EeScheduler::run()
+@@ -157,9 +597,33 @@ void EeScheduler::run()
      assertExecutor();
      m_running.store(true, std::memory_order_release);
  
@@ -5915,7 +6198,7 @@ index c5e31c4..4fd68d4 100644
          if (m_stopRequested.load(std::memory_order_acquire))
          {
              break;
-@@ -173,7 +634,9 @@ void EeScheduler::run()
+@@ -173,7 +637,9 @@ void EeScheduler::run()
                  copyMainContextToRuntime();
                  publishIdleDebugContext();
                  publishSnapshot();
@@ -5925,7 +6208,7 @@ index c5e31c4..4fd68d4 100644
                  continue;
              }
              if (next)
-@@ -192,6 +655,7 @@ void EeScheduler::run()
+@@ -192,6 +658,7 @@ void EeScheduler::run()
                  {
                      SET_GPR_U32(&invocation.context, 29, invocationStackTop());
                  }
@@ -5933,7 +6216,7 @@ index c5e31c4..4fd68d4 100644
                  owner->invocations.push_back(std::move(invocation));
              }
          }
-@@ -204,6 +668,7 @@ void EeScheduler::run()
+@@ -204,6 +671,7 @@ void EeScheduler::run()
              running->resumeCompletion = {};
              try
              {
@@ -5941,7 +6224,7 @@ index c5e31c4..4fd68d4 100644
                  completion(running->activeContext());
              }
              catch (const EeDispatcherTransfer &)
-@@ -226,7 +691,10 @@ void EeScheduler::run()
+@@ -226,7 +694,10 @@ void EeScheduler::run()
              --m_debugPublishCountdown;
          }
  
@@ -5953,7 +6236,7 @@ index c5e31c4..4fd68d4 100644
  
          if (context.pc == 0u)
          {
-@@ -234,6 +702,8 @@ void EeScheduler::run()
+@@ -234,6 +705,8 @@ void EeScheduler::run()
              {
                  GuestInvocation completed = std::move(running->invocations.back());
                  running->invocations.pop_back();
@@ -5962,7 +6245,7 @@ index c5e31c4..4fd68d4 100644
                  if (completed.onComplete)
                  {
                      try
-@@ -254,7 +724,11 @@ void EeScheduler::run()
+@@ -254,7 +727,11 @@ void EeScheduler::run()
              continue;
          }
  
@@ -5975,7 +6258,7 @@ index c5e31c4..4fd68d4 100644
          {
              GuestInvocation invocation = std::move(m_pendingInvocations.front());
              m_pendingInvocations.pop_front();
-@@ -262,11 +736,21 @@ void EeScheduler::run()
+@@ -262,11 +739,21 @@ void EeScheduler::run()
              {
                  SET_GPR_U32(&invocation.context, 29, invocationStackTop());
              }
@@ -5998,7 +6281,7 @@ index c5e31c4..4fd68d4 100644
          {
              if (!running->invocations.empty())
              {
-@@ -274,6 +758,7 @@ void EeScheduler::run()
+@@ -274,6 +761,7 @@ void EeScheduler::run()
              }
              else
              {
@@ -6006,7 +6289,7 @@ index c5e31c4..4fd68d4 100644
                  m_runtime.reportMissingFunction(m_rdram,
                                                  &context,
                                                  context.pc,
-@@ -285,23 +770,98 @@ void EeScheduler::run()
+@@ -285,23 +773,102 @@ void EeScheduler::run()
              }
              continue;
          }
@@ -6081,6 +6364,10 @@ index c5e31c4..4fd68d4 100644
 +            }
              m_insideInterrupt = !running->invocations.empty() && running->invocations.back().kind == GuestInvocationKind::Interrupt;
              m_guestExecuting.store(true, std::memory_order_release);
++#if defined(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++            ps2x::ee_profile::ScopedCall profileSample(ps2x::ee_profile::CallKind::Outer,
++                                                       context.pc, context.pc);
++#endif
 +            schedTrace('E', running->id, running->invocations.size(), context);
 +            g_ps2GuestUnwinding = false;
              function(m_rdram, &context, &m_runtime);
@@ -6107,7 +6394,7 @@ index c5e31c4..4fd68d4 100644
              m_guestExecuting.store(false, std::memory_order_release);
              m_insideInterrupt = false;
          }
-@@ -313,7 +873,8 @@ void EeScheduler::run()
+@@ -313,7 +880,8 @@ void EeScheduler::run()
              throw;
          }
  
@@ -6117,7 +6404,17 @@ index c5e31c4..4fd68d4 100644
          if (m_rescheduleRequested && m_currentThreadId != 0)
          {
              GuestThread *preempted = currentThread();
-@@ -335,7 +896,7 @@ void EeScheduler::requestStop()
+@@ -325,6 +893,9 @@ void EeScheduler::run()
+         }
+     }
+ 
++#if defined(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++    ps2x::ee_profile::finish(m_vsyncTick);
++#endif
+     m_guestExecuting.store(false, std::memory_order_release);
+     m_running.store(false, std::memory_order_release);
+     copyMainContextToRuntime();
+@@ -335,7 +906,7 @@ void EeScheduler::requestStop()
  {
      m_stopRequested.store(true, std::memory_order_release);
      m_checkpointPending.store(true, std::memory_order_release);
@@ -6126,7 +6423,7 @@ index c5e31c4..4fd68d4 100644
  }
  
  void EeScheduler::postEvent(EeEvent event)
-@@ -349,18 +910,35 @@ void EeScheduler::postEvent(EeEvent event)
+@@ -349,18 +920,35 @@ void EeScheduler::postEvent(EeEvent event)
      {
          std::lock_guard lock(m_eventMutex);
          m_events.push_back(event);
@@ -6163,7 +6460,7 @@ index c5e31c4..4fd68d4 100644
          return true;
      }
  
-@@ -368,6 +946,7 @@ bool EeScheduler::checkpointDue(uint32_t cycles) noexcept
+@@ -368,6 +956,7 @@ bool EeScheduler::checkpointDue(uint32_t cycles) noexcept
      if (nextEventCycle != 0u && m_eeCycle >= nextEventCycle)
      {
          m_checkpointPending.store(true, std::memory_order_release);
@@ -6171,7 +6468,7 @@ index c5e31c4..4fd68d4 100644
          return true;
      }
  
-@@ -381,6 +960,7 @@ bool EeScheduler::checkpointDue(uint32_t cycles) noexcept
+@@ -381,6 +970,7 @@ bool EeScheduler::checkpointDue(uint32_t cycles) noexcept
      {
          m_rescheduleRequested = true;
          m_timeSliceExpired = true;
@@ -6179,7 +6476,7 @@ index c5e31c4..4fd68d4 100644
          return true;
      }
  
-@@ -388,12 +968,70 @@ bool EeScheduler::checkpointDue(uint32_t cycles) noexcept
+@@ -388,12 +978,70 @@ bool EeScheduler::checkpointDue(uint32_t cycles) noexcept
      return false;
  }
  
@@ -6252,7 +6549,7 @@ index c5e31c4..4fd68d4 100644
      if (m_pendingEeTimerInterrupts != 0u)
      {
          m_checkpointPending.store(true, std::memory_order_release);
-@@ -472,6 +1110,7 @@ int EeScheduler::deleteThread(int id, uint32_t &ownedStack)
+@@ -472,6 +1120,7 @@ int EeScheduler::deleteThread(int id, uint32_t &ownedStack)
          ownedStack = it->second.stack;
      }
      m_threads.erase(it);
@@ -6260,7 +6557,7 @@ index c5e31c4..4fd68d4 100644
      publishSnapshot();
      return KE_OK;
  }
-@@ -520,6 +1159,7 @@ int EeScheduler::startThread(int id, uint32_t arg, const R5900Context &caller, b
+@@ -520,6 +1169,7 @@ int EeScheduler::startThread(int id, uint32_t arg, const R5900Context &caller, b
      if (deleteThreadRecord && id != kMainThreadId)
      {
          m_threads.erase(id);
@@ -6268,7 +6565,7 @@ index c5e31c4..4fd68d4 100644
      }
      if (ownedStack != 0u)
      {
-@@ -1271,6 +1911,8 @@ void EeScheduler::dispatchIrq(bool dmac, uint32_t cause)
+@@ -1271,6 +1921,8 @@ void EeScheduler::dispatchIrq(bool dmac, uint32_t cause)
              matching.push_back(handler);
          }
      }
@@ -6277,7 +6574,7 @@ index c5e31c4..4fd68d4 100644
      std::sort(matching.begin(), matching.end(), [](const EeIrqHandler &left, const EeIrqHandler &right)
                { return left.order < right.order; });
      for (const EeIrqHandler &handler : matching)
-@@ -1430,7 +2072,13 @@ const EeEventFlag *EeScheduler::eventFlag(int id) const
+@@ -1430,7 +2082,13 @@ const EeEventFlag *EeScheduler::eventFlag(int id) const
  
  GuestThread *EeScheduler::currentThread()
  {
@@ -6292,7 +6589,7 @@ index c5e31c4..4fd68d4 100644
  }
  
  const GuestThread *EeScheduler::currentThread() const
-@@ -1743,6 +2391,7 @@ void EeScheduler::applyPendingPreemption()
+@@ -1743,6 +2401,7 @@ void EeScheduler::applyPendingPreemption()
  void EeScheduler::processPendingEvents()
  {
      assertExecutor();
@@ -6300,7 +6597,7 @@ index c5e31c4..4fd68d4 100644
      processDueDeadlines();
      const uint32_t timerInterrupts = m_pendingEeTimerInterrupts;
      m_pendingEeTimerInterrupts = 0u;
-@@ -1750,31 +2399,46 @@ void EeScheduler::processPendingEvents()
+@@ -1750,31 +2409,46 @@ void EeScheduler::processPendingEvents()
      {
          if ((timerInterrupts & (1u << timer)) != 0u)
          {
@@ -6356,7 +6653,7 @@ index c5e31c4..4fd68d4 100644
      for (;;)
      {
          std::vector<ScheduledEvent> due;
-@@ -1800,14 +2464,22 @@ void EeScheduler::processDueDeadlines()
+@@ -1800,14 +2474,22 @@ void EeScheduler::processDueDeadlines()
  
              if (now < pacingDeadline)
              {
@@ -6382,7 +6679,7 @@ index c5e31c4..4fd68d4 100644
              }
  
              const auto pacedNow = std::chrono::steady_clock::now();
-@@ -1850,8 +2522,8 @@ void EeScheduler::processDueDeadlines()
+@@ -1850,8 +2532,8 @@ void EeScheduler::processDueDeadlines()
                  scheduleEvent(scheduled.deadlineCycle + kVBlankDurationCycles,
                                scheduled.hostDeadline + kVBlankDuration,
                                EeEvent{EeEventType::VBlankEnd, 0, m_vsyncTick + 1u});
@@ -6393,7 +6690,7 @@ index c5e31c4..4fd68d4 100644
                                EeEvent{EeEventType::VBlankStart, 0, 0});
              }
              processEvent(scheduled.event);
-@@ -1861,6 +2533,7 @@ void EeScheduler::processDueDeadlines()
+@@ -1861,6 +2543,7 @@ void EeScheduler::processDueDeadlines()
  
  void EeScheduler::processEvent(const EeEvent &event)
  {
@@ -6401,15 +6698,18 @@ index c5e31c4..4fd68d4 100644
      switch (event.type)
      {
      case EeEventType::Stop:
-@@ -1868,6 +2541,7 @@ void EeScheduler::processEvent(const EeEvent &event)
+@@ -1868,6 +2551,10 @@ void EeScheduler::processEvent(const EeEvent &event)
          break;
      case EeEventType::VBlankStart:
          ++m_vsyncTick;
 +        ps2tl::rec(ps2tl::VBLANK, static_cast<uint32_t>(m_vsyncTick), 0u, static_cast<uint32_t>(m_eeCycle));
++#if defined(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++        ps2x::ee_profile::onField(m_vsyncTick);
++#endif
          m_runtime.memory().gs().vsyncTick.store(m_vsyncTick, std::memory_order_release);
          if ((m_vsyncTick & 1u) != 0u)
          {
-@@ -1888,6 +2562,18 @@ void EeScheduler::processEvent(const EeEvent &event)
+@@ -1888,6 +2575,18 @@ void EeScheduler::processEvent(const EeEvent &event)
          }
          m_vsyncFlagAddress = 0u;
          m_vsyncTickAddress = 0u;
@@ -6428,7 +6728,7 @@ index c5e31c4..4fd68d4 100644
          completeVSync(m_vsyncTick);
          if (m_gsVSyncCallback != 0u && m_runtime.hasFunction(m_gsVSyncCallback))
          {
-@@ -1909,6 +2595,11 @@ void EeScheduler::processEvent(const EeEvent &event)
+@@ -1909,6 +2608,11 @@ void EeScheduler::processEvent(const EeEvent &event)
          dispatchIrq(false, 3u);
          break;
      case EeEventType::Dmac:
@@ -6440,7 +6740,7 @@ index c5e31c4..4fd68d4 100644
          break;
      case EeEventType::Alarm:
      {
-@@ -1994,63 +2685,106 @@ void EeScheduler::writeGuestU32(uint32_t address, uint32_t value)
+@@ -1994,63 +2698,106 @@ void EeScheduler::writeGuestU32(uint32_t address, uint32_t value)
      std::memcpy(m_rdram + physical, &value, sizeof(value));
  }
  
@@ -6584,7 +6884,7 @@ index c5e31c4..4fd68d4 100644
      }
  }
  
-@@ -2063,7 +2797,7 @@ void EeScheduler::scheduleEvent(uint64_t deadlineCycle,
+@@ -2063,7 +2810,7 @@ void EeScheduler::scheduleEvent(uint64_t deadlineCycle,
          m_deadlines.push_back(ScheduledEvent{deadlineCycle, hostDeadline, event, ++m_eventSequence});
          updateNextDeadline();
      }
@@ -6593,7 +6893,7 @@ index c5e31c4..4fd68d4 100644
  }
  
  void EeScheduler::updateNextDeadline()
-@@ -2144,3 +2878,23 @@ void EeScheduler::publishIdleDebugContext()
+@@ -2144,3 +2891,23 @@ void EeScheduler::publishIdleDebugContext()
          publishDebugContext(selected->activeContext());
      }
  }
@@ -8523,6 +8823,68 @@ index 07fcd29..3dc8e0d 100644
  
              if (iopResult.signalNowaitCompletion &&
                  (mode & kSifRpcModeNowait) != 0u)
+diff --git a/ps2xRuntime/src/lib/ee_dispatch_profile.cpp b/ps2xRuntime/src/lib/ee_dispatch_profile.cpp
+new file mode 100644
+index 0000000..c3754ac
+--- /dev/null
++++ b/ps2xRuntime/src/lib/ee_dispatch_profile.cpp
+@@ -0,0 +1,56 @@
++#include "runtime/ee_dispatch_profile.h"
++
++#if defined(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++#if defined(_WIN32)
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <windows.h>
++#else
++#include <time.h>
++#endif
++
++namespace ps2x::ee_profile::detail
++{
++bool readSampleCpu(uint64_t &value) noexcept
++{
++#if defined(_WIN32)
++    ULONG64 cycles = 0u;
++    if (!QueryThreadCycleTime(GetCurrentThread(), &cycles))
++        return false;
++    value = static_cast<uint64_t>(cycles);
++    return true;
++#elif defined(CLOCK_THREAD_CPUTIME_ID)
++    timespec now{};
++    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &now) != 0)
++        return false;
++    value = uint64_t(now.tv_sec) * 1000000000ull + uint64_t(now.tv_nsec);
++    return true;
++#else
++    (void)value;
++    return false;
++#endif
++}
++
++bool readThreadCpuNs(uint64_t &value) noexcept
++{
++#if defined(_WIN32)
++    FILETIME created{}, exited{}, kernel{}, user{};
++    if (!GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user))
++        return false;
++    ULARGE_INTEGER k{}, u{};
++    k.LowPart = kernel.dwLowDateTime;
++    k.HighPart = kernel.dwHighDateTime;
++    u.LowPart = user.dwLowDateTime;
++    u.HighPart = user.dwHighDateTime;
++    value = (k.QuadPart + u.QuadPart) * 100u;
++    return true;
++#else
++    return readSampleCpu(value);
++#endif
++}
++} // namespace ps2x::ee_profile::detail
++#endif
 diff --git a/ps2xRuntime/src/lib/gs/gs_frontend.cpp b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
 index 5658928..9281d5f 100644
 --- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
@@ -10438,7 +10800,7 @@ index 8590f14..f150a3f 100644
      std::memset(data, 0, 32);
      data[0] = 0x01;
 diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
-index 45cb9d2..07c670b 100644
+index 45cb9d2..87a744d 100644
 --- a/ps2xRuntime/src/lib/ps2_runtime.cpp
 +++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
 @@ -1,3 +1,4 @@
@@ -10446,7 +10808,16 @@ index 45cb9d2..07c670b 100644
  #include "ps2_runtime.h"
  #include "ps2_log.h"
  #include "ps2_stubs.h"
-@@ -12,6 +13,90 @@
+@@ -6,12 +7,99 @@
+ #include "ps2_runtime_macros.h"
+ #include "runtime/gs/gs_frontend.h"
+ #include "runtime/ee_scheduler.h"
++#if defined(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++#include "runtime/ee_dispatch_profile.h"
++#endif
+ #include "ThreadNaming.h"
+ #include "Kernel/Stubs/Audio.h"
+ #include "Kernel/Stubs/GS.h"
  #include "Kernel/Stubs/MPEG.h"
  #include "ps2_host_backend.h"
  #include "ps2_iop_host.h"
@@ -10537,7 +10908,7 @@ index 45cb9d2..07c670b 100644
  #include "ps2x/iop/iop_subsystem.h"
  
  #include <iostream>
-@@ -27,6 +112,21 @@
+@@ -27,6 +115,21 @@
  #include <unordered_map>
  #include <sstream>
  
@@ -10559,7 +10930,7 @@ index 45cb9d2..07c670b 100644
  namespace ps2_stubs
  {
      void resetSifState();
-@@ -477,10 +577,37 @@ static void UploadFrame(Texture2D &tex, PS2Runtime *rt, uint32_t &outWidth, uint
+@@ -477,10 +580,37 @@ static void UploadFrame(Texture2D &tex, PS2Runtime *rt, uint32_t &outWidth, uint
      s_hasUploadedFrame = true;
  }
  
@@ -10597,7 +10968,7 @@ index 45cb9d2..07c670b 100644
  
      m_eeScheduler = std::make_unique<EeScheduler>(*this);
  
-@@ -607,7 +734,34 @@ void PS2Runtime::notifyIopSifTransfer(uint8_t *rdram, const ps2x::iop::SifTransf
+@@ -607,7 +737,34 @@ void PS2Runtime::notifyIopSifTransfer(uint8_t *rdram, const ps2x::iop::SifTransf
  
  void PS2Runtime::advanceIopEeCycles(uint64_t eeCycles) noexcept
  {
@@ -10633,7 +11004,7 @@ index 45cb9d2..07c670b 100644
  }
  
  void PS2Runtime::resetIop()
-@@ -668,6 +822,7 @@ bool PS2Runtime::syncCoreSubsystems()
+@@ -668,6 +825,7 @@ bool PS2Runtime::syncCoreSubsystems()
      m_gifArbiter.setProcessPacketFn([this](const uint8_t *data, uint32_t size)
                                      { m_gs.processGIFPacket(data, size); });
      m_memory.setGifArbiter(&m_gifArbiter);
@@ -10641,7 +11012,7 @@ index 45cb9d2..07c670b 100644
      m_memory.setVu1MscalCallback([this](uint32_t startPC, uint32_t top, uint32_t itop)
                                   {
                                       R5900Context *cpuContext = m_eeScheduler ? m_eeScheduler->currentContext() : nullptr;
-@@ -675,6 +830,12 @@ bool PS2Runtime::syncCoreSubsystems()
+@@ -675,6 +833,12 @@ bool PS2Runtime::syncCoreSubsystems()
                                       {
                                           cpuContext = &m_cpuContext;
                                       }
@@ -10654,7 +11025,7 @@ index 45cb9d2..07c670b 100644
                                       m_vu1.state().dBitEnabled =
                                           (cpuContext->vu0_fbrst & (1u << 10)) != 0u;
                                       m_vu1.state().tBitEnabled =
-@@ -693,6 +854,12 @@ bool PS2Runtime::syncCoreSubsystems()
+@@ -693,6 +857,12 @@ bool PS2Runtime::syncCoreSubsystems()
                                       {
                                           cpuContext = &m_cpuContext;
                                       }
@@ -10667,7 +11038,7 @@ index 45cb9d2..07c670b 100644
                                       m_vu1.state().dBitEnabled =
                                           (cpuContext->vu0_fbrst & (1u << 10)) != 0u;
                                       m_vu1.state().tBitEnabled =
-@@ -713,6 +880,38 @@ bool PS2Runtime::syncCoreSubsystems()
+@@ -713,6 +883,38 @@ bool PS2Runtime::syncCoreSubsystems()
      return true;
  }
  
@@ -10706,7 +11077,7 @@ index 45cb9d2..07c670b 100644
  bool PS2Runtime::initialize(const char *title)
  {
      try
-@@ -731,12 +930,21 @@ bool PS2Runtime::initialize(const char *title)
+@@ -731,12 +933,21 @@ bool PS2Runtime::initialize(const char *title)
  #if defined(PLATFORM_VITA)
          InitWindow(HOST_WINDOW_WIDTH, HOST_WINDOW_HEIGHT, title); // raylib vita does not support audio
  #else
@@ -10733,7 +11104,7 @@ index 45cb9d2..07c670b 100644
          if (m_debugUiInitCallback)
          {
              m_debugUiInitCallback(*this, m_debugUiUserData);
-@@ -1275,6 +1483,17 @@ void PS2Runtime::reportMissingFunction(uint8_t *rdram,
+@@ -1275,6 +1486,17 @@ void PS2Runtime::reportMissingFunction(uint8_t *rdram,
  
      if (firstReport)
      {
@@ -10751,7 +11122,7 @@ index 45cb9d2..07c670b 100644
          std::ostringstream oss;
          oss << "[guest-branch:missing-target] kind=" << describeGuestBranchKind(kind)
              << " op=" << (debugName ? debugName : "<unknown>")
-@@ -1324,6 +1543,47 @@ void PS2Runtime::reportMissingFunction(uint8_t *rdram,
+@@ -1324,6 +1546,47 @@ void PS2Runtime::reportMissingFunction(uint8_t *rdram,
          }
      }
  
@@ -10799,7 +11170,7 @@ index 45cb9d2..07c670b 100644
      if (firstReport && policy == MissingFunctionPolicy::BreakOnce)
      {
  #if defined(_MSC_VER)
-@@ -1342,6 +1602,25 @@ void PS2Runtime::reportMissingFunction(uint8_t *rdram,
+@@ -1342,6 +1605,25 @@ void PS2Runtime::reportMissingFunction(uint8_t *rdram,
      }
  }
  
@@ -10825,7 +11196,7 @@ index 45cb9d2..07c670b 100644
  bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
                                       R5900Context *ctx,
                                       uint32_t targetPc,
-@@ -1352,12 +1631,15 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
+@@ -1352,12 +1634,15 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
  {
      ctx->pc = targetPc;
      const bool isCall = (kind == GuestBranchKind::DirectCall || kind == GuestBranchKind::IndirectCall);
@@ -10841,7 +11212,7 @@ index 45cb9d2..07c670b 100644
          return false;
      }
  
-@@ -1369,6 +1651,7 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
+@@ -1369,6 +1654,7 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
          }
  
          ctx->pc = targetPc;
@@ -10849,16 +11220,26 @@ index 45cb9d2..07c670b 100644
          return false;
      }
  
-@@ -1398,7 +1681,7 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
+@@ -1396,9 +1682,17 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
+ 
+     RecompiledFunction targetFn = lookupFunction(targetPc);
      const uint32_t entryPc = ctx->pc;
++#if defined(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++    {
++        ps2x::ee_profile::ScopedCall sample(ps2x::ee_profile::CallKind::Nested,
++                                            sourcePc, targetPc);
++        targetFn(rdram, ctx, this);
++    }
++#else
      targetFn(rdram, ctx, this);
++#endif
  
 -    if (isStopRequested() || ctx->pc == 0u)
 +    if (isStopRequested() || ctx->pc == 0u || g_ps2GuestUnwinding)
      {
          return false;
      }
-@@ -1408,7 +1691,12 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
+@@ -1408,7 +1702,12 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
          ctx->pc = fallthroughPc;
      }
  
@@ -10872,7 +11253,7 @@ index 45cb9d2..07c670b 100644
  }
  
  void PS2Runtime::SignalException(R5900Context *ctx, PS2Exception exception)
-@@ -1437,6 +1725,14 @@ void PS2Runtime::executeVU0Microprogram(uint8_t *rdram, R5900Context *ctx, uint3
+@@ -1437,6 +1736,14 @@ void PS2Runtime::executeVU0Microprogram(uint8_t *rdram, R5900Context *ctx, uint3
          return;
      }
  
@@ -10887,7 +11268,7 @@ index 45cb9d2..07c670b 100644
      m_vu0.reset();
      copyVu0ContextToState(ctx, m_vu0.state());
      m_vu0.execute(vu0Code, PS2_VU0_CODE_SIZE,
-@@ -1448,8 +1744,13 @@ void PS2Runtime::executeVU0Microprogram(uint8_t *rdram, R5900Context *ctx, uint3
+@@ -1448,8 +1755,13 @@ void PS2Runtime::executeVU0Microprogram(uint8_t *rdram, R5900Context *ctx, uint3
  
  void PS2Runtime::vu0StartMicroProgram(uint8_t *rdram, R5900Context *ctx, uint32_t address)
  {
@@ -10903,7 +11284,7 @@ index 45cb9d2..07c670b 100644
  }
  
  void PS2Runtime::handleSyscall(uint8_t *rdram, R5900Context *ctx)
-@@ -1638,6 +1939,17 @@ uint32_t PS2Runtime::clampGuestHeapLimit(uint32_t guestLimit) const
+@@ -1638,6 +1950,17 @@ uint32_t PS2Runtime::clampGuestHeapLimit(uint32_t guestLimit) const
  
  void PS2Runtime::resetGuestHeapLocked(uint32_t guestBase, uint32_t guestLimit)
  {
@@ -10921,7 +11302,7 @@ index 45cb9d2..07c670b 100644
      uint32_t base = alignGuestHeapValue(clampGuestHeapBase(guestBase), kGuestHeapDefaultAlignment);
      uint32_t limit = clampGuestHeapLimit(guestLimit);
      if (base == 0u)
-@@ -1990,6 +2302,11 @@ uint32_t PS2Runtime::reserveAsyncCallbackStack(uint32_t size, uint32_t alignment
+@@ -1990,6 +2313,11 @@ uint32_t PS2Runtime::reserveAsyncCallbackStack(uint32_t size, uint32_t alignment
      }
  
      std::lock_guard<std::mutex> lock(m_asyncCallbackStackMutex);
@@ -10933,7 +11314,7 @@ index 45cb9d2..07c670b 100644
      uint32_t top = m_asyncCallbackStackTop;
      if (top > PS2_RAM_SIZE)
      {
-@@ -2013,8 +2330,133 @@ uint32_t PS2Runtime::reserveAsyncCallbackStack(uint32_t size, uint32_t alignment
+@@ -2013,8 +2341,133 @@ uint32_t PS2Runtime::reserveAsyncCallbackStack(uint32_t size, uint32_t alignment
      return top - 0x10u;
  }
  
@@ -11067,7 +11448,7 @@ index 45cb9d2..07c670b 100644
      try
      {
          return m_memory.read8(vaddr);
-@@ -2028,6 +2470,17 @@ uint8_t PS2Runtime::Load8(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr)
+@@ -2028,6 +2481,17 @@ uint8_t PS2Runtime::Load8(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr)
  
  uint16_t PS2Runtime::Load16(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr)
  {
@@ -11085,7 +11466,7 @@ index 45cb9d2..07c670b 100644
      try
      {
          return m_memory.read16(vaddr);
-@@ -2041,6 +2494,17 @@ uint16_t PS2Runtime::Load16(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr)
+@@ -2041,6 +2505,17 @@ uint16_t PS2Runtime::Load16(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr)
  
  uint32_t PS2Runtime::Load32(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr)
  {
@@ -11103,7 +11484,7 @@ index 45cb9d2..07c670b 100644
      try
      {
          return m_memory.read32(vaddr);
-@@ -2054,6 +2518,17 @@ uint32_t PS2Runtime::Load32(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr)
+@@ -2054,6 +2529,17 @@ uint32_t PS2Runtime::Load32(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr)
  
  uint64_t PS2Runtime::Load64(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr)
  {
@@ -11121,7 +11502,7 @@ index 45cb9d2..07c670b 100644
      try
      {
          return m_memory.read64(vaddr);
-@@ -2067,6 +2542,13 @@ uint64_t PS2Runtime::Load64(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr)
+@@ -2067,6 +2553,13 @@ uint64_t PS2Runtime::Load64(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr)
  
  __m128i PS2Runtime::Load128(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr)
  {
@@ -11135,7 +11516,7 @@ index 45cb9d2..07c670b 100644
      try
      {
          return m_memory.read128(vaddr);
-@@ -2080,6 +2562,16 @@ __m128i PS2Runtime::Load128(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr)
+@@ -2080,6 +2573,16 @@ __m128i PS2Runtime::Load128(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr)
  
  void PS2Runtime::Store8(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint8_t value)
  {
@@ -11152,7 +11533,7 @@ index 45cb9d2..07c670b 100644
      ps2TraceGuestWrite(rdram, vaddr, 1u, value, 0u, "WRITE8", ctx);
      try
      {
-@@ -2093,6 +2585,16 @@ void PS2Runtime::Store8(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint8
+@@ -2093,6 +2596,16 @@ void PS2Runtime::Store8(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint8
  
  void PS2Runtime::Store16(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint16_t value)
  {
@@ -11169,7 +11550,7 @@ index 45cb9d2..07c670b 100644
      ps2TraceGuestWrite(rdram, vaddr, 2u, value, 0u, "WRITE16", ctx);
      try
      {
-@@ -2106,6 +2608,18 @@ void PS2Runtime::Store16(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint
+@@ -2106,6 +2619,18 @@ void PS2Runtime::Store16(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint
  
  void PS2Runtime::Store32(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint32_t value)
  {
@@ -11188,7 +11569,7 @@ index 45cb9d2..07c670b 100644
      ps2TraceGuestWrite(rdram, vaddr, 4u, value, 0u, "WRITE32", ctx);
      try
      {
-@@ -2120,6 +2634,16 @@ void PS2Runtime::Store32(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint
+@@ -2120,6 +2645,16 @@ void PS2Runtime::Store32(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint
  
  void PS2Runtime::Store64(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint64_t value)
  {
@@ -11205,7 +11586,7 @@ index 45cb9d2..07c670b 100644
      ps2TraceGuestWrite(rdram, vaddr, 8u, value, 0u, "WRITE64", ctx);
      try
      {
-@@ -2133,6 +2657,16 @@ void PS2Runtime::Store64(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint
+@@ -2133,6 +2668,16 @@ void PS2Runtime::Store64(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint
  
  void PS2Runtime::Store128(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, __m128i value)
  {
@@ -11222,7 +11603,7 @@ index 45cb9d2..07c670b 100644
      alignas(16) uint64_t _parts[2];
      _mm_storeu_si128(reinterpret_cast<__m128i *>(_parts), value);
      ps2TraceGuestWrite(rdram, vaddr, 16u, _parts[0], _parts[1], "WRITE128", ctx);
-@@ -2165,12 +2699,14 @@ void PS2Runtime::kickGifDmaChainFromMMIO(uint8_t *rdram,
+@@ -2165,12 +2710,14 @@ void PS2Runtime::kickGifDmaChainFromMMIO(uint8_t *rdram,
      ps2TraceGuestWrite(rdram, GIF_TADR, 4u, tadr, 0u, "WRITE32", ctx);
      m_memory.writeIORegister(GIF_TADR, tadr);
      ps2TraceGuestWrite(rdram, GIF_CHCR, 4u, chcr, 0u, "WRITE32", ctx);
@@ -11239,7 +11620,7 @@ index 45cb9d2..07c670b 100644
      {
          drainCompletedDmacHandlers(rdram);
          return;
-@@ -2211,7 +2747,10 @@ void PS2Runtime::postEeEvent(EeEvent event)
+@@ -2211,7 +2758,10 @@ void PS2Runtime::postEeEvent(EeEvent event)
  
  bool PS2Runtime::eeCheckpointDue(uint32_t cycles) noexcept
  {
@@ -11251,7 +11632,7 @@ index 45cb9d2..07c670b 100644
  }
  
  [[noreturn]] void PS2Runtime::eeWaitVSyncTicks(uint32_t ticks, uint32_t resumePc)
-@@ -2357,12 +2896,18 @@ void PS2Runtime::run()
+@@ -2357,12 +2907,18 @@ void PS2Runtime::run()
  
      RUNTIME_LOG("Starting execution at address 0x" << std::hex << m_cpuContext.pc << std::dec);
  
@@ -11273,7 +11654,7 @@ index 45cb9d2..07c670b 100644
  
      std::thread gameThread([&]()
                             {
-@@ -2385,8 +2930,71 @@ void PS2Runtime::run()
+@@ -2385,8 +2941,71 @@ void PS2Runtime::run()
          }
          gameThreadFinished.store(true, std::memory_order_release); });
  
@@ -11346,7 +11727,7 @@ index 45cb9d2..07c670b 100644
      {
          PS2_IF_AGRESSIVE_LOGS({
              tick++;
-@@ -2465,8 +3073,11 @@ void PS2Runtime::run()
+@@ -2465,8 +3084,11 @@ void PS2Runtime::run()
          m_debugUiShutdownCallback(*this, m_debugUiUserData);
          m_debugUiInitialized = false;
      }
@@ -14355,14 +14736,15 @@ index 4772f3f..52a9af5 100644
          {
              std::vector<uint8_t> rdram(PS2_RAM_SIZE, 0u);
 diff --git a/ps2xTest/src/ps2_runtime_interrupt_tests.cpp b/ps2xTest/src/ps2_runtime_interrupt_tests.cpp
-index 4261bfa..5882abd 100644
+index 4261bfa..f7a1739 100644
 --- a/ps2xTest/src/ps2_runtime_interrupt_tests.cpp
 +++ b/ps2xTest/src/ps2_runtime_interrupt_tests.cpp
-@@ -2,12 +2,18 @@
+@@ -2,12 +2,19 @@
  #include "ps2_runtime.h"
  #include "ps2_syscalls.h"
  #include "runtime/ee_scheduler.h"
 +#include "Kernel/EeHostWait.h"
++#include "runtime/ee_dispatch_profile.h"
  
  #include <atomic>
  #include <chrono>
@@ -14377,7 +14759,7 @@ index 4261bfa..5882abd 100644
  #include <string_view>
  #include <thread>
  #include <utility>
-@@ -37,6 +43,37 @@ namespace
+@@ -37,6 +44,37 @@ namespace
  
      static_assert(sizeof(Ps2EventFlagInfo) == 28u, "Unexpected Ps2EventFlagInfo layout.");
  
@@ -14415,7 +14797,7 @@ index 4261bfa..5882abd 100644
      struct TestEnv
      {
          std::vector<uint8_t> rdram;
-@@ -379,6 +416,91 @@ void register_ps2_runtime_interrupt_tests()
+@@ -379,6 +417,116 @@ void register_ps2_runtime_interrupt_tests()
  {
      MiniTest::Case("PS2RuntimeInterrupt", [](TestCase &tc)
      {
@@ -14504,10 +14886,35 @@ index 4261bfa..5882abd 100644
 +            t.IsTrue(outcome.precise, "the notification should use the precise backend");
 +        });
 +
++        tc.Run("EE dispatch sample aggregation keeps outer and nested calls separate", [](TestCase &t)
++        {
++            using namespace ps2x::ee_profile;
++            Accumulator samples(2u);
++            const CallKey outer{CallKind::Outer, 0x343604u, 0x343604u};
++            const CallKey nested{CallKind::Nested, 0x343614u, 0x250u};
++            samples.add(outer, 10u, 100u, true);
++            samples.add(outer, 20u, 200u, true);
++            samples.add(nested, 0u, 400u, false);
++
++            t.Equals(samples.rows().size(), size_t(2u), "Outer and nested calls need separate attribution keys");
++            t.Equals(samples.rows().at(outer).samples, uint64_t(2u), "Repeated outer samples must accumulate");
++            t.Equals(samples.rows().at(outer).cpuUnits, uint64_t(30u), "CPU units must sum without wall-time substitution");
++            t.Equals(samples.rows().at(outer).wallNanoseconds, uint64_t(300u), "Outer wall samples must accumulate");
++            t.Equals(samples.rows().at(nested).cpuSamples, uint64_t(0u), "Failed CPU clock reads must not be counted as CPU samples");
++            t.Equals(samples.rows().at(nested).wallNanoseconds, uint64_t(400u), "A missing CPU clock must retain wall evidence");
++
++            samples.add({CallKind::Nested, 0x34390cu, 0xc30u}, 1u, 1u, true);
++            t.Equals(samples.dropped(), uint64_t(1u), "Excess keys must be bounded");
++            t.Equals(samples.rows().size(), size_t(2u), "Overflow must preserve existing profile keys");
++            samples.clear();
++            t.Equals(samples.rows().size(), size_t(0u), "Window reset must clear samples");
++            t.Equals(samples.dropped(), uint64_t(0u), "Window reset must clear overflow counters");
++        });
++
          tc.Run("negative interrupt-safe EE syscall ids dispatch", [](TestCase &t)
          {
              TestEnv env;
-@@ -706,46 +828,51 @@ void register_ps2_runtime_interrupt_tests()
+@@ -706,46 +854,51 @@ void register_ps2_runtime_interrupt_tests()
                       "the Timer2 handler should hand the semaphore directly to the waiter");
          });
  
@@ -14525,6 +14932,11 @@ index 4261bfa..5882abd 100644
 +            for (const char *precise : {"0", "1"})
              {
 -                try
+-                {
+-                    env.runtime.eeScheduler().reset(env.rdram.data(), mainContext);
+-                    env.runtime.eeScheduler().run();
+-                }
+-                catch (...)
 +                ScopedEnvironmentVariable preciseWait("PS2X_PRECISE_WAIT", precise);
 +                TestEnv env;
 +                env.runtime.registerFunction(kIdleVSyncWaitPc, idleVSyncWait);
@@ -14535,11 +14947,6 @@ index 4261bfa..5882abd 100644
 +                std::atomic<bool> schedulerThrew{false};
 +                std::thread gameThread([&]()
                  {
--                    env.runtime.eeScheduler().reset(env.rdram.data(), mainContext);
--                    env.runtime.eeScheduler().run();
--                }
--                catch (...)
--                {
 -                    schedulerThrew.store(true, std::memory_order_release);
 -                }
 -                schedulerDone.store(true, std::memory_order_release);

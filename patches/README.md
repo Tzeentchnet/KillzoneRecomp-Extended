@@ -747,6 +747,14 @@ resulting tree to equal the pinned submodule tree.
 - **0042-Test-SIF-register-syscall-dispatch.patch** - verifies both positive and signed SIF register syscall IDs
   through the numeric dispatcher. The complete standalone PS2Recomp suite passes 454/454 with the canonical
   SIF and IMAGE2 backports.
+- **0043-feat-perf-add-opt-in-sampled-EE-guest-call-profiler.patch** - backports Hardnyx's compile-time-gated
+  sampled EE guest-call profiler. An instrumented build with `PS2X_EE_PROFILE=1` samples one in 256 outer scheduler
+  dispatches and nested guest calls, then emits bounded 120-field entry/caller summaries. It never suspends or
+  unwinds another thread; normal builds compile out the hooks.
+- **0044-Isolate-EE-profiler-platform-clocks.patch** - moves Windows thread-cycle and CPU-time queries out of the
+  profiler header so instrumented runtime translation units do not import conflicting Win32 declarations. Both the
+  compile-out and instrumented standalone suites pass 455/455; matched gameplay coverage and overhead remain
+  unqualified until an authorized BYOD run is available.
 - **experimental/ee-di-interrupt-gate.diff** (not applied; `git apply --directory=ext/PS2Recomp`) - makes
   `EeScheduler` honour Status.EIE: while the running context is inside `di`/`ei`, pending interrupt, SIF and stream
   invocations, time-slice preemption and event-driven thread switches wait for `ei` (50 ms safety valve,

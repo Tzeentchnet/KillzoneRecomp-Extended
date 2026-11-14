@@ -102,6 +102,31 @@ masks. A `config` record follows changes observed after presentation, and its pi
 RCAS before the existing CAS pass. The summary uses the latest such configuration. D3D and software golden tests
 check that unavailable requests preserve the existing presentation, including CAS.
 
+### Sampled EE guest-call profiling
+
+The preferred replacement candidate for the crash-prone `KZ_PROFILE` stack unwinder is a sampled guest-dispatch
+profiler that never suspends or unwinds another thread. It is compiled out of normal builds. Configure a separate
+instrumented build and enable it explicitly at runtime:
+
+```powershell
+.\tools\scripts\vsenv.bat cmake --preset win-msvc-rel -B .\build\win-msvc-ee-profile `
+  -DPS2X_ENABLE_EE_DISPATCH_PROFILE=ON
+.\tools\scripts\vsenv.bat cmake --build .\build\win-msvc-ee-profile --target killzone
+$env:PS2X_EE_PROFILE = '1'
+.\tools\scripts\run_headless.ps1 -Name ee-profile -ExeDir .\build\win-msvc-ee-profile
+Remove-Item Env:PS2X_EE_PROFILE
+```
+
+The runtime samples one in 256 outer scheduler dispatches and nested guest calls. Every 120 fields it writes bounded
+`[ps2x:ee-profile]` rows to stderr with entry/caller PCs, sample counts, host CPU units, wall time, dropped-key count,
+and EE-thread CPU milliseconds per field. Outer and nested measurements are inclusive and overlap; never add them.
+On Windows, `cpu_units` are thread-cycle counts, not nanoseconds.
+
+Both compile-out and instrumented standalone builds pass 455/455 tests, and an instrumented synthetic run emits the
+expected bounded summary. No authorized BYOD paths were available for the integration run, so gameplay coverage and
+overhead are not yet qualified. Keep existing performance workflows off `KZ_PROFILE`, but do not claim this sampled
+prototype as its measured replacement until a matched instrumented gameplay A/B passes.
+
 ### High-refresh campaign audit
 
 `tools\scripts\high_refresh_campaign_audit.ps1` runs chapter scenarios sequentially at 30, 60, 120 and 144 Hz.

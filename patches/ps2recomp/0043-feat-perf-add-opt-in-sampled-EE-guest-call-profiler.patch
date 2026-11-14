@@ -1,0 +1,470 @@
+From 77b15dad0ddb37ae81b8f4550032745a196cadd5 Mon Sep 17 00:00:00 2001
+From: Alonso Walter Senen Roman Cauti <alonso.roman.c@uni.pe>
+Date: Fri, 13 Nov 2026 10:53:11 -0500
+Subject: [PATCH 43/44] feat(perf): add opt-in sampled EE guest-call profiler
+
+Compile out all hooks by default. An explicit instrumented build and
+PS2X_EE_PROFILE=1 sample one in 256 outer dispatches and nested guest
+calls, reporting their entry/caller PCs and inclusive host CPU units.
+Report bounded 120-field windows and EE thread CPU time without querying
+a clock at every dispatch. Add aggregation, missing-clock and key-limit
+tests. This is an O-03.2 diagnostic, not a gameplay optimization.
+
+(cherry picked from commit 834f4965d6e5f8cc49f0fddedbc73e8ba9ed02f9)
+---
+ ps2xRuntime/CMakeLists.txt                    |   5 +
+ .../include/runtime/ee_dispatch_profile.h     | 297 ++++++++++++++++++
+ ps2xRuntime/src/lib/Kernel/EeScheduler.cpp    |  13 +
+ ps2xRuntime/src/lib/ps2_runtime.cpp           |  11 +
+ ps2xTest/src/ps2_runtime_interrupt_tests.cpp  |  26 ++
+ 5 files changed, 352 insertions(+)
+ create mode 100644 ps2xRuntime/include/runtime/ee_dispatch_profile.h
+
+diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
+index 7e3c0c7..fc5dc55 100644
+--- a/ps2xRuntime/CMakeLists.txt
++++ b/ps2xRuntime/CMakeLists.txt
+@@ -11,6 +11,7 @@ option(PS2X_ENABLE_RUNNER_PCH "Precompile the heavy runtime headers for ps2Entry
+ option(PS2X_ENABLE_SCCACHE "Use sccache as compiler launcher when available" ON)
+ 
+ option(PS2X_ENABLE_RUNTIME_LOGS "Enable PS2 runtime logs" ON)
++option(PS2X_ENABLE_EE_DISPATCH_PROFILE "Compile the optional sampled EE guest-call profiler" OFF)
+ option(PS2X_ENABLE_AGRESSIVE_LOGS "Enable very verbose/agressive PS2 runtime logs" ON)
+ option(PS2X_ENABLE_IOP_RPC_TRACE "Log unhandled IOP/SIF RPC trace suggestions" ON)
+ option(PS2X_STRICT_RETURN_DIAGNOSTICS "Route generated JR $ra returns through runtime branch diagnostics" OFF)
+@@ -435,6 +436,10 @@ file(GLOB_RECURSE KERNEL_SRC_FILES CONFIGURE_DEPENDS
+     "${CMAKE_CURRENT_SOURCE_DIR}/src/lib/Kernel/*.cpp"
+ )
+ 
++if(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++    target_compile_definitions(ps2_runtime PRIVATE PS2X_ENABLE_EE_DISPATCH_PROFILE=1)
++endif()
++
+ target_sources(ps2_runtime PRIVATE
+     ${KERNEL_SRC_FILES}
+ )
+diff --git a/ps2xRuntime/include/runtime/ee_dispatch_profile.h b/ps2xRuntime/include/runtime/ee_dispatch_profile.h
+new file mode 100644
+index 0000000..5d8cf26
+--- /dev/null
++++ b/ps2xRuntime/include/runtime/ee_dispatch_profile.h
+@@ -0,0 +1,297 @@
++#pragma once
++
++// Optional diagnostics for recompiled EE call paths. Normal builds compile out
++// the hot-path hooks; an instrumented build still requires PS2X_EE_PROFILE=1.
++#include <compare>
++#include <cstddef>
++#include <cstdint>
++#include <map>
++
++#if defined(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++#include <algorithm>
++#include <array>
++#include <chrono>
++#include <cstdlib>
++#include <cstring>
++#include <iostream>
++#include <utility>
++#include <vector>
++#if defined(_WIN32)
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <windows.h>
++#else
++#include <time.h>
++#endif
++#endif
++
++namespace ps2x::ee_profile
++{
++enum class CallKind : uint8_t
++{
++    Outer,
++    Nested,
++};
++
++struct CallKey
++{
++    CallKind kind = CallKind::Outer;
++    uint32_t caller = 0u;
++    uint32_t target = 0u;
++    auto operator<=>(const CallKey &) const = default;
++};
++
++struct CallTotals
++{
++    uint64_t samples = 0u;
++    uint64_t cpuSamples = 0u;
++    uint64_t cpuUnits = 0u;
++    uint64_t wallNanoseconds = 0u;
++};
++
++class Accumulator
++{
++public:
++    explicit Accumulator(size_t maxKeys = 256u) : m_maxKeys(maxKeys) {}
++
++    void add(CallKey key, uint64_t cpuUnits, uint64_t wallNanoseconds, bool hasCpu)
++    {
++        auto it = m_rows.find(key);
++        if (it == m_rows.end())
++        {
++            if (m_rows.size() >= m_maxKeys)
++            {
++                ++m_dropped;
++                return;
++            }
++            it = m_rows.emplace(key, CallTotals{}).first;
++        }
++        auto &row = it->second;
++        ++row.samples;
++        row.wallNanoseconds += wallNanoseconds;
++        if (hasCpu)
++        {
++            ++row.cpuSamples;
++            row.cpuUnits += cpuUnits;
++        }
++    }
++
++    [[nodiscard]] const std::map<CallKey, CallTotals> &rows() const noexcept { return m_rows; }
++    [[nodiscard]] uint64_t dropped() const noexcept { return m_dropped; }
++    void clear()
++    {
++        m_rows.clear();
++        m_dropped = 0u;
++    }
++
++private:
++    size_t m_maxKeys;
++    std::map<CallKey, CallTotals> m_rows;
++    uint64_t m_dropped = 0u;
++};
++
++#if defined(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++namespace detail
++{
++inline bool enabled() noexcept
++{
++    static const bool active = [] {
++        const char *value = std::getenv("PS2X_EE_PROFILE");
++        return value != nullptr && std::strcmp(value, "1") == 0;
++    }();
++    return active;
++}
++
++inline bool readSampleCpu(uint64_t &value) noexcept
++{
++#if defined(_WIN32)
++    ULONG64 cycles = 0u;
++    if (!QueryThreadCycleTime(GetCurrentThread(), &cycles))
++        return false;
++    value = static_cast<uint64_t>(cycles);
++    return true;
++#elif defined(CLOCK_THREAD_CPUTIME_ID)
++    timespec now{};
++    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &now) != 0)
++        return false;
++    value = uint64_t(now.tv_sec) * 1000000000ull + uint64_t(now.tv_nsec);
++    return true;
++#else
++    (void)value;
++    return false;
++#endif
++}
++
++inline bool readThreadCpuNs(uint64_t &value) noexcept
++{
++#if defined(_WIN32)
++    FILETIME created{}, exited{}, kernel{}, user{};
++    if (!GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user))
++        return false;
++    ULARGE_INTEGER k{}, u{};
++    k.LowPart = kernel.dwLowDateTime;
++    k.HighPart = kernel.dwHighDateTime;
++    u.LowPart = user.dwLowDateTime;
++    u.HighPart = user.dwHighDateTime;
++    value = (k.QuadPart + u.QuadPart) * 100u;
++    return true;
++#else
++    return readSampleCpu(value);
++#endif
++}
++
++struct State
++{
++    Accumulator measurements;
++    std::array<uint64_t, 2> attempts{};
++    uint32_t randomState = 0x6d2b79f5u;
++    uint64_t firstField = 0u;
++    uint64_t cpuAtFirstFieldNs = 0u;
++    bool hasCpuStart = false;
++};
++
++inline State &state()
++{
++    static thread_local State instance;
++    return instance;
++}
++
++inline void resetWindow(State &s, uint64_t field)
++{
++    s.firstField = field;
++    s.measurements.clear();
++    s.attempts = {};
++    s.hasCpuStart = readThreadCpuNs(s.cpuAtFirstFieldNs);
++}
++
++inline void emit(State &s, uint64_t field)
++{
++    if (s.firstField == 0u || field <= s.firstField)
++        return;
++    uint64_t cpuNow = 0u;
++    const bool validCpu = s.hasCpuStart && readThreadCpuNs(cpuNow) && cpuNow >= s.cpuAtFirstFieldNs;
++    const double cpuMsPerField = validCpu
++        ? double(cpuNow - s.cpuAtFirstFieldNs) / (1000000.0 * double(field - s.firstField))
++        : -1.0;
++    std::cerr << "[ps2x:ee-profile] fields=" << (field - s.firstField)
++              << " end=" << field
++              << " ee_thread_cpu_ms_per_field=" << cpuMsPerField
++              << " outer_calls=" << s.attempts[0]
++              << " nested_calls=" << s.attempts[1]
++              << " dropped_keys=" << s.measurements.dropped() << '\n';
++
++    std::vector<std::pair<CallKey, CallTotals>> ranked(
++        s.measurements.rows().begin(), s.measurements.rows().end());
++    std::sort(ranked.begin(), ranked.end(), [](const auto &a, const auto &b) {
++        if (a.second.cpuUnits != b.second.cpuUnits)
++            return a.second.cpuUnits > b.second.cpuUnits;
++        return a.second.wallNanoseconds > b.second.wallNanoseconds;
++    });
++    std::array<unsigned, 2> printed{};
++    for (const auto &[key, totals] : ranked)
++    {
++        const size_t index = static_cast<size_t>(key.kind);
++        if (printed[index]++ >= 8u)
++            continue;
++        std::cerr << "[ps2x:ee-profile] kind=" << (index == 0u ? "outer" : "nested")
++                  << " caller=0x" << std::hex << key.caller
++                  << " target=0x" << key.target << std::dec
++                  << " samples=" << totals.samples
++                  << " cpu_samples=" << totals.cpuSamples
++                  << " cpu_units=" << totals.cpuUnits
++                  << " wall_ns=" << totals.wallNanoseconds << '\n';
++    }
++    // Inclusive nested and outer samples overlap: never add their totals.
++}
++} // namespace detail
++
++class ScopedCall
++{
++public:
++    ScopedCall(CallKind kind, uint32_t caller, uint32_t target) noexcept
++        : m_key{kind, caller, target}
++    {
++        if (!detail::enabled())
++            return;
++        auto &s = detail::state();
++        ++s.attempts[static_cast<size_t>(kind)];
++        uint32_t &rng = s.randomState;
++        rng ^= rng << 13;
++        rng ^= rng >> 17;
++        rng ^= rng << 5;
++        if ((rng & 255u) != 0u)
++            return;
++        m_hasCpu = detail::readSampleCpu(m_startCpu);
++        m_startWall = std::chrono::steady_clock::now();
++        m_sampled = true;
++    }
++
++    ScopedCall(const ScopedCall &) = delete;
++    ScopedCall &operator=(const ScopedCall &) = delete;
++
++    ~ScopedCall() noexcept
++    {
++        if (!m_sampled)
++            return;
++        uint64_t cpuEnd = 0u;
++        const bool validCpu = m_hasCpu && detail::readSampleCpu(cpuEnd) && cpuEnd >= m_startCpu;
++        const auto wall = std::chrono::duration_cast<std::chrono::nanoseconds>(
++            std::chrono::steady_clock::now() - m_startWall).count();
++        try
++        {
++            detail::state().measurements.add(
++                m_key, validCpu ? cpuEnd - m_startCpu : 0u,
++                wall > 0 ? static_cast<uint64_t>(wall) : 0u, validCpu);
++        }
++        catch (...)
++        {
++            // Diagnostics must never replace the guest exception or alter its state.
++        }
++    }
++
++private:
++    CallKey m_key;
++    bool m_sampled = false;
++    bool m_hasCpu = false;
++    uint64_t m_startCpu = 0u;
++    std::chrono::steady_clock::time_point m_startWall{};
++};
++
++inline void onField(uint64_t field) noexcept
++{
++    if (!detail::enabled())
++        return;
++    try
++    {
++        auto &s = detail::state();
++        if (s.firstField == 0u)
++            detail::resetWindow(s, field);
++        else if (field - s.firstField >= 120u)
++        {
++            detail::emit(s, field);
++            detail::resetWindow(s, field);
++        }
++    }
++    catch (...)
++    {
++        // Never disrupt VBlank delivery for optional logging.
++    }
++}
++
++inline void finish(uint64_t field) noexcept
++{
++    if (!detail::enabled())
++        return;
++    try
++    {
++        auto &s = detail::state();
++        detail::emit(s, field);
++        detail::resetWindow(s, 0u);
++    }
++    catch (...)
++    {
++    }
++}
++#endif
++} // namespace ps2x::ee_profile
+diff --git a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
+index 4fd68d4..3ed1f16 100644
+--- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
++++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
+@@ -11,6 +11,9 @@
+ #include "ps2_runtime_macros.h"
+ #include "ps2_cg_dsp.h" // g_ps2DspStat, PS2_TAIL_MARK (includes ps2_cg.h)
+ #include "ps2_cg.h" // g_ps2EeBudget: the guest code's checkpoint budget (the dispatch loop charges through it as well)
++#if defined(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++#include "runtime/ee_dispatch_profile.h"
++#endif
+ 
+ #include <algorithm>
+ #include <string_view>
+@@ -839,6 +842,10 @@ void EeScheduler::run()
+             }
+             m_insideInterrupt = !running->invocations.empty() && running->invocations.back().kind == GuestInvocationKind::Interrupt;
+             m_guestExecuting.store(true, std::memory_order_release);
++#if defined(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++            ps2x::ee_profile::ScopedCall profileSample(ps2x::ee_profile::CallKind::Outer,
++                                                       context.pc, context.pc);
++#endif
+             schedTrace('E', running->id, running->invocations.size(), context);
+             g_ps2GuestUnwinding = false;
+             function(m_rdram, &context, &m_runtime);
+@@ -886,6 +893,9 @@ void EeScheduler::run()
+         }
+     }
+ 
++#if defined(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++    ps2x::ee_profile::finish(m_vsyncTick);
++#endif
+     m_guestExecuting.store(false, std::memory_order_release);
+     m_running.store(false, std::memory_order_release);
+     copyMainContextToRuntime();
+@@ -2542,6 +2552,9 @@ void EeScheduler::processEvent(const EeEvent &event)
+     case EeEventType::VBlankStart:
+         ++m_vsyncTick;
+         ps2tl::rec(ps2tl::VBLANK, static_cast<uint32_t>(m_vsyncTick), 0u, static_cast<uint32_t>(m_eeCycle));
++#if defined(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++        ps2x::ee_profile::onField(m_vsyncTick);
++#endif
+         m_runtime.memory().gs().vsyncTick.store(m_vsyncTick, std::memory_order_release);
+         if ((m_vsyncTick & 1u) != 0u)
+         {
+diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
+index 07c670b..87a744d 100644
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -7,6 +7,9 @@
+ #include "ps2_runtime_macros.h"
+ #include "runtime/gs/gs_frontend.h"
+ #include "runtime/ee_scheduler.h"
++#if defined(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++#include "runtime/ee_dispatch_profile.h"
++#endif
+ #include "ThreadNaming.h"
+ #include "Kernel/Stubs/Audio.h"
+ #include "Kernel/Stubs/GS.h"
+@@ -1679,7 +1682,15 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
+ 
+     RecompiledFunction targetFn = lookupFunction(targetPc);
+     const uint32_t entryPc = ctx->pc;
++#if defined(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++    {
++        ps2x::ee_profile::ScopedCall sample(ps2x::ee_profile::CallKind::Nested,
++                                            sourcePc, targetPc);
++        targetFn(rdram, ctx, this);
++    }
++#else
+     targetFn(rdram, ctx, this);
++#endif
+ 
+     if (isStopRequested() || ctx->pc == 0u || g_ps2GuestUnwinding)
+     {
+diff --git a/ps2xTest/src/ps2_runtime_interrupt_tests.cpp b/ps2xTest/src/ps2_runtime_interrupt_tests.cpp
+index 5882abd..f7a1739 100644
+--- a/ps2xTest/src/ps2_runtime_interrupt_tests.cpp
++++ b/ps2xTest/src/ps2_runtime_interrupt_tests.cpp
+@@ -3,6 +3,7 @@
+ #include "ps2_syscalls.h"
+ #include "runtime/ee_scheduler.h"
+ #include "Kernel/EeHostWait.h"
++#include "runtime/ee_dispatch_profile.h"
+ 
+ #include <atomic>
+ #include <chrono>
+@@ -501,6 +502,31 @@ void register_ps2_runtime_interrupt_tests()
+             t.IsTrue(outcome.precise, "the notification should use the precise backend");
+         });
+ 
++        tc.Run("EE dispatch sample aggregation keeps outer and nested calls separate", [](TestCase &t)
++        {
++            using namespace ps2x::ee_profile;
++            Accumulator samples(2u);
++            const CallKey outer{CallKind::Outer, 0x343604u, 0x343604u};
++            const CallKey nested{CallKind::Nested, 0x343614u, 0x250u};
++            samples.add(outer, 10u, 100u, true);
++            samples.add(outer, 20u, 200u, true);
++            samples.add(nested, 0u, 400u, false);
++
++            t.Equals(samples.rows().size(), size_t(2u), "Outer and nested calls need separate attribution keys");
++            t.Equals(samples.rows().at(outer).samples, uint64_t(2u), "Repeated outer samples must accumulate");
++            t.Equals(samples.rows().at(outer).cpuUnits, uint64_t(30u), "CPU units must sum without wall-time substitution");
++            t.Equals(samples.rows().at(outer).wallNanoseconds, uint64_t(300u), "Outer wall samples must accumulate");
++            t.Equals(samples.rows().at(nested).cpuSamples, uint64_t(0u), "Failed CPU clock reads must not be counted as CPU samples");
++            t.Equals(samples.rows().at(nested).wallNanoseconds, uint64_t(400u), "A missing CPU clock must retain wall evidence");
++
++            samples.add({CallKind::Nested, 0x34390cu, 0xc30u}, 1u, 1u, true);
++            t.Equals(samples.dropped(), uint64_t(1u), "Excess keys must be bounded");
++            t.Equals(samples.rows().size(), size_t(2u), "Overflow must preserve existing profile keys");
++            samples.clear();
++            t.Equals(samples.rows().size(), size_t(0u), "Window reset must clear samples");
++            t.Equals(samples.dropped(), uint64_t(0u), "Window reset must clear overflow counters");
++        });
++
+         tc.Run("negative interrupt-safe EE syscall ids dispatch", [](TestCase &t)
+         {
+             TestEnv env;
+-- 
+2.55.0.windows.5
+

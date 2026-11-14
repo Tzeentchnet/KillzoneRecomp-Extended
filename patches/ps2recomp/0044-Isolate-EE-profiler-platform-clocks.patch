@@ -1,0 +1,154 @@
+From 6b11b9b672bc275b902e15bf4b7ef9e30df84c51 Mon Sep 17 00:00:00 2001
+From: Tzeentchnet <58480142+Tzeentchnet@users.noreply.github.com>
+Date: Fri, 13 Nov 2026 22:12:55 -0800
+Subject: [PATCH 44/44] Isolate EE profiler platform clocks
+
+---
+ ps2xRuntime/CMakeLists.txt                    |  1 +
+ .../include/runtime/ee_dispatch_profile.h     | 47 +---------------
+ ps2xRuntime/src/lib/ee_dispatch_profile.cpp   | 56 +++++++++++++++++++
+ 3 files changed, 59 insertions(+), 45 deletions(-)
+ create mode 100644 ps2xRuntime/src/lib/ee_dispatch_profile.cpp
+
+diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
+index fc5dc55..1ac2312 100644
+--- a/ps2xRuntime/CMakeLists.txt
++++ b/ps2xRuntime/CMakeLists.txt
+@@ -438,6 +438,7 @@ file(GLOB_RECURSE KERNEL_SRC_FILES CONFIGURE_DEPENDS
+ 
+ if(PS2X_ENABLE_EE_DISPATCH_PROFILE)
+     target_compile_definitions(ps2_runtime PRIVATE PS2X_ENABLE_EE_DISPATCH_PROFILE=1)
++    target_sources(ps2_runtime PRIVATE src/lib/ee_dispatch_profile.cpp)
+ endif()
+ 
+ target_sources(ps2_runtime PRIVATE
+diff --git a/ps2xRuntime/include/runtime/ee_dispatch_profile.h b/ps2xRuntime/include/runtime/ee_dispatch_profile.h
+index 5d8cf26..df68e54 100644
+--- a/ps2xRuntime/include/runtime/ee_dispatch_profile.h
++++ b/ps2xRuntime/include/runtime/ee_dispatch_profile.h
+@@ -16,14 +16,6 @@
+ #include <iostream>
+ #include <utility>
+ #include <vector>
+-#if defined(_WIN32)
+-#ifndef NOMINMAX
+-#define NOMINMAX
+-#endif
+-#include <windows.h>
+-#else
+-#include <time.h>
+-#endif
+ #endif
+ 
+ namespace ps2x::ee_profile
+@@ -103,43 +95,8 @@ inline bool enabled() noexcept
+     return active;
+ }
+ 
+-inline bool readSampleCpu(uint64_t &value) noexcept
+-{
+-#if defined(_WIN32)
+-    ULONG64 cycles = 0u;
+-    if (!QueryThreadCycleTime(GetCurrentThread(), &cycles))
+-        return false;
+-    value = static_cast<uint64_t>(cycles);
+-    return true;
+-#elif defined(CLOCK_THREAD_CPUTIME_ID)
+-    timespec now{};
+-    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &now) != 0)
+-        return false;
+-    value = uint64_t(now.tv_sec) * 1000000000ull + uint64_t(now.tv_nsec);
+-    return true;
+-#else
+-    (void)value;
+-    return false;
+-#endif
+-}
+-
+-inline bool readThreadCpuNs(uint64_t &value) noexcept
+-{
+-#if defined(_WIN32)
+-    FILETIME created{}, exited{}, kernel{}, user{};
+-    if (!GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user))
+-        return false;
+-    ULARGE_INTEGER k{}, u{};
+-    k.LowPart = kernel.dwLowDateTime;
+-    k.HighPart = kernel.dwHighDateTime;
+-    u.LowPart = user.dwLowDateTime;
+-    u.HighPart = user.dwHighDateTime;
+-    value = (k.QuadPart + u.QuadPart) * 100u;
+-    return true;
+-#else
+-    return readSampleCpu(value);
+-#endif
+-}
++bool readSampleCpu(uint64_t &value) noexcept;
++bool readThreadCpuNs(uint64_t &value) noexcept;
+ 
+ struct State
+ {
+diff --git a/ps2xRuntime/src/lib/ee_dispatch_profile.cpp b/ps2xRuntime/src/lib/ee_dispatch_profile.cpp
+new file mode 100644
+index 0000000..c3754ac
+--- /dev/null
++++ b/ps2xRuntime/src/lib/ee_dispatch_profile.cpp
+@@ -0,0 +1,56 @@
++#include "runtime/ee_dispatch_profile.h"
++
++#if defined(PS2X_ENABLE_EE_DISPATCH_PROFILE)
++#if defined(_WIN32)
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <windows.h>
++#else
++#include <time.h>
++#endif
++
++namespace ps2x::ee_profile::detail
++{
++bool readSampleCpu(uint64_t &value) noexcept
++{
++#if defined(_WIN32)
++    ULONG64 cycles = 0u;
++    if (!QueryThreadCycleTime(GetCurrentThread(), &cycles))
++        return false;
++    value = static_cast<uint64_t>(cycles);
++    return true;
++#elif defined(CLOCK_THREAD_CPUTIME_ID)
++    timespec now{};
++    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &now) != 0)
++        return false;
++    value = uint64_t(now.tv_sec) * 1000000000ull + uint64_t(now.tv_nsec);
++    return true;
++#else
++    (void)value;
++    return false;
++#endif
++}
++
++bool readThreadCpuNs(uint64_t &value) noexcept
++{
++#if defined(_WIN32)
++    FILETIME created{}, exited{}, kernel{}, user{};
++    if (!GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user))
++        return false;
++    ULARGE_INTEGER k{}, u{};
++    k.LowPart = kernel.dwLowDateTime;
++    k.HighPart = kernel.dwHighDateTime;
++    u.LowPart = user.dwLowDateTime;
++    u.HighPart = user.dwHighDateTime;
++    value = (k.QuadPart + u.QuadPart) * 100u;
++    return true;
++#else
++    return readSampleCpu(value);
++#endif
++}
++} // namespace ps2x::ee_profile::detail
++#endif
+-- 
+2.55.0.windows.5
+
