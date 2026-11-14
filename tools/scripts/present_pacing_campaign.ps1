@@ -27,6 +27,7 @@ param(
     [switch]$ReadbackFree,
     [switch]$Timeline,
     [switch]$GpuTiming,
+    [switch]$DisableGpuStageTiming,
     [switch]$HeadroomPreset,
     [string]$WindowSize = "",
     [string]$Region = "",
@@ -50,6 +51,7 @@ if (-not $Region) {
 }
 if ($Region -notin @('us', 'pal', 'eu')) { throw "-Region must be us, pal or eu." }
 if ($GpuTiming -and -not $Timeline) { throw "-GpuTiming requires -Timeline." }
+if ($DisableGpuStageTiming -and -not $GpuTiming) { throw "-DisableGpuStageTiming requires -GpuTiming." }
 if ($HeadroomPreset -and $Renderer -ne 'vulkan') { throw "-HeadroomPreset requires -Renderer vulkan." }
 if ($HeadroomPreset -and -not $WindowSize) { $WindowSize = '1920x1080' }
 if ($WindowSize -and $WindowSize -notmatch '^[1-9][0-9]*x[1-9][0-9]*$') {
@@ -116,7 +118,10 @@ foreach ($arm in $Arms) {
         $envs += "KZ_TL_START=$timelineStart"
         $envs += "KZ_TL_END=$timelineEnd"
     }
-    if ($GpuTiming) { $envs += "KZ_GPU_TIMING=1" }
+    if ($GpuTiming) {
+        $envs += "KZ_GPU_TIMING=1"
+        $envs += "KZ_GPU_STAGE_TIMING=$(if ($DisableGpuStageTiming) { '0' } else { '1' })"
+    }
     if ($InputScript) { $envs += "KZ_INPUT_SCRIPT=$InputScript" }
     $result = & "$PSScriptRoot\run_headless.ps1" -Name $runName -Seconds $Seconds -Interval 10 -ExeDir $ExeDir `
         -EnvSet ($envs -join '|') -Root $wd -Iso $isoPath -Elf $elfPath
@@ -225,7 +230,7 @@ foreach ($arm in $Arms) {
     $upscaleGpu = if ($null -ne $metrics) { $metrics.renderer.presentation_upscale_gpu_ms } else { $null }
     $sharpenGpu = if ($null -ne $metrics) { $metrics.renderer.sharpen_gpu_ms } else { $null }
     $presentGpu = if ($null -ne $metrics) { $metrics.renderer.final_presentation_gpu_ms } else { $null }
-    if ($GpuTiming -and $HeadroomPreset -and $scalePolicy -eq 'balanced') {
+    if ($GpuTiming -and -not $DisableGpuStageTiming -and $HeadroomPreset -and $scalePolicy -eq 'balanced') {
         foreach ($stage in @(
             [pscustomobject]@{ name = 'upload/draw'; metrics = $uploadDrawGpu },
             [pscustomobject]@{ name = 'merge'; metrics = $mergeGpu },
@@ -243,6 +248,7 @@ foreach ($arm in $Arms) {
     $presentCpu = if ($null -ne $metrics) { $metrics.renderer.final_presentation_cpu_ms } else { $null }
     $rows += [pscustomobject]@{
         arm = $armName; fps = [int]$fps; pacing = [int]$pacing; precise_wait = [int]$effectivePreciseWait
+        gpu_stage_timing = [bool]($GpuTiming -and -not $DisableGpuStageTiming)
         headroom_preset = [bool]$HeadroomPreset; render_scale_policy = $scalePolicy; window_size = $WindowSize
         effective_scale = $effectiveConfig.render_scale.effective
         effective_upscaler = $effectiveConfig.presentation_upscaler.effective

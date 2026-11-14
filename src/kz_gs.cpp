@@ -1180,7 +1180,10 @@ bool kzGsAttach(
     if (const char *tl = std::getenv("KZ_TIMELINE"); tl && *tl) // the hook costs a clock read per GS idle wait: only when recording
         kzgsSetTraceHook(&onKzgsTrace);
     const char *gpuTiming = std::getenv("KZ_GPU_TIMING");
-    kzgsSetGpuTimingEnabled(gpuTiming && *gpuTiming && *gpuTiming != '0');
+    const bool gpuTimingEnabled = gpuTiming && *gpuTiming && *gpuTiming != '0';
+    const char *gpuStageTiming = std::getenv("KZ_GPU_STAGE_TIMING");
+    kzgsSetGpuStageTimingEnabled(gpuTimingEnabled && (!gpuStageTiming || *gpuStageTiming != '0'));
+    kzgsSetGpuTimingEnabled(gpuTimingEnabled);
     s.windowWidth = windowWidth;
     s.windowHeight = windowHeight;
     s.reportedResolution = {};

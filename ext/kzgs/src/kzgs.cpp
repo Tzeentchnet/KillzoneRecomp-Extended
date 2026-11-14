@@ -156,6 +156,7 @@ namespace
 	static KzgsUpscalerStatus s_upscaler_status;
 	static KzgsTraceFn s_trace_fn = nullptr;
 	static std::atomic<bool> s_gpu_timing_enabled{false};
+	static std::atomic<bool> s_gpu_stage_timing_enabled{false};
 	static s64 s_trace_idle_ns = 0; // GS thread only
 	static s64 s_trace_upload_draw_ns = 0; // GS thread only
 	static bool s_gpu_upload_draw_active = false; // GS thread only
@@ -190,6 +191,12 @@ namespace
 		const double microseconds = static_cast<double>(milliseconds) * 1000.0;
 		Trace(id, static_cast<u32>(std::clamp(
 			microseconds, 1.0, static_cast<double>(std::numeric_limits<u32>::max()))));
+	}
+	static void InstallRenderTimingHooks()
+	{
+		const bool gpu_stages = s_gpu_timing_enabled.load(std::memory_order_relaxed) &&
+			s_gpu_stage_timing_enabled.load(std::memory_order_relaxed);
+		GSSetRenderTimingHooks({nullptr, &TraceRenderTiming, gpu_stages ? &TraceRenderGpuTiming : nullptr});
 	}
 
 	static bool ValidateUpscalerConfig(const KzgsConfigV1& cfg, std::string& error)
@@ -916,7 +923,8 @@ namespace
 					break;
 
 				case Cmd::Transfer:
-					if (!s_gpu_upload_draw_active && s_gpu_timing_enabled.load(std::memory_order_relaxed))
+					if (!s_gpu_upload_draw_active && s_gpu_timing_enabled.load(std::memory_order_relaxed) &&
+						s_gpu_stage_timing_enabled.load(std::memory_order_relaxed))
 					{
 						g_gs_device->BeginGPUTimingStage(GSGPUTimingStage::UploadDraw);
 						s_gpu_upload_draw_active = true;
@@ -1117,7 +1125,7 @@ namespace
 		s_trace_idle_ns = 0;
 		s_trace_upload_draw_ns = 0;
 		s_gpu_upload_draw_active = false;
-		GSSetRenderTimingHooks({nullptr, &TraceRenderTiming, &TraceRenderGpuTiming});
+		InstallRenderTimingHooks();
 
 		const std::string shader_probe = Path::Combine(EmuFolders::Resources, "shaders/dx11/tfx.fx");
 		if (!FileSystem::FileExists(shader_probe.c_str()))
@@ -1620,7 +1628,14 @@ void kzgsSetGpuTimingEnabled(bool enabled)
 		GSConfig.OsdShowGPU = enabled;
 		if (g_gs_device)
 			g_gs_device->SetGPUTimingEnabled(enabled);
+		InstallRenderTimingHooks();
 	});
+}
+
+void kzgsSetGpuStageTimingEnabled(bool enabled)
+{
+	s_gpu_stage_timing_enabled.store(enabled, std::memory_order_relaxed);
+	kzgs::RunOnGSThread([] { InstallRenderTimingHooks(); });
 }
 
 void kzgsBurstArm(int count, int presentWidth, int presentHeight)

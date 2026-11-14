@@ -260,6 +260,8 @@ void kzgsSetTraceHook(KzgsTraceFn fn);
 
 // Enables the renderer's asynchronous whole-frame GPU timestamp queries. May be changed while open; off by default.
 void kzgsSetGpuTimingEnabled(bool enabled);
+// Enables per-stage GPU timestamp markers when whole-frame timing is active. May be changed while open; off by default.
+void kzgsSetGpuStageTimingEnabled(bool enabled);
 
 // SMAA edge-detection luma threshold (0.02 .. 0.5, default 0.1 = the HIGH preset); applied the next time the SMAA shaders are built.
 void kzgsSetSmaaThreshold(float threshold);
