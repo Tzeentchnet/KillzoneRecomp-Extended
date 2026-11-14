@@ -43,7 +43,7 @@ Windows x64.
   generation, and its synthetic depth/Optical Flow inputs can produce HUD or disocclusion ghosting.
 - Launcher-managed display, graphics, controls, audio, disc, and isolated testing settings.
 - US and two PAL executable versions supported from separately generated code sets in one executable.
-- Readback-free pacing diagnostics with asynchronous whole-frame GPU timing and Vulkan per-stage GPU timing.
+- Readback-free pacing diagnostics with asynchronous whole-frame and Vulkan/D3D12 per-stage GPU timing.
 
 ## Build and play on Windows
 

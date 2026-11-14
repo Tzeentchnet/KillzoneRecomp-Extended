@@ -14,7 +14,7 @@ scheduler-pacing and GPU-profiling review was also completed that day. The basel
   [`0ab00c49b157be667a8a2f0bf4cda83f75a9198e`](https://github.com/PCSX2/pcsx2/commit/0ab00c49b157be667a8a2f0bf4cda83f75a9198e).
 - The locked local PS2Recomp revision `d7af7ca8a74add120b65e006a401ceaa60841a20`; the latest published
   [`killzone` branch is still `fbde3f0`](https://github.com/Tzeentchnet/PS2Recomp/commit/fbde3f0cbbdec560201bd1001919eda4c59376d4).
-- The locked local PCSX2 revision `86c4e23e110d954a404ccd009f3587c558bbc7aa`; the published
+- The locked local PCSX2 revision `accbf0cd94a49d73130be4a17b1b3bee586de4af`; the published
   [PCSX2 upscaler-foundation branch](https://github.com/Tzeentchnet/pcsx2/tree/feature/kzgs-upscaler-foundation)
   still ends at `1fb920189c12766af55bdc9178619c0c66eb1a5e`.
 
@@ -29,9 +29,10 @@ the dependency verifier therefore correctly reports both as unpublished.
 
 | Area | Decision | Evidence and scope |
 |---|---|---|
-| PS2Recomp canonical base | Keep the current patch base for now | Canonical `main` is still `e5636981`. The local resume-point and floating-point work already represents two post-`75d729ce` behavior changes. Canonical SIF dispatch [`2c5fbb9`](https://github.com/ran-j/PS2Recomp/commit/2c5fbb9389e11dd95693385969490c9e8e6f57b4) and GIF IMAGE2 [`e5636981`](https://github.com/ran-j/PS2Recomp/commit/e5636981a1c9de368f6b71e819c3dc188dfedbf4) are now exact backports, with an additional local dispatcher regression; the fifth upstream commit only documents `.recomp.json`. Rebasing only to duplicate those changes would churn the 43-topic reconstruction series without adding behavior. |
-| PCSX2 VU slice | Integrated selectively | Upstream commits [`62a79afff`](https://github.com/PCSX2/pcsx2/commit/62a79afff984dcf919fbb5ba8bdb5679d181ca57), [`854604401`](https://github.com/PCSX2/pcsx2/commit/8546044011687f1d4d38d307cbd1c3d8355a4383), and [`222285122`](https://github.com/PCSX2/pcsx2/commit/2222851226644208117edf28754c821765098374) correct 64-bit XGKICK timing, interpreter cycle tracking, and the `nextBlockCycles` width. They remain in local companion `86c4e23e1`; KzVU still passes all 1,776 JIT/interpreter/reference checks after the subsequent renderer backports. |
-| Isolated PCSX2 GS fixes | Integrated selectively | Upstream commits [`3c8df07e8`](https://github.com/PCSX2/pcsx2/commit/3c8df07e8e367caef8386fd949d6ca44bf2f7ad0), [`d1662db34`](https://github.com/PCSX2/pcsx2/commit/d1662db34afa310d2665b85af98405f61e440911), and [`2b5e9df73`](https://github.com/PCSX2/pcsx2/commit/2b5e9df7364c5e4e5de98281469a584fefd63927) fix DX12/Vulkan merge feedback-copy extents, bound odd-width PSMT4 uploads, and provide the D3D12 Tier-0 render-pass fallback. D3D11, D3D12, Vulkan, and software golden tests pass in local companion `86c4e23e1`. |
+| PS2Recomp canonical base | Keep the current patch base for now | Canonical `main` is still `e5636981`. The local resume-point and floating-point work already represents two post-`75d729ce` behavior changes. Canonical SIF dispatch [`2c5fbb9`](https://github.com/ran-j/PS2Recomp/commit/2c5fbb9389e11dd95693385969490c9e8e6f57b4) and GIF IMAGE2 [`e5636981`](https://github.com/ran-j/PS2Recomp/commit/e5636981a1c9de368f6b71e819c3dc188dfedbf4) are now exact backports, with an additional local dispatcher regression; the fifth upstream commit only documents `.recomp.json`. Rebasing only to duplicate those changes would churn the 44-topic reconstruction series without adding behavior. |
+| PCSX2 VU slice | Integrated selectively | Upstream commits [`62a79afff`](https://github.com/PCSX2/pcsx2/commit/62a79afff984dcf919fbb5ba8bdb5679d181ca57), [`854604401`](https://github.com/PCSX2/pcsx2/commit/8546044011687f1d4d38d307cbd1c3d8355a4383), and [`222285122`](https://github.com/PCSX2/pcsx2/commit/2222851226644208117edf28754c821765098374) correct 64-bit XGKICK timing, interpreter cycle tracking, and the `nextBlockCycles` width. They remain in local companion `accbf0cd9`; KzVU still passes all 1,776 JIT/interpreter/reference checks after the subsequent renderer backports. |
+| Isolated PCSX2 GS fixes | Integrated selectively | Upstream commits [`3c8df07e8`](https://github.com/PCSX2/pcsx2/commit/3c8df07e8e367caef8386fd949d6ca44bf2f7ad0), [`d1662db34`](https://github.com/PCSX2/pcsx2/commit/d1662db34afa310d2665b85af98405f61e440911), and [`2b5e9df73`](https://github.com/PCSX2/pcsx2/commit/2b5e9df7364c5e4e5de98281469a584fefd63927) fix DX12/Vulkan merge feedback-copy extents, bound odd-width PSMT4 uploads, and provide the D3D12 Tier-0 render-pass fallback. D3D11, D3D12, Vulkan, and software golden tests pass in local companion `accbf0cd9`. |
+| D3D12 per-stage GPU timing | Integrated as a local diagnostics extension | Companion `accbf0cd9` mirrors the Vulkan logical-range lifecycle across command-list rotation. Timestamp `EndQuery` is legal inside a D3D12 render pass; only `ResolveQueryData` is prohibited there, so all resolves remain at the existing command-list boundary. An ISO-free WARP test requires positive whole-frame, upload/draw, merge, and final-presentation samples. |
 | Full PCSX2 GS refresh | Rebase on an isolated branch; do not cherry-pick broad renderer changes piecemeal | The companion starts from `646df006`, while current `master` is 180 commits ahead of that base: 73 touch `pcsx2/GS`, three touch the KzVU slice, and none touch the KzIPU or KzSPU2 source slices. A merge probe found nine content-conflict hunks in `GSRenderer.cpp`, `GSDeviceVK.cpp`, and `GSTextureVK.cpp`. The broader Vulkan render-pass/layout/feedback work is tightly coupled, so a coherent base refresh is safer than selecting additional renderer commits. |
 | PCSX2 work still in review | Track, do not build on it yet | [PCSX2/pcsx2#15043](https://github.com/PCSX2/pcsx2/pull/15043) is a draft backend refactor and [PCSX2/pcsx2#14850](https://github.com/PCSX2/pcsx2/pull/14850) still proposes a broad TFX-shader unification. Re-evaluate them only after merge and after the current GS refresh is stable. |
 | SDL3 controller rumble | Integrated as a guarded adaptation | ReSands' `resands` branch supplied the DS2-to-SDL motor mapping: the large analog motor drives SDL's low-frequency channel and the small digital motor drives the high-frequency channel. Local companion `d7af7ca` additionally retains the six-byte libpad actuator alignment, forwards commands through a separate host callback, and stops output on focus loss, removal, shutdown, or a 500 ms stale-command lease. SDL calls stay on the window thread, failures are reported once per device, and the standalone suite passes 456/456. |
@@ -410,9 +411,10 @@ Vulkan/D3D12 timing, making `PerformanceMetrics` and GS dump replay the natural 
 to remain explicit.
 
 The companion proof of concept measures upload/draw, merge, presentation upscaling, sharpening, and final
-presentation on Vulkan. Results are collected asynchronously when command-buffer resources are reused; logical
-stages survive command-buffer rollover, and nested stages are supported. Range starts use top-of-pipe timestamps and
-range ends use bottom-of-pipe timestamps. In the final same-build control:
+presentation on Vulkan and D3D12. Results are collected asynchronously when command-buffer/list resources are reused;
+logical stages survive command-buffer/list rollover, and nested stages are supported. Vulkan range starts use
+top-of-pipe timestamps and range ends use bottom-of-pipe timestamps. D3D12 uses timestamp `EndQuery` markers for both
+boundaries and defers `ResolveQueryData` until the command list's existing end. In the final Vulkan same-build control:
 
 - Both arms produced 900 whole-frame samples with no screenshot readbacks or campaign problems.
 - The enabled arm produced 900 samples for every expected stage; the separate sharpening stage was correctly absent
@@ -441,10 +443,10 @@ Ask maintainers to decide:
 4. How unsupported stages and backends should be represented.
 5. Whether timestamps should exist only during an explicit performance capture.
 
-D3D12's existing timestamp path ends an active render pass. Forcing the same stage boundaries there would change the
-workload being measured, so this is not a D3D12 bug report. Record it as a backend limitation in the feature issue.
-If the design is accepted, reimplement it directly on current `master`, use built-in performance reporting rather
-than external callbacks, and keep unsupported backends explicit.
+D3D12 render passes prohibit `ResolveQueryData`, but not timestamp `EndQuery`. The local implementation therefore
+writes stage boundaries without ending the active pass, then resolves all whole-frame and stage queries together at
+the command list's existing end. Upstream work should reimplement this directly on current `master`, verify it under
+the D3D12 debug layer and built-in performance captures, and use built-in reporting rather than external callbacks.
 
 #### Backend-independent final-present observation for embedders
 

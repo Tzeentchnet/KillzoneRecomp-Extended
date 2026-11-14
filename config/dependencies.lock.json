@@ -216,7 +216,7 @@
       "id": "pcsx2",
       "kind": "git-checkout",
       "source_url": "https://github.com/Tzeentchnet/pcsx2.git",
-      "revision": "86c4e23e110d954a404ccd009f3587c558bbc7aa",
+      "revision": "accbf0cd94a49d73130be4a17b1b3bee586de4af",
       "publication_status": "unpublished",
       "license": "GPL-3.0-or-later",
       "redistribution": "Copyleft; distribute corresponding source and notices.",

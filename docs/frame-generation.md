@@ -238,9 +238,9 @@ worker remains disabled because of a known memory-corruption race, not as a perf
 The renderer now exposes its existing D3D12/Vulkan asynchronous command-list timestamp result as a positive
 whole-frame GPU sample. Enabling it does not read back the presented image or wait for the current GPU frame.
 Separate timeline markers measure GS-thread CPU time for GIF upload/draw consumption, merge, presentation
-upscaling, sharpening, and final presentation. Vulkan can also measure those stages with asynchronous timestamp
-ranges. D3D12 remains whole-frame only because its timestamp implementation ends an active render pass; forcing
-stage boundaries there would change the workload being measured.
+upscaling, sharpening, and final presentation. Vulkan and D3D12 can also measure those stages with asynchronous
+timestamp ranges. D3D12 records timestamp markers inside active render passes and resolves them only at the existing
+command-list boundary, so the diagnostic does not split render passes.
 
 Four 1920x1080 Vulkan arms ran in quality/balanced/quality/balanced order from fresh copies of the same profile card.
 All used the otherwise identical 60 FPS headroom contract, precise scheduler wait, V-Sync off, and guest seconds

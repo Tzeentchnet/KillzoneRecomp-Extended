@@ -529,6 +529,9 @@ if(BUILD_TESTING)
     kz_add_iso_free_test(kzgs_d3d12_golden kzgs_test
         --renderer d3d12 --warp --golden --frames 2
         --out "${KZ_TEST_STATE_DIR}/kzgs/d3d12")
+    kz_add_iso_free_test(kzgs_d3d12_gpu_timing kzgs_test
+        --renderer d3d12 --warp --gpu-timing-validation
+        --out "${KZ_TEST_STATE_DIR}/kzgs/d3d12-gpu-timing")
     kz_add_iso_free_test(kzgs_vulkan_golden kzgs_test
         --renderer vulkan --golden --frames 2
         --out "${KZ_TEST_STATE_DIR}/kzgs/vulkan")
@@ -540,6 +543,9 @@ if(BUILD_TESTING)
         PROPERTIES
             LABELS "iso-free;golden;renderer"
             RESOURCE_LOCK kzgs_gpu)
+    set_tests_properties(kzgs_d3d12_gpu_timing PROPERTIES
+        LABELS "iso-free;renderer"
+        RESOURCE_LOCK kzgs_gpu)
 
     add_test(NAME kz_ipu_byod
         COMMAND "$<TARGET_FILE:kzipu_test>"

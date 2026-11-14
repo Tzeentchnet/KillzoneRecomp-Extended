@@ -297,13 +297,18 @@ command-list timestamp queries; this does not add a screenshot readback or a wai
 time spent consuming GIF transfers, while `GS_MERGE_B/E`, `GS_UPSCALE_B/E`, `GS_SHARPEN_B/E`, and
 `GS_PRESENT_B/E` are CPU spans.
 
-Vulkan additionally emits positive GPU microseconds in `GPU_UPLOAD_DRAW.a`, `GPU_MERGE.a`, `GPU_UPSCALE.a`,
-`GPU_SHARPEN.a`, and `GPU_PRESENT.a`. The queries are collected only after the associated command-buffer resource is
-reused. They do not measure desktop compositing or scanout. FSR1 EASU and RCAS are both inside `GPU_UPSCALE`; the
-headroom preset therefore normally has no separate `GPU_SHARPEN` samples. D3D12 remains whole-frame only because
-writing its timestamps inside these stages would force extra render-pass endings and change the measured workload.
-Set `KZ_GPU_STAGE_TIMING=0` alongside `KZ_GPU_TIMING=1`, or use the campaign's `-DisableGpuStageTiming`, to retain
-the whole-frame query while suppressing Vulkan stage markers.
+Vulkan and D3D12 additionally emit positive GPU microseconds in `GPU_UPLOAD_DRAW.a`, `GPU_MERGE.a`,
+`GPU_UPSCALE.a`, `GPU_SHARPEN.a`, and `GPU_PRESENT.a`. The queries are collected only after the associated
+command-buffer/list resource is reused. They do not measure desktop compositing or scanout. FSR1 EASU and RCAS are
+both inside `GPU_UPSCALE`; the headroom preset therefore normally has no separate `GPU_SHARPEN` samples. D3D12
+records timestamp `EndQuery` markers inside render passes and defers `ResolveQueryData` until the existing
+command-list boundary, so stage timing does not add render-pass endings. Set `KZ_GPU_STAGE_TIMING=0` alongside
+`KZ_GPU_TIMING=1`, or use the campaign's `-DisableGpuStageTiming`, to retain the whole-frame query while suppressing
+stage markers.
+
+The ISO-free `kzgs_d3d12_gpu_timing` test renders twelve synthetic frames on WARP, enables the D3D12 debug device
+when Windows Graphics Tools are available, rotates through the asynchronous query resources, and requires positive
+whole-frame, upload/draw, merge, and final-presentation samples without a screenshot readback.
 
 Windows 10/11 builds can opt into the high-resolution interruptible wait without changing the default:
 

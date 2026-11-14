@@ -124,10 +124,11 @@ bool kzgsBurstTakeEx(std::vector<KzgsBurstFrame>& out, KzgsBurstCapturePoint& po
 
 GPU timing is off by default. Enabling it uses the renderer device's asynchronous timestamp queries; it does not
 read back the presented image or wait for the current GPU frame to finish. Positive whole-frame results are reported
-through trace id 11 in microseconds. Vulkan can additionally report upload/draw, merge, presentation-upscale,
-sharpening, and final-presentation GPU ranges through trace ids 20-24. D3D12 remains whole-frame only because its
-timestamp path must end an active render pass, which would perturb stage measurements. Trace ids 10 and 12-19 report
-the corresponding GS-thread CPU work and remain distinct from GPU results.
+through trace id 11 in microseconds. Vulkan and D3D12 can additionally report upload/draw, merge,
+presentation-upscale, sharpening, and final-presentation GPU ranges through trace ids 20-24. D3D12 writes timestamp
+queries inside active render passes, which the API permits, and defers the prohibited query resolve until the
+existing command-list boundary. Trace ids 10 and 12-19 report the corresponding GS-thread CPU work and remain
+distinct from GPU results.
 
 `KzgsConfig` has these settings:
 - `renderer`: D3D11, D3D12, Vulkan, or Software (PCSX2's software rasterizer, useful as a reference when debugging)

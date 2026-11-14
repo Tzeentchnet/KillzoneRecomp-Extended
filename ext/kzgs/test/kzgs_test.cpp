@@ -4,7 +4,7 @@
 // buffer with >32 MB of chunked PATH2 IMAGE uploads, and switches renderer on the same window (scene over PATH1).
 //
 // Usage: kzgs_test [--renderer d3d11|d3d12|vulkan|software] [--warp] [--golden] [--out <dir>] [--show] [--vsync]
-//                  [--raw-gif] [--frames N] [--stress-uploads N]
+//                  [--gpu-timing-validation] [--raw-gif] [--frames N] [--stress-uploads N]
 // Exit code 0 = pass. Writes test/out.png (1x), out_2x.png, out_stress.png and out_switch.png.
 // If the hardware D3D device cannot be created (e.g. no GPU access), it retries on WARP and says so.
 // SPDX-License-Identifier: GPL-3.0+
@@ -20,8 +20,11 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <d3d12.h>
+#include <dxgi1_3.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -309,6 +312,30 @@ static void PumpMessages()
 static std::atomic<int> g_vulkan_validation_errors{0};
 static std::atomic<bool> g_vulkan_validation_unavailable{false};
 static std::atomic<bool> g_vulkan_validation_seen{false};
+static std::array<std::atomic<int>, 25> g_gpu_timing_samples{};
+
+static bool D3D12DebugLayerAvailable()
+{
+	IDXGIFactory2* factory = nullptr;
+	const HRESULT factory_result =
+		CreateDXGIFactory2(DXGI_CREATE_FACTORY_DEBUG, IID_PPV_ARGS(&factory));
+	if (factory)
+		factory->Release();
+	if (FAILED(factory_result))
+		return false;
+
+	ID3D12Debug* debug = nullptr;
+	const HRESULT debug_result = D3D12GetDebugInterface(IID_PPV_ARGS(&debug));
+	if (debug)
+		debug->Release();
+	return SUCCEEDED(debug_result);
+}
+
+static void TimingTrace(int id, uint32_t value)
+{
+	if (value > 0 && ((id >= 20 && id <= 24) || id == 11))
+		g_gpu_timing_samples[static_cast<size_t>(id)].fetch_add(1, std::memory_order_relaxed);
+}
 
 static void Log(int level, const char* msg)
 {
@@ -1521,6 +1548,7 @@ int main(int argc, char** argv)
 	bool fsr1_validation = false;
 	bool temporal_validation = false;
 	bool fsr3_validation = false;
+	bool gpu_timing_validation = false;
 	std::string synthetic_trace;
 	std::string provider_validation;
 	std::string provider_gate_validation;
@@ -1545,6 +1573,8 @@ int main(int argc, char** argv)
 			temporal_validation = true;
 		else if (a == "--fsr3-validation")
 			fsr3_validation = true;
+		else if (a == "--gpu-timing-validation")
+			gpu_timing_validation = true;
 		else if (a == "--provider-validation" && i + 1 < argc)
 			provider_validation = argv[++i];
 		else if (a == "--provider-gate-validation" && i + 1 < argc)
@@ -1636,7 +1666,10 @@ int main(int argc, char** argv)
 	cfg.vsync = vsync;
 	cfg.upscale = 1;
 	cfg.bilinearPresent = false;
-	cfg.debugDevice = fsr1_validation;
+	const bool timing_debug_device = gpu_timing_validation && D3D12DebugLayerAvailable();
+	cfg.debugDevice = fsr1_validation || timing_debug_device;
+	if (gpu_timing_validation && !timing_debug_device)
+		std::printf("D3D12 debug layer unavailable; validating GPU timings without it\n");
 
 	std::string err;
 	std::printf("== open %s%s\n", names[int(cfg.renderer)], cfg.useWarp ? " (WARP)" : "");
@@ -1676,6 +1709,34 @@ int main(int argc, char** argv)
 	CheckUpscalerStatus(KzgsUpscaler::Off, 0, KzgsUpscalerReason::Disabled);
 
 	const std::vector<uint8_t> scene = BuildScene();
+	if (gpu_timing_validation)
+	{
+		kzgsSetTraceHook(&TimingTrace);
+		kzgsSetGpuStageTimingEnabled(true);
+		kzgsSetGpuTimingEnabled(true);
+		kzgsSync();
+		PresentFrames(scene, 12, 3);
+		kzgsSync();
+		auto check_timing = [](int id, const char* name) {
+			const int samples = g_gpu_timing_samples[static_cast<size_t>(id)].load(std::memory_order_relaxed);
+			std::printf("  %s: %d positive sample(s)\n", name, samples);
+			if (samples == 0)
+				g_failures++;
+		};
+		check_timing(11, "whole-frame GPU");
+		check_timing(20, "upload/draw GPU");
+		check_timing(21, "merge GPU");
+		check_timing(24, "final-presentation GPU");
+		kzgsSetGpuTimingEnabled(false);
+		kzgsSetGpuStageTimingEnabled(false);
+		kzgsSync();
+		kzgsSetTraceHook(nullptr);
+		kzgsClose();
+		CheckUpscalerClosed();
+		DestroyWindow(hwnd);
+		std::printf("%s: GPU timing integration\n", g_failures ? "FAIL" : "PASS");
+		return g_failures ? 1 : 0;
+	}
 	std::printf("== 1x (%d frames, PATH3 packet %zu qwords)\n", frames, scene.size() / 16);
 	RenderAndCheck(scene, frames, 1, "out.png");
 
