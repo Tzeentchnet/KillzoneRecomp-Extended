@@ -33,6 +33,7 @@ namespace
 {
     constexpr int kWidth = 900;
     constexpr int kHeight = 760;
+    constexpr int kReferenceRenderHeight = 448;
 
     struct Resolution
     {
@@ -110,6 +111,7 @@ namespace
     {
         cfg.renderer = KzRenderer::D3D12;
         cfg.vsync = true;
+        cfg.renderScalePolicy = KzRenderScalePolicy::Quality;
         cfg.upscale = 0;
         cfg.upscaler = KzgsUpscaler::Off;
         cfg.upscalerSharpening = 0;
@@ -145,6 +147,31 @@ namespace
         cfg.bilinear = true;
         cfg.sharpScaling = true;
         cfg.sharpen = 0;
+    }
+
+    void apply60FpsHeadroomPreset(KzConfig &cfg)
+    {
+        cfg.fpsLimit = 60;
+        cfg.renderer = KzRenderer::Vulkan;
+        cfg.renderScalePolicy = KzRenderScalePolicy::Balanced;
+        cfg.upscale = 0;
+        cfg.upscaler = KzgsUpscaler::FSR1;
+        cfg.upscalerSharpening = 15;
+        cfg.fsr3InputMode = KzgsFsr3InputMode::Strict;
+        cfg.anisotropy = 16;
+        cfg.mipmapMode = KzMipmapMode::PS2;
+        cfg.fxaa = false;
+        cfg.smaa = false;
+        cfg.textureReplacement = false;
+        cfg.bilinear = true;
+        cfg.sharpScaling = true;
+        cfg.sharpen = 0;
+        cfg.noiseFilter = false;
+        cfg.motionBlur = false;
+        cfg.glow = false;
+        cfg.lensBlur = false;
+        cfg.renderDistance = 1.0f;
+        cfg.lodScale = 1.0f;
     }
 
     // Game rate for external frame generation (Lossless Scaling, AFMF, Smooth Motion): half the display refresh so a
@@ -477,7 +504,7 @@ namespace
                     if (ImGui::Button("Validated enhancements"))
                         applyValidatedGraphicsPreset(cfg);
                     if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("Measured stock-game test setup: D3D12, V-Sync on, auto render scale, 16x anisotropy,\n"
+                        ImGui::SetTooltip("Measured stock-game test setup: D3D12, V-Sync on, quality auto render scale, 16x anisotropy,\n"
                                           "base-mip detail, replacement textures off, clean PS2 effects,\n"
                                           "2x view distance and 30%% sharpening.");
                     ImGui::SameLine();
@@ -487,6 +514,13 @@ namespace
                         ImGui::SetTooltip("Vulkan, 3x internal rendering, FSR 1 with 15%% RCAS,\n"
                                           "PS2 mip transitions, 16x anisotropy and no additional CAS or AA.\n"
                                           "Designed for 1440p output.");
+                    ImGui::SameLine();
+                    if (ImGui::Button("60 FPS headroom"))
+                        apply60FpsHeadroomPreset(cfg);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("60 fps, Vulkan, balanced automatic render scale, FSR 1 with one RCAS pass,\n"
+                                          "1x view distance, replacement textures off and clean effects.\n"
+                                          "Targets 2x at 720p/1080p, 3x at 1440p and 4x at 2160p.");
                     ImGui::SameLine();
                     if (ImGui::Button("Sharp and clean"))
                     {
@@ -510,11 +544,43 @@ namespace
                         row("Renderer", "Choose the graphics API used to render and present the game.");
                         enumCombo<KzRenderer>("##renderer", cfg.renderer,
                                               {{KzRenderer::D3D11, "Direct3D 11"}, {KzRenderer::D3D12, "Direct3D 12"}, {KzRenderer::Vulkan, "Vulkan"}});
-                        row("Internal render scale", "Integer GS render scale. Auto chooses the smallest whole scale that covers the output height.");
-                        const char *scales[] = {"Auto (from output height)", "1x (448p target)", "2x (896p target)",
-                                                "3x (1344p target)", "4x (1792p target)", "5x (2240p target)",
-                                                "6x (2688p target)", "7x (3136p target)", "8x (3584p target)"};
-                        ImGui::Combo("##upscale", &cfg.upscale, scales, IM_ARRAYSIZE(scales));
+                        row("Internal render scale",
+                            "Balanced auto leaves raster headroom and uses presentation upscaling where needed. "
+                            "Quality auto preserves the original behavior of covering the output height.");
+                        std::string scaleLabel;
+                        if (cfg.upscale == 0)
+                            scaleLabel = cfg.renderScalePolicy == KzRenderScalePolicy::Balanced
+                                             ? "Auto: balanced (GPU headroom)"
+                                             : "Auto: quality (cover output height)";
+                        else
+                            scaleLabel = std::to_string(cfg.upscale) + "x (" +
+                                         std::to_string(kReferenceRenderHeight * cfg.upscale) + "p target)";
+                        if (ImGui::BeginCombo("##upscale", scaleLabel.c_str()))
+                        {
+                            const bool qualityAuto =
+                                cfg.upscale == 0 && cfg.renderScalePolicy == KzRenderScalePolicy::Quality;
+                            if (ImGui::Selectable("Auto: quality (cover output height)", qualityAuto))
+                            {
+                                cfg.upscale = 0;
+                                cfg.renderScalePolicy = KzRenderScalePolicy::Quality;
+                            }
+                            const bool balancedAuto =
+                                cfg.upscale == 0 && cfg.renderScalePolicy == KzRenderScalePolicy::Balanced;
+                            if (ImGui::Selectable("Auto: balanced (GPU headroom)", balancedAuto))
+                            {
+                                cfg.upscale = 0;
+                                cfg.renderScalePolicy = KzRenderScalePolicy::Balanced;
+                            }
+                            for (int scale = 1; scale <= 8; ++scale)
+                            {
+                                const std::string label = std::to_string(scale) + "x (" +
+                                                          std::to_string(kReferenceRenderHeight * scale) +
+                                                          "p target)";
+                                if (ImGui::Selectable(label.c_str(), cfg.upscale == scale))
+                                    cfg.upscale = scale;
+                            }
+                            ImGui::EndCombo();
+                        }
                         row("Aspect ratio",
                             "16:9 uses the game's native widescreen FOV and HUD. Ultrawide shows more at the sides while "
                             "keeping the HUD in the middle; menus and movies get side bars.");
@@ -974,6 +1040,7 @@ int kzLauncherSelfTest()
     KzConfig cfg;
     cfg.renderer = KzRenderer::Vulkan;
     cfg.vsync = false;
+    cfg.renderScalePolicy = KzRenderScalePolicy::Balanced;
     cfg.upscale = 8;
     cfg.upscaler = KzgsUpscaler::FSR1;
     cfg.upscalerSharpening = 77;
@@ -997,7 +1064,8 @@ int kzLauncherSelfTest()
     cfg.startLevel = 7;
 
     applyValidatedGraphicsPreset(cfg);
-    check(cfg.renderer == KzRenderer::D3D12 && cfg.vsync && cfg.upscale == 0 &&
+    check(cfg.renderer == KzRenderer::D3D12 && cfg.vsync &&
+              cfg.renderScalePolicy == KzRenderScalePolicy::Quality && cfg.upscale == 0 &&
               cfg.upscaler == KzgsUpscaler::Off && cfg.upscalerSharpening == 0 &&
               cfg.fsr3InputMode == KzgsFsr3InputMode::Strict &&
               cfg.aspect == KzAspect::Widescreen16x9,
@@ -1036,6 +1104,33 @@ int kzLauncherSelfTest()
     check(!fsr3InputModeControlEnabled(cfg), "FSR 3 input mode control is disabled outside Vulkan");
     cfg.upscaler = KzgsUpscaler::XeSS;
     check(!providerSharpeningControlEnabled(cfg), "provider sharpening remains disabled for XeSS");
+
+    cfg.vsync = false;
+    cfg.framePacing = true;
+    cfg.aspect = KzAspect::Classic4x3;
+    cfg.textureReplacement = true;
+    cfg.noiseFilter = true;
+    cfg.motionBlur = true;
+    cfg.glow = true;
+    cfg.lensBlur = true;
+    cfg.renderDistance = 2.0f;
+    cfg.lodScale = 1.0f;
+    apply60FpsHeadroomPreset(cfg);
+    check(cfg.fpsLimit == 60 && cfg.renderer == KzRenderer::Vulkan &&
+              cfg.renderScalePolicy == KzRenderScalePolicy::Balanced && cfg.upscale == 0,
+          "60 FPS headroom preset render contract");
+    check(cfg.upscaler == KzgsUpscaler::FSR1 && cfg.upscalerSharpening == 15 &&
+              cfg.fsr3InputMode == KzgsFsr3InputMode::Strict && cfg.sharpen == 0,
+          "60 FPS headroom preset uses one sharpening pass");
+    check(cfg.anisotropy == 16 && cfg.mipmapMode == KzMipmapMode::PS2 &&
+              !cfg.fxaa && !cfg.smaa && !cfg.textureReplacement && cfg.bilinear && cfg.sharpScaling,
+          "60 FPS headroom preset texture and presentation controls");
+    check(!cfg.noiseFilter && !cfg.motionBlur && !cfg.glow && !cfg.lensBlur &&
+              cfg.renderDistance == 1.0f && cfg.lodScale == 1.0f,
+          "60 FPS headroom preset detail and effect bounds");
+    check(!cfg.vsync && cfg.framePacing && cfg.aspect == KzAspect::Classic4x3 &&
+              cfg.masterVolume == 37 && cfg.startLevel == 7,
+          "60 FPS headroom preset preserves unrelated settings");
 
     check(externalFrameGenerationFpsLimit(60) == 60 && externalFrameGenerationFpsLimit(100) == 60 &&
               externalFrameGenerationFpsLimit(120) == 60 && externalFrameGenerationFpsLimit(144) == 72 &&

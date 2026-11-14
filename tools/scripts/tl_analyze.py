@@ -14,7 +14,8 @@ Definitions (all times in ms of host time):
   D1 done   = DONE_POST time minus kick time (the worker posted the completion event)
   applied   = EE applied the completion (STR clear, D_STAT, DMAC handler queued) minus DONE_POST
 """
-import argparse, csv, statistics, bisect, collections, math
+import argparse, csv, statistics, bisect, collections, json, math
+from pathlib import Path
 
 
 # Keep these guest-hook addresses in sync with src/kz_addrs.cpp.
@@ -22,6 +23,16 @@ REGION_HOOKS = {
     'us':  {'frame_limiter': 0x001bff10, 'kick': 0x00150090, 'kick_check': 0x00151fc8},
     'pal': {'frame_limiter': 0x001c0278, 'kick': 0x00150068, 'kick_check': 0x00151fa0},
     'eu':  {'frame_limiter': 0x001c0190, 'kick': 0x00150068, 'kick_check': 0x00151fa0},
+}
+
+WAIT_PRECISE_FLAG = 1 << 31
+WAIT_VALUE_MASK = WAIT_PRECISE_FLAG - 1
+WAIT_CAUSES = {
+    0: 'deadline',
+    1: 'event',
+    2: 'stop',
+    3: 'reschedule',
+    4: 'error',
 }
 
 
@@ -39,12 +50,7 @@ def load(path):
     return [(t - t0, l, n, a, b, c) for t, l, n, a, b, c in ev]
 
 
-def select_window(ev, start_s, end_s):
-    if not (math.isfinite(start_s) and math.isfinite(end_s)) or start_s < 0 or end_s <= start_s:
-        raise ValueError('timeline window must have 0 <= start < end with finite times')
-    if end_s * 1e6 > ev[-1][0]:
-        raise ValueError('timeline ends before the requested window')
-    selected = [event for event in ev if start_s * 1e6 <= event[0] < end_s * 1e6]
+def rebase_window(selected):
     if not selected:
         raise ValueError('timeline window contains no events')
     t0 = selected[0][0]
@@ -58,6 +64,29 @@ def select_window(ev, start_s, end_s):
     return rebased
 
 
+def select_window(ev, start_s, end_s):
+    if not (math.isfinite(start_s) and math.isfinite(end_s)) or start_s < 0 or end_s <= start_s:
+        raise ValueError('timeline window must have 0 <= start < end with finite times')
+    if end_s * 1e6 > ev[-1][0]:
+        raise ValueError('timeline ends before the requested window')
+    selected = [event for event in ev if start_s * 1e6 <= event[0] < end_s * 1e6]
+    return rebase_window(selected)
+
+
+def select_guest_window(ev, start_s, end_s, hz):
+    if not (math.isfinite(start_s) and math.isfinite(end_s)) or start_s < 0 or end_s <= start_s:
+        raise ValueError('guest timeline window must have 0 <= start < end with finite times')
+    start_tick = max(1, math.ceil(start_s * hz - 1e-9))
+    end_tick = max(1, math.ceil(end_s * hz - 1e-9))
+    vblanks = {a: t for t, lane, name, a, b, c in ev if name == 'VBLANK'}
+    if start_tick not in vblanks or end_tick not in vblanks:
+        raise ValueError(
+            f'timeline does not contain guest-vblank boundaries {start_tick} and {end_tick} '
+            f'for the requested window')
+    start_us, end_us = vblanks[start_tick], vblanks[end_tick]
+    return rebase_window([event for event in ev if start_us <= event[0] < end_us])
+
+
 def pct(v, p):
     v = sorted(v)
     return v[min(len(v) - 1, int(len(v) * p))] if v else float('nan')
@@ -67,6 +96,120 @@ def stat(v):
     if not v:
         return 'n=0'
     return f'n={len(v)} mean={statistics.mean(v):.2f} med={statistics.median(v):.2f} p10={pct(v,.1):.2f} p90={pct(v,.9):.2f} max={max(v):.2f}'
+
+
+def signed_u32(value):
+    value &= 0xffffffff
+    return value - (1 << 32) if value & (1 << 31) else value
+
+
+def has_exact_wait_telemetry(ev):
+    return any(
+        (name == 'SLEEP_B' and b != 0) or
+        (name == 'SLEEP_E' and ((b & WAIT_PRECISE_FLAG) or (b & WAIT_VALUE_MASK) > 1))
+        for t, lane, name, a, b, c in ev
+    )
+
+
+def scheduler_waits(ev):
+    if not has_exact_wait_telemetry(ev):
+        return []
+    waits, open_ = [], {}
+    for t, lane, name, a, b, c in ev:
+        if name == 'SLEEP_B':
+            open_[a] = (t, b, c)
+        elif name == 'SLEEP_E' and a in open_:
+            start, begin_b, begin_c = open_.pop(a)
+            waits.append({
+                'start': start,
+                'end': t,
+                'kind': a,
+                'requested_us': begin_b & WAIT_VALUE_MASK,
+                'backend': 'precise' if b & WAIT_PRECISE_FLAG else 'condition-variable',
+                'cause': b & WAIT_VALUE_MASK,
+                'wake_error_us': signed_u32(c),
+            })
+    return waits
+
+
+def distribution(values):
+    if not values:
+        return None
+    values = sorted(values)
+    return {
+        'count': len(values),
+        'mean': statistics.mean(values),
+        'median': statistics.median(values),
+        'p95': pct(values, .95),
+        'p99': pct(values, .99),
+        'max': max(values),
+    }
+
+
+def scheduler_metrics(ev):
+    vblank_times = [t for t, lane, name, a, b, c in ev if name == 'VBLANK']
+    intervals_ms = [(right - left) / 1000 for left, right in zip(vblank_times, vblank_times[1:])]
+    waits = scheduler_waits(ev)
+    summary = {
+        'schema_version': 1,
+        'duration_s': ev[-1][0] / 1e6 if ev else 0,
+        'exact_wait_telemetry': bool(waits),
+        'vblank': {
+            'count': len(vblank_times),
+            'interval_ms': distribution(intervals_ms),
+            'over_25_ms': sum(value > 25 for value in intervals_ms),
+            'over_25_ms_ratio': (
+                sum(value > 25 for value in intervals_ms) / len(intervals_ms) if intervals_ms else None
+            ),
+        },
+        'waits': {},
+    }
+    labels = {0: 'pacing', 1: 'idle_timer'}
+    for wait in waits:
+        kind = labels.get(wait['kind'], f"kind_{wait['kind']}")
+        backend = wait['backend'].replace('-', '_')
+        group = summary['waits'].setdefault(kind, {}).setdefault(
+            backend, {'count': 0, 'causes': collections.Counter(), 'deadline': []})
+        group['count'] += 1
+        group['causes'][WAIT_CAUSES.get(wait['cause'], f"unknown_{wait['cause']}")] += 1
+        if wait['cause'] == 0 and wait['requested_us'] > 0:
+            group['deadline'].append(wait)
+    for kinds in summary['waits'].values():
+        for group in kinds.values():
+            deadline = group.pop('deadline')
+            requested_ms = [wait['requested_us'] / 1000 for wait in deadline]
+            error_ms = [wait['wake_error_us'] / 1000 for wait in deadline]
+            group['causes'] = dict(group['causes'])
+            group['deadline_count'] = len(deadline)
+            group['requested_ms'] = distribution(requested_ms)
+            group['signed_wake_error_ms'] = distribution(error_ms)
+            group['overshoot_ms'] = distribution([max(0, value) for value in error_ms])
+    return summary
+
+
+def report_scheduler_waits(ev):
+    waits = scheduler_waits(ev)
+    if not waits:
+        print('  exact scheduler wait telemetry unavailable (legacy trace or no complete instrumented waits)')
+        return
+    labels = {0: 'pacing', 1: 'idle/timer'}
+    grouped = collections.defaultdict(list)
+    for wait in waits:
+        grouped[(wait['kind'], wait['backend'])].append(wait)
+    for (kind, backend), group in sorted(grouped.items()):
+        causes = collections.Counter(WAIT_CAUSES.get(wait['cause'], f"unknown-{wait['cause']}")
+                                     for wait in group)
+        print(f"  {labels.get(kind, f'kind-{kind}')} waits ({backend}): n={len(group)} causes={dict(causes)}")
+        deadline = [wait for wait in group if wait['cause'] == 0 and wait['requested_us'] > 0]
+        if deadline:
+            requested_ms = [wait['requested_us'] / 1000 for wait in deadline]
+            error_ms = [wait['wake_error_us'] / 1000 for wait in deadline]
+            overshoot_ms = [max(0, value) for value in error_ms]
+            print('    requested ms: med=%.3f p95=%.3f; signed wake error ms: med=%.3f p95=%.3f '
+                  'p99=%.3f max=%.3f; overshoot p95=%.3f p99=%.3f' %
+                  (statistics.median(requested_ms), pct(requested_ms, .95),
+                   statistics.median(error_ms), pct(error_ms, .95), pct(error_ms, .99), max(error_ms),
+                   pct(overshoot_ms, .95), pct(overshoot_ms, .99)))
 
 
 def spans(ev, b, e, key=lambda a, bb: 0):
@@ -112,7 +255,7 @@ def report_vblank_deadlines(ev, hz):
     lateness = [(t - tick * period - phase) / 1000 for t, tick in vblanks]
     print('  fixed %d Hz vblank deadline lateness lower bound ms: median=%.2f p95=%.2f' %
           (hz, statistics.median(lateness), pct(lateness, .95)))
-    wakes = [(t, b) for t, l, n, a, b, c in ev if n == 'SLEEP_E' and a == 0]
+    wakes = [(t, b & WAIT_VALUE_MASK) for t, l, n, a, b, c in ev if n == 'SLEEP_E' and a == 0]
     wake_times = [t for t, b in wakes]
     long_indices = [i for i in range(1, len(vblanks)) if vblanks[i][0] - vblanks[i - 1][0] > 1.5 * period]
     close = []
@@ -127,7 +270,10 @@ def report_vblank_deadlines(ev, hz):
     if close:
         print('  those long intervals: median lower-bound lateness %.2f ms, p95 %.2f ms' %
               (statistics.median(close), pct(close, .95)))
-    print('  lower bounds assume one fixed host period throughout the trace; requested wait deadlines are not recorded')
+    if has_exact_wait_telemetry(ev):
+        print('  fixed-period lateness remains a vblank lower bound; exact scheduler wake error is reported below')
+    else:
+        print('  lower bounds assume one fixed host period throughout the trace; requested wait deadlines are not recorded')
 
 
 def analyse(ev, region='us', vblank_hz=None):
@@ -169,6 +315,7 @@ def analyse(ev, region='us', vblank_hz=None):
 
     print('\n-- EE thread --')
     print('  pacing sleep (processDueDeadlines): %.1f%% of the window; idle waits %.1f%%' % (100 * sum(e - s for s, e, a, b in slp if a == 0) / dur_us, 100 * sum(e - s for s, e, a, b in slp if a == 1) / dur_us))
+    report_scheduler_waits(ev)
     print('  barrier waits (worker busy when the EE touched VIF/VU state): n=%d, %.1f ms total = %.2f%% of the window' % (len(bar), sum(e - s for s, e, a, b in bar) / 1000, 100 * sum(e - s for s, e, a, b in bar) / dur_us))
     lim = sorted(t for t, l, n, a, b, c in ev if n == 'G_ENTER' and a == addresses['frame_limiter'])
     print('  frame limiter entries (0x%08x): %d (%.1f/s); period ms: %s' %
@@ -282,6 +429,34 @@ def self_test():
             value = re.search(r'\.' + field + r'\s*=\s*(0x[0-9a-fA-F]+)', table.group(1))
             assert value and int(value.group(1), 16) == REGION_HOOKS[region][key], (region, field)
 
+    exact_wait_events = [
+        (0, 'EE', 'SLEEP_B', 0, WAIT_PRECISE_FLAG | 2000, 100),
+        (2500, 'EE', 'SLEEP_E', 0, WAIT_PRECISE_FLAG, 500),
+        (3000, 'EE', 'SLEEP_B', 1, 1000, 200),
+        (3200, 'EE', 'SLEEP_E', 1, 3, (-800) & 0xffffffff),
+    ]
+    decoded_waits = scheduler_waits(exact_wait_events)
+    assert decoded_waits[0]['backend'] == 'precise' and decoded_waits[0]['cause'] == 0
+    assert decoded_waits[0]['requested_us'] == 2000 and decoded_waits[0]['wake_error_us'] == 500
+    assert decoded_waits[1]['backend'] == 'condition-variable' and decoded_waits[1]['cause'] == 3
+    assert decoded_waits[1]['wake_error_us'] == -800
+    with contextlib.redirect_stdout(io.StringIO()) as output:
+        report_scheduler_waits(exact_wait_events)
+    wait_report = output.getvalue()
+    assert 'pacing waits (precise)' in wait_report and 'overshoot p95=0.500' in wait_report
+    assert not scheduler_waits([
+        (0, 'EE', 'SLEEP_B', 0, 0, 100),
+        (1000, 'EE', 'SLEEP_E', 0, 0, 100),
+    ])
+    metric_events = sorted(exact_wait_events + [
+        (0, 'EE', 'VBLANK', 1, 0, 0),
+        (16667, 'EE', 'VBLANK', 2, 0, 0),
+        (33334, 'EE', 'VBLANK', 3, 0, 0),
+    ])
+    metrics = scheduler_metrics(metric_events)
+    assert metrics['exact_wait_telemetry'] and metrics['vblank']['interval_ms']['p95'] == 16.667
+    assert metrics['waits']['pacing']['precise']['overshoot_ms']['p99'] == 0.5
+
     addresses = REGION_HOOKS['eu']
     ev = []
     for t in (0, 16000, 32000):
@@ -353,6 +528,9 @@ def self_test():
     cropped = select_window(delayed, 0.015, 0.04)
     assert len(cropped) == 4 and cropped[0][0] == 0 and cropped[-1][0] == 18334
     assert len(select_window(delayed, 0, 0.015)) == 1
+    guest_cropped = select_guest_window(delayed, 2 / 60, 4 / 60, 60)
+    assert guest_cropped[0][2] == 'VBLANK' and guest_cropped[0][3] == 2
+    assert all(event[3] != 4 for event in guest_cropped if event[2] == 'VBLANK')
     idle_events = [(0, 'GS', 'GS_IDLE_E', 9000, 0, 0), (15000, 'GS', 'GS_IDLE_E', 3000, 0, 0),
                    (20000, 'EE', 'VBLANK', 1, 0, 0)]
     assert [event[3] for event in select_window(idle_events, 0, 0.019)] == [0, 3000]
@@ -371,8 +549,13 @@ if __name__ == '__main__':
     parser.add_argument('csv', nargs='?', help='KZ_TIMELINE CSV file')
     parser.add_argument('--region', choices=REGION_HOOKS, default='us', help='disc executable region (default: us)')
     parser.add_argument('--vblank-hz', type=int, help='fixed guest rate for deadline-lateness lower bounds (30-480)')
-    parser.add_argument('--window-s', nargs=2, type=float, metavar=('START', 'END'),
-                        help='analyze [start, end) seconds after the first recorded event')
+    window_group = parser.add_mutually_exclusive_group()
+    window_group.add_argument('--window-s', nargs=2, type=float, metavar=('START', 'END'),
+                              help='analyze [start, end) seconds after the first recorded event')
+    window_group.add_argument('--guest-window-s', nargs=2, type=float, metavar=('START', 'END'),
+                              help='analyze [start, end) guest seconds using VBLANK tick IDs (needs --vblank-hz)')
+    parser.add_argument('--metrics-output', type=Path,
+                        help='write machine-readable vblank and scheduler-wait metrics as JSON')
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--dump', nargs=2, type=float, metavar=('T0_MS', 'DURATION_MS'))
     group.add_argument('--frames', nargs='+', type=int, metavar='N_OR_START')
@@ -387,6 +570,8 @@ if __name__ == '__main__':
         parser.error('--frames needs a positive count and an optional non-negative start index')
     elif args.vblank_hz is not None and not 30 <= args.vblank_hz <= 480:
         parser.error('--vblank-hz must be between 30 and 480')
+    elif args.guest_window_s and args.vblank_hz is None:
+        parser.error('--guest-window-s requires --vblank-hz')
     elif args.dump and args.dump[1] <= 0:
         parser.error('--dump duration must be positive')
     else:
@@ -394,6 +579,11 @@ if __name__ == '__main__':
             ev = load(args.csv)
             if args.window_s:
                 ev = select_window(ev, *args.window_s)
+            elif args.guest_window_s:
+                ev = select_guest_window(ev, *args.guest_window_s, args.vblank_hz)
+            if args.metrics_output:
+                args.metrics_output.write_text(
+                    json.dumps(scheduler_metrics(ev), indent=2) + '\n', encoding='utf-8')
             if args.dump:
                 s, d = (value * 1000 for value in args.dump)
                 for t, l, n, a, b, c in ev:

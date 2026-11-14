@@ -34,10 +34,12 @@
 namespace
 {
     constexpr int kReferenceRenderHeight = 448;
+    constexpr int kBalancedOutputHeightPerScale = 540;
 
     enum class RenderScaleMode
     {
         AutoOutputHeight,
+        AutoBalanced,
         FixedInteger,
         AutomationOverride,
     };
@@ -54,13 +56,18 @@ namespace
         switch (mode)
         {
         case RenderScaleMode::AutoOutputHeight: return "auto_output_height";
+        case RenderScaleMode::AutoBalanced: return "auto_balanced";
         case RenderScaleMode::FixedInteger: return "fixed_integer";
         case RenderScaleMode::AutomationOverride: return "automation_override";
         }
         return "unknown";
     }
 
-    RenderScaleContract resolveRenderScale(int configuredScale, int outputHeight, const char *automationOverride)
+    RenderScaleContract resolveRenderScale(
+        int configuredScale,
+        KzRenderScalePolicy policy,
+        int outputHeight,
+        const char *automationOverride)
     {
         RenderScaleContract contract;
         contract.configuredScale = std::clamp(configuredScale, 0, 8);
@@ -76,10 +83,13 @@ namespace
         }
         else
         {
-            contract.mode = RenderScaleMode::AutoOutputHeight;
+            const bool balanced = policy == KzRenderScalePolicy::Balanced;
+            const int outputHeightPerScale =
+                balanced ? kBalancedOutputHeightPerScale : kReferenceRenderHeight;
+            contract.mode = balanced ? RenderScaleMode::AutoBalanced : RenderScaleMode::AutoOutputHeight;
             contract.effectiveScale =
-                std::clamp((std::max(outputHeight, kReferenceRenderHeight) + kReferenceRenderHeight - 1) /
-                               kReferenceRenderHeight,
+                std::clamp((std::max(outputHeight, kReferenceRenderHeight) + outputHeightPerScale - 1) /
+                               outputHeightPerScale,
                            1, 8);
         }
         return contract;
@@ -153,6 +163,7 @@ namespace
         std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
         std::chrono::steady_clock::time_point nextShot = std::chrono::steady_clock::now();
         int shotIndex = 0;
+        bool captureMetadataOnly = false;
         uint64_t guestShotInterval = 0;
         uint64_t nextGuestShot = 0;
         uint64_t guestShotGameplayOffset = 0;
@@ -209,11 +220,16 @@ namespace
                          : _stricmp(r, "software") == 0 || _stricmp(r, "sw") == 0
                              ? KzgsRenderer::Software
                              : KzgsRenderer::D3D11;
-        RenderScaleContract scale = resolveRenderScale(c.upscale, windowHeight, std::getenv("KZ_UPSCALE"));
-        if (scale.mode == RenderScaleMode::AutoOutputHeight &&
+        RenderScaleContract scale =
+            resolveRenderScale(c.upscale, c.renderScalePolicy, windowHeight, std::getenv("KZ_UPSCALE"));
+        if ((scale.mode == RenderScaleMode::AutoOutputHeight || scale.mode == RenderScaleMode::AutoBalanced) &&
             kzWideTargetAspect() > 0.0f && windowWidth > 0)
         {
-            scale.effectiveScale = std::max(scale.effectiveScale, std::min(6, (windowWidth + 767) / 768));
+            const int outputWidthPerScale =
+                scale.mode == RenderScaleMode::AutoBalanced ? 960 : 768;
+            scale.effectiveScale = std::max(
+                scale.effectiveScale,
+                std::min(6, (windowWidth + outputWidthPerScale - 1) / outputWidthPerScale));
         }
         k.upscale = scale.effectiveScale;
         applyUpscalerConfig(c, k);
@@ -569,6 +585,21 @@ namespace
             static_cast<unsigned long long>(guestVsync), static_cast<unsigned long long>(guestVsync),
             kzTimingRate() > 0 ? static_cast<double>(guestVsync) / kzTimingRate() : 0.0,
             gameplayOffset, static_cast<unsigned long long>(presentSeq), capturePoint, file, width, height);
+        std::fflush(s.measurementFile);
+    }
+
+    void recordTimingSample(GsState &s, uint64_t guestVsync, uint64_t presentSeq)
+    {
+        std::lock_guard<std::mutex> lock(s.measurementMutex);
+        if (!s.measurementFile)
+            return;
+        std::fprintf(
+            s.measurementFile,
+            "{\"schema_version\":1,\"record\":\"timing_sample\",\"guest_vsync\":%llu,"
+            "\"guest_time_s\":%.9f,\"present_seq\":%llu}\n",
+            static_cast<unsigned long long>(guestVsync),
+            kzTimingRate() > 0 ? static_cast<double>(guestVsync) / kzTimingRate() : 0.0,
+            static_cast<unsigned long long>(presentSeq));
         std::fflush(s.measurementFile);
     }
 
@@ -1067,33 +1098,40 @@ namespace
                 {
                     s.nextShot = now + std::chrono::seconds(s.shotInterval);
                 }
-                static const int burstN = std::getenv("KZ_SHOT_BURST") ? std::atoi(std::getenv("KZ_SHOT_BURST")) : 0;
-                static const long long burstFrom = std::getenv("KZ_SHOT_BURST_FROM") ? std::atoll(std::getenv("KZ_SHOT_BURST_FROM")) : 0;
-                static const long long burstTo = std::getenv("KZ_SHOT_BURST_TO") ? std::atoll(std::getenv("KZ_SHOT_BURST_TO")) : 1000000;
-                const long long nowSec = std::chrono::duration_cast<std::chrono::seconds>(now - s.start).count();
-                if (burstN > 0 && !s.burstArmed && nowSec >= burstFrom && nowSec <= burstTo)
+                if (s.captureMetadataOnly)
                 {
-                    static const int burstPresent = std::getenv("KZ_SHOT_BURST_PRESENT") ? std::atoi(std::getenv("KZ_SHOT_BURST_PRESENT")) : 0; // 1: window-sized snapshot, 2: backbuffer or diagnostic recomposition
-                    int ww = 0, wh = 0;
-                    if (burstPresent == 2)
-                        ww = -1, wh = -1;
-                    else if (burstPresent == 1)
-                    {
-                        ww = 1280, wh = 896;
-                        if (const char *v = std::getenv("KZ_WINDOW_SIZE"))
-                            std::sscanf(v, "%dx%d", &ww, &wh);
-                    }
-                    s.vblankLog.clear();
-                    s.burstArmed = true;
-                    kzgsBurstArm(burstN, ww, wh);
+                    recordTimingSample(s, guestVsync, s.presentedSeq.load(std::memory_order_relaxed));
                 }
-                if (burstN <= 0)
+                else
                 {
-                    const long long captureSeconds =
-                        guestScheduled && kzTimingRate() > 0
-                            ? static_cast<long long>(guestVsync / static_cast<uint64_t>(kzTimingRate()))
-                            : std::chrono::duration_cast<std::chrono::seconds>(now - s.start).count();
-                    saveShot(s, captureSeconds);
+                    static const int burstN = std::getenv("KZ_SHOT_BURST") ? std::atoi(std::getenv("KZ_SHOT_BURST")) : 0;
+                    static const long long burstFrom = std::getenv("KZ_SHOT_BURST_FROM") ? std::atoll(std::getenv("KZ_SHOT_BURST_FROM")) : 0;
+                    static const long long burstTo = std::getenv("KZ_SHOT_BURST_TO") ? std::atoll(std::getenv("KZ_SHOT_BURST_TO")) : 1000000;
+                    const long long nowSec = std::chrono::duration_cast<std::chrono::seconds>(now - s.start).count();
+                    if (burstN > 0 && !s.burstArmed && nowSec >= burstFrom && nowSec <= burstTo)
+                    {
+                        static const int burstPresent = std::getenv("KZ_SHOT_BURST_PRESENT") ? std::atoi(std::getenv("KZ_SHOT_BURST_PRESENT")) : 0; // 1: window-sized snapshot, 2: backbuffer or diagnostic recomposition
+                        int ww = 0, wh = 0;
+                        if (burstPresent == 2)
+                            ww = -1, wh = -1;
+                        else if (burstPresent == 1)
+                        {
+                            ww = 1280, wh = 896;
+                            if (const char *v = std::getenv("KZ_WINDOW_SIZE"))
+                                std::sscanf(v, "%dx%d", &ww, &wh);
+                        }
+                        s.vblankLog.clear();
+                        s.burstArmed = true;
+                        kzgsBurstArm(burstN, ww, wh);
+                    }
+                    if (burstN <= 0)
+                    {
+                        const long long captureSeconds =
+                            guestScheduled && kzTimingRate() > 0
+                                ? static_cast<long long>(guestVsync / static_cast<uint64_t>(kzTimingRate()))
+                                : std::chrono::duration_cast<std::chrono::seconds>(now - s.start).count();
+                        saveShot(s, captureSeconds);
+                    }
                 }
             }
         }
@@ -1228,6 +1266,8 @@ void kzGsSetScreenshotSchedule(const std::string &dir, int intervalSeconds)
     GsState &s = gs();
     s.shotDir = dir;
     s.shotInterval = std::max(1, intervalSeconds);
+    s.captureMetadataOnly =
+        std::getenv("KZ_CAPTURE_METADATA_ONLY") && std::getenv("KZ_CAPTURE_METADATA_ONLY")[0] == '1';
     s.guestShotInterval = 0;
     s.nextGuestShot = 0;
     s.guestShotGameplayOffset = 0;
@@ -1327,27 +1367,49 @@ int kzGsSelfTest()
         int height;
         int scale;
     };
-    constexpr MatrixCase matrix[] = {
+    constexpr MatrixCase qualityMatrix[] = {
         {1280, 720, 2},
         {1920, 1080, 3},
         {2560, 1440, 4},
         {3840, 2160, 5},
     };
-    for (const MatrixCase &entry : matrix)
+    for (const MatrixCase &entry : qualityMatrix)
     {
-        const RenderScaleContract contract = resolveRenderScale(0, entry.height, nullptr);
+        const RenderScaleContract contract =
+            resolveRenderScale(0, KzRenderScalePolicy::Quality, entry.height, nullptr);
         std::cout << "[selftest] resolution " << entry.width << 'x' << entry.height
-                  << ": auto -> " << contract.effectiveScale << "x target height "
+                  << ": quality auto -> " << contract.effectiveScale << "x target height "
                   << kReferenceRenderHeight * contract.effectiveScale << std::endl;
         check(contract.mode == RenderScaleMode::AutoOutputHeight &&
+                  std::strcmp(renderScaleModeName(contract.mode), "auto_output_height") == 0 &&
                   contract.configuredScale == 0 && contract.effectiveScale == entry.scale,
-              "auto render/output matrix");
+              "quality auto render/output matrix and metadata");
     }
-    check(resolveRenderScale(3, 2160, nullptr).effectiveScale == 3,
+    constexpr MatrixCase balancedMatrix[] = {
+        {1280, 720, 2},
+        {1920, 1080, 2},
+        {2560, 1440, 3},
+        {3840, 2160, 4},
+    };
+    for (const MatrixCase &entry : balancedMatrix)
+    {
+        const RenderScaleContract contract =
+            resolveRenderScale(0, KzRenderScalePolicy::Balanced, entry.height, nullptr);
+        std::cout << "[selftest] resolution " << entry.width << 'x' << entry.height
+                  << ": balanced auto -> " << contract.effectiveScale << "x target height "
+                  << kReferenceRenderHeight * contract.effectiveScale << std::endl;
+        check(contract.mode == RenderScaleMode::AutoBalanced &&
+                  std::strcmp(renderScaleModeName(contract.mode), "auto_balanced") == 0 &&
+                  contract.configuredScale == 0 && contract.effectiveScale == entry.scale,
+              "balanced auto render/output matrix and metadata");
+    }
+    check(resolveRenderScale(3, KzRenderScalePolicy::Balanced, 2160, nullptr).effectiveScale == 3,
           "legacy fixed Upscale remains independent of output");
-    check(resolveRenderScale(0, 0, nullptr).effectiveScale == 1,
+    check(resolveRenderScale(0, KzRenderScalePolicy::Quality, 0, nullptr).effectiveScale == 1 &&
+              resolveRenderScale(0, KzRenderScalePolicy::Balanced, 0, nullptr).effectiveScale == 1,
           "invalid/minimized output uses native fallback");
-    const RenderScaleContract override = resolveRenderScale(0, 2160, "2");
+    const RenderScaleContract override =
+        resolveRenderScale(0, KzRenderScalePolicy::Balanced, 2160, "2");
     check(override.mode == RenderScaleMode::AutomationOverride && override.effectiveScale == 2,
           "automation can request a controlled sub-output input");
     KzConfig legacy;

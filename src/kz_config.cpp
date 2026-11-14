@@ -41,6 +41,8 @@ namespace
         {KzWindowMode::Windowed, "windowed"}, {KzWindowMode::Borderless, "borderless"}, {KzWindowMode::Fullscreen, "fullscreen"}};
     constexpr EnumName<KzRenderer> kRenderers[] = {
         {KzRenderer::D3D11, "d3d11"}, {KzRenderer::D3D12, "d3d12"}, {KzRenderer::Vulkan, "vulkan"}};
+    constexpr EnumName<KzRenderScalePolicy> kRenderScalePolicies[] = {
+        {KzRenderScalePolicy::Quality, "quality"}, {KzRenderScalePolicy::Balanced, "balanced"}};
     constexpr EnumName<KzgsFsr3InputMode> kFsr3InputModes[] = {
         {KzgsFsr3InputMode::Strict, "strict"}, {KzgsFsr3InputMode::Experimental, "experimental"}};
     constexpr EnumName<KzAspect> kAspects[] = {
@@ -502,6 +504,8 @@ namespace
         c.framePacing = reader.boolean("Display", "FramePacing", c.framePacing);
         c.threadedGraphics = reader.integer("Display", "ThreadedGraphics", c.threadedGraphics, -1, 1);
         c.renderer = reader.enumeration("Graphics", "Renderer", c.renderer, kRenderers);
+        c.renderScalePolicy =
+            reader.enumeration("Graphics", "RenderScalePolicy", c.renderScalePolicy, kRenderScalePolicies);
         c.upscale = reader.integer("Graphics", "Upscale", c.upscale, 0, 8);
         c.upscaler = reader.validated("Graphics", "Upscaler", c.upscaler, &kzgsParseUpscaler,
                                       "expected off, fsr1, fsr3, dlss or xess");
@@ -648,7 +652,9 @@ namespace
           << "\nShowFps=" << (c.showFps ? 1 : 0) << "\nFramePacing=" << (c.framePacing ? 1 : 0)
           << "\nThreadedGraphics=" << c.threadedGraphics << '\n';
         writeExtras("Display", false);
-        o << "\n[Graphics]\nRenderer=" << toName(kRenderers, c.renderer) << "\nUpscale=" << c.upscale
+        o << "\n[Graphics]\nRenderer=" << toName(kRenderers, c.renderer)
+          << "\nRenderScalePolicy=" << toName(kRenderScalePolicies, c.renderScalePolicy)
+          << "\nUpscale=" << c.upscale
           << "\nUpscaler=" << kzgsUpscalerName(c.upscaler)
           << "\nUpscalerSharpening=" << c.upscalerSharpening
           << "\nFSR3InputMode=" << toName(kFsr3InputModes, c.fsr3InputMode)
@@ -722,7 +728,8 @@ namespace
     {
         return a.windowMode == b.windowMode && a.width == b.width && a.height == b.height && a.vsync == b.vsync &&
                a.fpsLimit == b.fpsLimit && a.showFps == b.showFps && a.framePacing == b.framePacing &&
-               a.threadedGraphics == b.threadedGraphics && a.renderer == b.renderer && a.upscale == b.upscale &&
+               a.threadedGraphics == b.threadedGraphics && a.renderer == b.renderer &&
+               a.renderScalePolicy == b.renderScalePolicy && a.upscale == b.upscale &&
                a.upscaler == b.upscaler && a.upscalerSharpening == b.upscalerSharpening &&
                a.fsr3InputMode == b.fsr3InputMode &&
                a.upscalerOverrides.provider == b.upscalerOverrides.provider &&
@@ -892,6 +899,8 @@ int kzConfigSelfTest()
     baselineExpected.renderer = KzRenderer::D3D12;
     baselineExpected.isoPath = "X:\\BYOD\\Killzone.iso";
     check(baselineLoad.document.diagnostics.empty(), "baseline fixture diagnostics");
+    check(baselineLoad.config.renderScalePolicy == KzRenderScalePolicy::Quality,
+          "existing automatic scale migrates to quality policy");
     check(sameConfig(baselineLoad.config, baselineExpected), "baseline fixture effective values");
     const auto baselineBindings = kzInputBindingPairs(baselinePath);
     check(saveConfigFile(baselinePath, baselineLoad.config, false), "save baseline fixture");
@@ -900,8 +909,10 @@ int kzConfigSelfTest()
     check(baselineBindings == kzInputBindingPairs(baselinePath), "baseline bindings round-trip");
     check(readText(baselinePath).find("[Config]\nVersion=3") != std::string::npos,
           "baseline schema version round-trip");
-    check(readText(baselinePath).find(
-              "\nUpscaler=off\nUpscalerSharpening=0\nFSR3InputMode=strict\n") != std::string::npos,
+    const std::string savedBaseline = readText(baselinePath);
+    check(savedBaseline.find("\nRenderScalePolicy=quality\nUpscale=0\n") != std::string::npos,
+          "existing automatic scale serializes as quality policy");
+    check(savedBaseline.find("\nUpscaler=off\nUpscalerSharpening=0\nFSR3InputMode=strict\n") != std::string::npos,
           "default upscaler and FSR 3 input mode canonical serialization");
     KzConfig editedBaseline = baselineRoundTrip.config;
     editedBaseline.vsync = false;
@@ -912,6 +923,7 @@ int kzConfigSelfTest()
     editedBaseline.showFps = true;
     editedBaseline.framePacing = true;
     editedBaseline.threadedGraphics = 0;
+    editedBaseline.renderScalePolicy = KzRenderScalePolicy::Balanced;
     editedBaseline.aspect = KzAspect::UltrawideAuto;
     editedBaseline.fov = 100.0f;
     editedBaseline.weaponFov = 85.0f;
@@ -923,6 +935,22 @@ int kzConfigSelfTest()
     check(sameConfig(loadConfigFile(baselinePath).config, editedBaseline),
           "launcher edit preserves unrelated settings and path");
     check(baselineBindings == kzInputBindingPairs(baselinePath), "launcher edit preserves bindings");
+
+    const std::filesystem::path balancedScalePath = root / "balanced-scale.ini";
+    check(writeText(balancedScalePath,
+                    "[Config]\nVersion=3\n[Graphics]\nRenderScalePolicy=BaLaNcEd\nUpscale=0\n"),
+          "write balanced render-scale fixture");
+    const ConfigLoadResult balancedScale = loadConfigFile(balancedScalePath);
+    check(balancedScale.document.diagnostics.empty() &&
+              balancedScale.config.renderScalePolicy == KzRenderScalePolicy::Balanced &&
+              balancedScale.config.upscale == 0,
+          "balanced render-scale policy parsing");
+    check(saveConfigFile(balancedScalePath, balancedScale.config, false),
+          "save balanced render-scale fixture");
+    check(readText(balancedScalePath).find("\nRenderScalePolicy=balanced\nUpscale=0\n") != std::string::npos,
+          "balanced render-scale policy canonical serialization");
+    check(sameConfig(loadConfigFile(balancedScalePath).config, balancedScale.config),
+          "balanced render-scale policy round-trip");
 
     const ConfigLoadResult missing = loadConfigFile(root / "missing.ini");
     check(sameConfig(missing.config, KzConfig{}), "missing file defaults");
@@ -1284,7 +1312,7 @@ int kzConfigSelfTest()
     check(writeText(malformedPath,
                     "[Config]\nVersion=3\n"
                     "[Display]\nWindowMode=hover\nWidth=wide\nVSync=maybe\n"
-                    "[Graphics]\nRenderer=metal\nRenderDistance=near\nUpscale=99\n"
+                    "[Graphics]\nRenderer=metal\nRenderScalePolicy=performance\nRenderDistance=near\nUpscale=99\n"
                     "[Testing]\nDefaultProfile=bad/name\n"),
           "write malformed-value fixture");
     const ConfigLoadResult malformed = loadConfigFile(malformedPath);
@@ -1298,6 +1326,7 @@ int kzConfigSelfTest()
               hasDiagnostic(malformed, DiagnosticLevel::Error, "Display", "Width", "wide") &&
               hasDiagnostic(malformed, DiagnosticLevel::Error, "Display", "VSync", "maybe") &&
               hasDiagnostic(malformed, DiagnosticLevel::Error, "Graphics", "Renderer", "metal") &&
+              hasDiagnostic(malformed, DiagnosticLevel::Error, "Graphics", "RenderScalePolicy", "performance") &&
               hasDiagnostic(malformed, DiagnosticLevel::Error, "Graphics", "RenderDistance", "near") &&
               hasDiagnostic(malformed, DiagnosticLevel::Error, "Testing", "DefaultProfile", "bad/name"),
           "typed malformed-value diagnostics");

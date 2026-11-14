@@ -113,7 +113,9 @@ its window mode, frame rate, and presentation cadence.
   VSync and letting Lossless Scaling handle synchronization. Because the port paces the game on its own guest VSync
   clock, turning presentation VSync off should not change simulation speed. Compare both settings for judder.
 - **Scaling.** Use the port's internal `Upscale` and, on Vulkan, FSR 1 for resolution. Do not also enable
-  Lossless Scaling's own upscaler, which would scale the image a second time.
+  Lossless Scaling's own upscaler, which would scale the image a second time. The launcher's **60 FPS headroom**
+  preset uses the balanced automatic scale (2x at 720p/1080p, 3x at 1440p, and 4x at 2160p) plus Vulkan FSR 1;
+  the historical output-covering automatic scale remains the quality/default policy.
 - **Latency.** Interpolation holds back at least one real frame. At a 60 fps base this adds roughly 16 ms or more to
   mouse aim.
 
@@ -142,7 +144,9 @@ rate. A frame arriving less than three quarters of a period after the previous p
 unless another frame is already queued behind it; a late frame is never held. It separates the catch-up frame after
 a hitch without adding a steady frame of latency. It cannot make a late frame on time.
 
-### Measured pacing (SCES-52004, chapter 1)
+### Measured 60 Hz pacing
+
+#### Historical SCES-52004 diagnostic
 
 An authorized headless diagnostic used SCES-52004, Vulkan, 2x internal scale (1280x896 output), V-Sync off,
 60 Hz guest timing, experimental pacing off, and synchronous VIF1/VU1/GIF. Chapter 1 was started with intro skip and
@@ -186,23 +190,55 @@ The waitable timer is not a drop-in replacement for the scheduler's interruptibl
 The previous campaign's 39 fps pacing-on result is withdrawn as a 40-110 guest-second comparison: the analyzer
 silently selected 50.68-101.58 seconds, and captures show an extended near-static, HUD-less view. Other historical
 campaign windows have not been independently aligned and should not be used to claim a pacing win or loss. In-window
-screenshot readbacks can themselves stall the renderer. The updated analyzer requires boundary captures within
-0.5 seconds of the requested guest times and reports the actual anchors
+screenshot readbacks can themselves stall the renderer. The updated analyzer requires boundary anchors within
+0.5 seconds of the requested guest times, supports metadata-only anchors with no GPU readback, and reports the actual anchors
 ([testing](testing.md#presentation-pacing)).
 
-These are headless observations on one machine (RTX 5070), in one scene, without player input. They do not measure
-desktop compositing, a real swapchain presentation, or perceived smoothness; no default pacing or timer change is
-justified. The EU/PAL asynchronous VIF1 worker is disabled because of a known memory-corruption race, not as a
-performance recommendation.
+#### Matched scheduler-wait A/B (SCUS-97402, chapter 1)
+
+A controlled follow-up compared the default condition-variable wait with the opt-in high-resolution interruptible
+wait. Four arms ran in fallback/precise/fallback/precise order from fresh copies of the same profile card, with
+Vulkan, 2x internal scale, 60 Hz guest timing, V-Sync off, experimental presentation pacing off, and synchronous
+VIF1/VU1/GIF. Each arm selected guest seconds 40-110. One metadata-only guest-time/presentation-sequence anchor was
+written per guest second; all four arms wrote zero PNGs, so no capture readback ran in the measured window. Each
+timeline contains 4,200 guest vblanks over the 70-second window.
+
+| Metric | Condition-variable fallback A / B | Precise wait A / B |
+|---|---:|---:|
+| Deadline wake overshoot p95 | 1.350 / 1.357 ms | **0.486 / 0.490 ms** |
+| Deadline wake overshoot p99 | 1.473 / 1.470 ms | **0.511 / 0.513 ms** |
+| Guest-vblank interval p95 | 17.598 / 17.523 ms | **17.024 / 17.031 ms** |
+| Guest-vblank intervals above 25 ms | 10 / 4,199 (0.238%) and 1 / 4,199 (0.024%) | **1 / 4,199 (0.024%) in each arm** |
+| Presentation interval p95 | 17.633 / 17.616 ms | **17.107 / 17.083 ms** |
+| Presentation interval p99 | 18.158 / 18.055 ms | **17.303 / 17.183 ms** |
+| Mean presentation rate | 59.379 / 59.897 fps | **59.940 / 59.884 fps** |
+| GS frame-throttle / ring-full waits | 0 / 0 in both arms | 0 / 0 in both arms |
+| Queue depth above one after a push | 2 / 4 pushes | **0 / 0 pushes** |
+| CPU-side GS idle share | 60.5% / 59.5% | 68.2% / 65.1% |
+
+Both precise arms meet the provisional scheduler gate (wake overshoot p95 below 1 ms and p99 below 2 ms) and the
+guest-vblank gate (p95 below 18 ms and fewer than 0.1% of intervals above 25 ms). The precise path also reduced
+presentation p95 and p99 in both repetitions. It did not eliminate isolated stalls: the two precise arms still had
+maximum presentation intervals of about 85 ms, and maximum guest-vblank intervals of 26.6 and 51.5 ms. None of
+those outliers coincided with a full GS command ring.
+
+The exact fallback telemetry also corrects the interpretation of the standalone 2 ms wait probe: the real matched
+fallback arms had deadline-wake overshoot p95 near 1.35 ms, not a recurring 15 ms oversleep. The standalone probe
+therefore cannot predict scheduler behavior under the running product, although the precise backend still provides
+a smaller and more consistent wake error here.
+
+These are headless observations on one machine (RTX 5070), in one no-input scene. CPU-side GS idle is not GPU time
+and does not establish additional GPU headroom. The runs do not measure desktop compositing, a visible swapchain,
+input latency, or perceived smoothness. The precise backend remains opt-in until repeated windowed gameplay and
+power behavior justify a default change. The EU/PAL asynchronous VIF1 worker remains disabled because of a known
+memory-corruption race, not as a performance recommendation.
 
 ### Remaining work
 
 - Repeat matched gameplay segments with a window, real output sizes and render scales, V-Sync on and off, several
   runs per condition, and no in-window screenshot readbacks. Measure actual new game builds separately from presents.
-- Trace guest deadline wakeups and workloads to distinguish scheduler/timer jitter from late game work before
-  attempting a runtime fix.
-- If prototyping a high-resolution wait, preserve prompt event and stop wakeups, test races and fallback on supported
-  Windows versions, and measure power use and matched gameplay before considering a default change.
+- Measure power use and interactive/windowed behavior of the opt-in precise wait before considering a default change.
+- Add GPU timestamps before interpreting renderer-stage cost or CPU-side GS idle as GPU headroom.
 - Check whether 72/82 fps simulation behaves like 60 in the [high-refresh campaign audit](testing.md#high-refresh-campaign-audit).
 - Play-test with Lossless Scaling at fixed 2x and adaptive modes; record judder and HUD artifacts.
 - In every SCES-52004 headless run here, and in the earlier SCES-52004 temporal runs, the mouse-aim hook never logged

@@ -8,8 +8,9 @@ The product self-test needs no retail content:
 .\build\win-msvc-rel\killzone.exe --selftest
 ```
 
-It covers configuration migration and round-tripping, field-of-view math, renderer contracts, input, launcher
-behavior, controller-family mapping and procedural controller glyphs, and other pure product checks.
+It covers configuration migration and round-tripping, quality/balanced render-scale matrices, launcher preset
+contracts, field-of-view math, renderer contracts, input, launcher behavior, controller-family mapping and
+procedural controller glyphs, and other pure product checks.
 Presentation-upscaler checks include defaults, strict INI/environment/CLI validation and precedence, canonical
 saves, and one-run override non-persistence.
 
@@ -174,32 +175,40 @@ perceptual qualification. Logs from before 2026-11-13 can contain wrapped timest
 15 minutes of system uptime), which the analyzer rejects as non-monotonic.
 
 To select a guest-time window, pass the run's `capture.jsonl`; frame records map guest time to present-log rows
-through `present_seq`. Guest time alone does not establish that the scene is gameplay:
+through `present_seq`. Metadata-only `timing_sample` records provide the same mapping without a GPU readback.
+Guest time alone does not establish that the scene is gameplay:
 
 ```powershell
 python .\tools\scripts\present_pacing_analyze.py .\work\<run>\present.csv --target-hz 60 `
   --capture-log .\work\<run>\capture.jsonl --from-guest-s 40 --to-guest-s 110
 ```
 
-There must be a capture within 0.5 seconds of each requested boundary; missing boundaries, invalid sequences, and
+There must be an anchor within 0.5 seconds of each requested boundary; missing boundaries, invalid sequences, and
 sequences beyond the log are errors. The summary records the requested and actual `first_guest_s`/`last_guest_s`
 anchors. The first capture's readback stall is excluded by beginning after its presentation; later captures inside
-the window can still stall rendering and skew pacing. For low-interference timing, use no screenshots inside the
-measured interval and align the scene separately. Historical EU/PAL capture logs from builds before this correction
-incorrectly label `source_id` as `SCUS-97402`; older logs can also report `skip_intro: false` when a start-level
-request implicitly enables it.
+the window can still stall rendering and skew pacing. Set `KZ_CAPTURE_METADATA_ONLY=1` with
+`KZ_SHOT_GUEST_INTERVAL=<vblanks>` to write scheduled anchors without calling the GS readback path or creating
+PNGs. Align and confirm the scene in separate image-capture runs. Historical EU/PAL capture logs from builds before
+this correction incorrectly label `source_id` as `SCUS-97402`; older logs can also report `skip_intro: false` when a
+start-level request implicitly enables it.
 
-`tools\scripts\present_pacing_campaign.ps1` runs pacing arms (`name:fps:pacing`) sequentially on fresh copies of a
-profile card with V-Sync off and the intro skipped, then summarizes each arm's window into ignored `work\`:
+`tools\scripts\present_pacing_campaign.ps1` runs arms (`name:fps:pacing[:precise-wait]`) sequentially on fresh
+copies of a profile card with V-Sync off and the intro skipped, then summarizes each arm's window into ignored
+`work\`. This example interleaves repeated condition-variable and precise-wait runs, emits one metadata-only anchor
+per guest second, and analyzes the matching timeline window:
 
 ```powershell
 .\tools\scripts\present_pacing_campaign.ps1 -Card .\work\<profile-card> -Iso $env:KZ_ISO -Elf $env:KZ_GAME_ELF `
-  -Chapter 1 -FromGuestS 40 -ToGuestS 110
+  -Chapter 1 -FromGuestS 40 -ToGuestS 110 -Region eu -ReadbackFree -Timeline `
+  -Arms 'fallback-a:60:0:0','precise-a:60:0:1','fallback-b:60:0:0','precise-b:60:0:1'
 ```
 
-Confirm from the captures that the window is gameplay and that paired runs contain the same scene. The campaign
-currently captures every 10 seconds, including inside the window, so its timing is not a readback-free benchmark.
-An empty card does not get past profile selection in this flow. Results and limitations are in
+Without `-ReadbackFree`, the campaign retains its original 10-second screenshot captures and three-field arm
+syntax. Confirm in separate captures that the measured window is gameplay and that paired runs contain the same
+scene. `-Timeline` writes `timeline.csv`, `timeline.txt`, and `timeline_metrics.json` per arm, and adds pacing-wait
+backend/count, overshoot p95/p99, guest-vblank p95, and the percentage of guest-vblank intervals above 25 ms to
+`<name>_summary.json`. A requested precise arm with no precise pacing waits is flagged in `problems`. An empty card does not
+get past profile selection in this flow. Results and limitations are in
 [frame generation](frame-generation.md#measured-pacing-sces-52004-chapter-1).
 
 For a `KZ_TIMELINE` CSV, select the executable region to report guest frame-limiter and kick-hook counts separately
@@ -207,6 +216,8 @@ from GS-vsync completions and asynchronous worker events:
 
 ```powershell
 python .\tools\scripts\tl_analyze.py .\work\run\timeline.csv --region eu --vblank-hz 60 --window-s 0 29.5
+python .\tools\scripts\tl_analyze.py .\work\run\timeline.csv --region eu --vblank-hz 60 `
+  --guest-window-s 40 110 --metrics-output .\work\run\timeline_metrics.json
 python .\tools\scripts\tl_analyze.py --self-test
 ```
 
@@ -216,12 +227,36 @@ limiter entry is a game-work proxy, not proof of a unique image.
 
 `--window-s` selects the half-open interval `[start, end)` in seconds after the first recorded event and rejects an
 end beyond the trace; incomplete spans crossing either boundary and the first GS idle aggregate are omitted.
-`--vblank-hz` assumes that rate and
-its rounded host period stayed fixed throughout the selected trace and requires consecutive tick IDs. It uses the
-earliest observed phase to report a **lower bound** on deadline lateness, not exact lateness. It also counts long
-intervals whose latest pacing-wait return was within 0.1 ms of the vblank and reported no posted event. The trace
-does not record the requested wait deadline, so those observations cannot distinguish timer oversleep from delayed
-thread scheduling.
+`--guest-window-s` instead selects a half-open guest-time interval using VBLANK tick IDs and requires both
+boundaries to be present in the trace. Explicitly set `KZ_TL_START` and `KZ_TL_END` so the recorder covers that
+window; the campaign does this automatically. `--metrics-output` writes the selected window, vblank distribution,
+intervals above 25 ms, and scheduler-wait counts, causes, requested durations, signed error, and positive overshoot
+distributions as JSON.
+`--vblank-hz` assumes that rate and its rounded host period stayed fixed throughout the selected trace and requires
+consecutive tick IDs. It uses the earliest observed phase to report a **lower bound** on vblank lateness. It also
+counts long intervals whose latest pacing-wait return was within 0.1 ms of the vblank and reported no posted event.
+
+Current traces also record exact scheduler-wait metadata. `SLEEP_B.b` stores the requested remaining duration in
+microseconds and uses bit 31 for the precise Windows backend. `SLEEP_E.b` uses bit 31 for the backend that actually
+returned and stores the wake cause in the remaining bits: `0` deadline, `1` posted event, `2` stop, `3` newly
+scheduled deadline/reschedule, or `4` wait failure. `SLEEP_E.c` is a signed 32-bit wake-minus-deadline value in
+microseconds. The wake timestamp is taken after the scheduler mutex is reacquired, because that is when the EE
+thread can act. `tl_analyze.py` reports signed error and positive overshoot p95/p99 by wait kind and backend, while
+continuing to recognize older traces that have no requested-deadline metadata.
+
+Windows 10/11 builds can opt into the high-resolution interruptible wait without changing the default:
+
+```powershell
+$env:PS2X_PRECISE_WAIT = '1'
+$env:KZ_TIMELINE = '.\work\precise-wait.csv'
+.\build\win-msvc-rel\killzone.exe
+Remove-Item Env:\KZ_TIMELINE
+Remove-Item Env:\PS2X_PRECISE_WAIT
+```
+
+The precise path uses a high-resolution waitable timer plus an auto-reset wake event. Posted events, stop requests,
+and newly scheduled deadlines signal both that event and the condition variable. Timer/event creation or wait
+failure is reported on stderr and switches subsequent waits to the condition-variable fallback.
 
 On Windows, a standalone, ISO-free probe can compare short `std::condition_variable::wait_until` waits, a
 high-resolution waitable timer, and a successful `timeBeginPeriod(1)` request:

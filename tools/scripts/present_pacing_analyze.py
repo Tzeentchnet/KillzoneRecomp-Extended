@@ -57,10 +57,10 @@ def load_times_ns(path: Path) -> list[int]:
 
 
 def capture_window_rows(path: Path, from_s: float, to_s: float) -> CaptureWindow:
-    """Map a guest-time window to present-log rows using capture.jsonl frame records.
+    """Map a guest-time window to present-log rows using capture.jsonl frame or timing-sample records.
 
-    Each frame record carries the guest time and present_seq, the number of presentations so far, which is also the
-    one-based present-log row number. Both boundaries must have a nearby capture.
+    Each record carries the guest time and present_seq, the number of presentations so far, which is also the
+    one-based present-log row number. Both boundaries must have a nearby sample.
     """
     if not (math.isfinite(from_s) and math.isfinite(to_s)) or to_s <= from_s:
         raise ValueError("the guest-time window must have from < to")
@@ -69,7 +69,7 @@ def capture_window_rows(path: Path, from_s: float, to_s: float) -> CaptureWindow
         with path.open(encoding="utf-8") as handle:
             for line in handle:
                 record = json.loads(line)
-                if record.get("record") == "frame":
+                if record.get("record") in ("frame", "timing_sample"):
                     guest_s = float(record["guest_time_s"])
                     present_seq = int(record["present_seq"])
                     if not math.isfinite(guest_s) or present_seq < 0:
@@ -78,13 +78,13 @@ def capture_window_rows(path: Path, from_s: float, to_s: float) -> CaptureWindow
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise ValueError(f"could not read capture log: {error}") from error
     if len(points) < 2:
-        raise ValueError("the capture log has fewer than two frame records")
+        raise ValueError("the capture log has fewer than two timing records")
     first = min(points, key=lambda point: abs(point[0] - from_s))
     last = min(points, key=lambda point: abs(point[0] - to_s))
     for label, target, point in (("start", from_s, first), ("end", to_s, last)):
         if abs(point[0] - target) > CAPTURE_BOUNDARY_TOLERANCE_S:
             raise ValueError(
-                f"no capture within {CAPTURE_BOUNDARY_TOLERANCE_S:g} s of the requested "
+                f"no timing sample within {CAPTURE_BOUNDARY_TOLERANCE_S:g} s of the requested "
                 f"guest-time {label} ({target:g} s); nearest is {point[0]:g} s"
             )
     if first[0] >= last[0] or first[1] >= last[1]:
@@ -202,7 +202,12 @@ def self_test() -> None:
     with tempfile.TemporaryDirectory() as directory:
         capture = Path(directory) / "capture.jsonl"
         records = [{"record": "run"}] + [
-            {"record": "frame", "guest_time_s": t + 0.01, "present_seq": t * 60} for t in range(0, 100, 10)
+            {
+                "record": "timing_sample" if t in (20, 60) else "frame",
+                "guest_time_s": t + 0.01,
+                "present_seq": t * 60,
+            }
+            for t in range(0, 100, 10)
         ]
         capture.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
         window = capture_window_rows(capture, 20, 60)

@@ -27,6 +27,12 @@ enum class KzRenderer
     Vulkan,
 };
 
+enum class KzRenderScalePolicy
+{
+    Quality,
+    Balanced,
+};
+
 enum class KzAspect
 {
     Widescreen16x9, // game's native widescreen mode (FOV + HUD handled by the engine)
@@ -57,7 +63,8 @@ struct KzConfig
 
     // Graphics
     KzRenderer renderer = KzRenderer::D3D11;
-    int upscale = 0; // integer GS render multiplier; 0 = auto from physical output height
+    KzRenderScalePolicy renderScalePolicy = KzRenderScalePolicy::Quality;
+    int upscale = 0; // integer GS render multiplier; 0 = automatic policy from physical output size
     KzgsUpscaler upscaler = KzgsUpscaler::Off; // experimental presentation provider, independent of Upscale
     int upscalerSharpening = 0; // provider-owned sharpening, 0..100; independent of Sharpen/CAS
     KzgsFsr3InputMode fsr3InputMode = KzgsFsr3InputMode::Strict;

@@ -44,7 +44,8 @@ preserved, and saves retain the disc path and all bindings. A build refuses to o
 ## Graphics
 
 - `Renderer=d3d11|d3d12|vulkan` selects the backend. SMAA is available only under D3D11; FXAA is portable.
-- `Upscale=0..8` selects automatic or fixed internal supersampling.
+- `Upscale=0..8` selects automatic (`0`) or fixed (`1..8`) internal supersampling.
+- `RenderScalePolicy=quality|balanced` selects the automatic policy when `Upscale=0`.
 - `Aspect=4:3|16:9|auto|21:9|32:9|stretch` controls presentation. Ultrawide modes widen
   the world while keeping HUD and menus in the central 16:9 region. Stretch fills by distortion.
 - `Mipmapping=ps2` preserves authored mip transitions. `Mipmapping=highest` always samples the base mip for draws
@@ -54,6 +55,29 @@ preserved, and saves retain the disc path and all bindings. A build refuses to o
 - `FieldOfView` and `WeaponFieldOfView` are horizontal degrees measured at 16:9. `0` keeps the game defaults
   (approximately 87 degrees world and 73 degrees weapon). Zooming retains its tangent-space magnification.
   `Fov` and `WeaponFov` remain accepted migration aliases; canonical names win and are written on save.
+
+### Automatic render scale and 60 FPS headroom
+
+`RenderScalePolicy=quality` preserves the original automatic behavior: select the smallest integer scale whose
+448-line target covers the output height. It remains the default, and existing configurations without the new key
+load as `quality`, so their effective scale does not change. `balanced` leaves raster headroom and relies on
+presentation upscaling where necessary:
+
+| Output | Quality auto | Balanced auto | Internal raster-pixel reduction |
+|---|---:|---:|---:|
+| 1280x720 | 2x (896p target) | 2x (896p target) | 0% |
+| 1920x1080 | 3x (1344p target) | 2x (896p target) | 55.6% |
+| 2560x1440 | 4x (1792p target) | 3x (1344p target) | 43.8% |
+| 3840x2160 | 5x (2240p target) | 4x (1792p target) | 36.0% |
+
+These are raster-pixel reductions, not measured GPU-time reductions. Explicit `Upscale=1..8` and the one-run
+`KZ_UPSCALE` override ignore the automatic policy. Ultrawide automatic modes also account for output width.
+Startup logs and capture metadata report `auto_output_height` for quality and `auto_balanced` for balanced.
+
+The launcher's **60 FPS headroom** preset selects a 60 fps limit, Vulkan, balanced automatic scale, FSR 1 with 15%
+provider RCAS, no second CAS or AA pass, replacement textures off, 1x view distance, and clean effects (film grain,
+motion blur, glow, and lens blur off). It leaves V-Sync, frame pacing, window mode, aspect ratio, input, and audio
+unchanged. At an output already smaller than the internal source, FSR 1 safely reports `no_upscale_needed`.
 
 ### Experimental presentation upscaler
 
@@ -66,6 +90,8 @@ The same settings can be edited directly:
 
 ```ini
 [Graphics]
+RenderScalePolicy=quality
+Upscale=0
 Upscaler=off
 UpscalerSharpening=0
 FSR3InputMode=strict
@@ -76,8 +102,8 @@ FSR3InputMode=strict
 existing CAS/final presentation filters. `UpscalerSharpening` is provider-owned: 0 disables RCAS; 1 through 100 enable
 it. FSR 1 maps that range linearly from 2 to 0 AMD attenuation stops; FSR 3 maps it to the SDK's 0..1 sharpness.
 It is independent of the existing `Sharpen`/CAS setting.
-The existing `Upscale` selects automatic or integer GS supersampling and is unchanged. Increasing that internal
-scale can make the cropped source larger than the output, in which case presentation FSR1 does not run.
+`Upscale` and `RenderScalePolicy` select the independent GS render resolution. Increasing that internal scale can
+make the cropped source larger than the output, in which case presentation FSR1 does not run.
 
 `FSR3InputMode` accepts `strict` (default) or `experimental`:
 
@@ -151,9 +177,9 @@ are still diagnostic, not permission to dispatch. See [testing](testing.md#headl
 | `initialization_failed`, `dispatch_failed`, `present_failed`, `reset_failed`, `duplicate_present`, `device_lost` | Initialization, evaluation, presentation, history/reset, duplicate-frame, or device failure; native presentation is used when possible. |
 | `idle_wait_failed` | A non-device-loss Vulkan idle wait failed; potentially in-flight Vulkan upscaler resources are abandoned instead of explicitly destroyed. |
 
-The launcher's **Validated enhancements** preset selects the measured stock-game setup: D3D12, VSync, automatic
-internal scale, 16x anisotropy, highest mip detail, clean PS2 effects, replacement textures off, 2x view distance,
-and 30% sharpening.
+The launcher's **Validated enhancements** preset selects the measured stock-game setup: D3D12, VSync, quality
+automatic internal scale, 16x anisotropy, highest mip detail, clean PS2 effects, replacement textures off, 2x view
+distance, and 30% sharpening.
 
 ## Display and game options
 
