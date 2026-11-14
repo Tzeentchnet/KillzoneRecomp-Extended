@@ -337,6 +337,12 @@ static void TimingTrace(int id, uint32_t value)
 		g_gpu_timing_samples[static_cast<size_t>(id)].fetch_add(1, std::memory_order_relaxed);
 }
 
+static void ResetGPUTimingSamples()
+{
+	for (std::atomic<int>& samples : g_gpu_timing_samples)
+		samples.store(0, std::memory_order_relaxed);
+}
+
 static void Log(int level, const char* msg)
 {
 	static const char* tags[] = {"E", "W", "I"};
@@ -1727,8 +1733,22 @@ int main(int argc, char** argv)
 		check_timing(20, "upload/draw GPU");
 		check_timing(21, "merge GPU");
 		check_timing(24, "final-presentation GPU");
-		kzgsSetGpuTimingEnabled(false);
+
 		kzgsSetGpuStageTimingEnabled(false);
+		kzgsSync();
+		ResetGPUTimingSamples();
+		PresentFrames(scene, 12, 3);
+		kzgsSync();
+		check_timing(11, "stage-disabled whole-frame GPU");
+		for (int id = 20; id <= 24; ++id)
+		{
+			const int samples = g_gpu_timing_samples[static_cast<size_t>(id)].load(std::memory_order_relaxed);
+			std::printf("  stage-disabled GPU trace %d: %d positive sample(s)\n", id, samples);
+			if (samples != 0)
+				g_failures++;
+		}
+
+		kzgsSetGpuTimingEnabled(false);
 		kzgsSync();
 		kzgsSetTraceHook(nullptr);
 		kzgsClose();

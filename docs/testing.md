@@ -308,7 +308,8 @@ stage markers.
 
 The ISO-free `kzgs_d3d12_gpu_timing` test renders twelve synthetic frames on WARP, enables the D3D12 debug device
 when Windows Graphics Tools are available, rotates through the asynchronous query resources, and requires positive
-whole-frame, upload/draw, merge, and final-presentation samples without a screenshot readback.
+whole-frame, upload/draw, merge, and final-presentation samples without a screenshot readback. A second pass disables
+only stage timing and requires whole-frame samples to continue while trace ids 20-24 remain silent.
 
 Windows 10/11 builds can opt into the high-resolution interruptible wait without changing the default:
 
