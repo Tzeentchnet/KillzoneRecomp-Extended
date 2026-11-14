@@ -30,6 +30,7 @@ Windows x64.
 ## Killzone PC port features
 
 - D3D11, D3D12, and Vulkan renderers with internal resolution scaling up to 8x.
+- A **60 FPS headroom** preset with balanced automatic scaling and Vulkan FSR 1 presentation upscaling.
 - Native 4:3 and 16:9 plus automatic, 21:9, and 32:9 ultrawide modes with centered HUD and menu presentation.
 - Independent world and weapon field-of-view controls with zoom-preserving tangent-space scaling.
 - High-refresh gameplay with real-time game-speed correction.
@@ -42,6 +43,7 @@ Windows x64.
   generation, and its synthetic depth/Optical Flow inputs can produce HUD or disocclusion ghosting.
 - Launcher-managed display, graphics, controls, audio, disc, and isolated testing settings.
 - US and two PAL executable versions supported from separately generated code sets in one executable.
+- Readback-free pacing diagnostics with asynchronous whole-frame GPU timing and Vulkan per-stage GPU timing.
 
 ## Build and play on Windows
 

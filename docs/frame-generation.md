@@ -238,7 +238,9 @@ worker remains disabled because of a known memory-corruption race, not as a perf
 The renderer now exposes its existing D3D12/Vulkan asynchronous command-list timestamp result as a positive
 whole-frame GPU sample. Enabling it does not read back the presented image or wait for the current GPU frame.
 Separate timeline markers measure GS-thread CPU time for GIF upload/draw consumption, merge, presentation
-upscaling, sharpening, and final presentation; those markers are CPU spans, not per-stage GPU timestamps.
+upscaling, sharpening, and final presentation. Vulkan can also measure those stages with asynchronous timestamp
+ranges. D3D12 remains whole-frame only because its timestamp implementation ends an active render pass; forcing
+stage boundaries there would change the workload being measured.
 
 Four 1920x1080 Vulkan arms ran in quality/balanced/quality/balanced order from fresh copies of the same profile card.
 All used the otherwise identical 60 FPS headroom contract, precise scheduler wait, V-Sync off, and guest seconds
@@ -270,15 +272,43 @@ interval above 25 ms. That gap therefore does not support shader prewarming or a
 
 This is a repeated matched result, not a universal GPU estimate: it used one RTX 5070, one driver/machine, one
 no-input scene, an automated hidden window, and V-Sync off. It does not cover a visible desktop compositor, other
-output resolutions, other GPUs, power, input latency, or perceived image quality. Whole-frame timestamps also
-cannot attribute GPU cost to individual stages.
+output resolutions, other GPUs, power, input latency, or perceived image quality.
+
+#### Vulkan stage-timing validation
+
+A follow-up 1920x1080 balanced-preset smoke used the same populated card, executable, guest window (seconds 40-55),
+metadata-only anchors, and whole-frame timing in both arms. One arm disabled only the Vulkan stage markers. Both
+arms produced 900 whole-frame samples, no PNG/readbacks, no campaign problems, and no reported Vulkan/query errors.
+The stage-enabled arm produced 900 samples for every expected stage:
+
+| Metric | Stage timing off | Stage timing on |
+|---|---:|---:|
+| Whole-frame GPU median | 1.167 ms | 1.156 ms |
+| Whole-frame GPU p95 | 1.672 ms | 1.199 ms |
+| Whole-frame GPU p99 | 1.827 ms | 1.225 ms |
+| Presentation interval p95 | 17.350 ms | 17.081 ms |
+
+The enabled arm was faster rather than slower, so this pair provides no evidence of measurable stage-query
+overhead; it does not prove a negative cost because the no-input simulation is not deterministic between runs.
+The stage-enabled means summed to 1.15647 ms, or 99.88% of the 1.15788 ms whole-frame mean. Its stage p95 values
+were 1.081 ms upload/draw, 0.006 ms merge, 0.093 ms FSR1 upscale/RCAS, and 0.020 ms final presentation. A separate
+sharpening stage was correctly absent because RCAS runs inside the FSR1 upscale stage. Timestamp ranges use
+top-of-pipe starts and bottom-of-pipe ends, and results are read only when command-buffer resources are reused.
+A separate run forced `VK_LAYER_KHRONOS_validation`, produced the same 900 expected samples, and reported no VUID,
+validation warning, or validation error.
+
+These are approximate GPU pipeline ranges, not compositing/scanout measurements. The strong mean coverage is a
+consistency check, not a requirement that every frame's stage values sum exactly: command-buffer rollover,
+pipeline overlap, frames with no GIF transfer, timestamp resolution, and asynchronous batching can all affect
+individual samples.
 
 ### Remaining work
 
 - Repeat matched gameplay segments with a window, real output sizes and render scales, V-Sync on and off, several
   runs per condition, and no in-window screenshot readbacks. Measure actual new game builds separately from presents.
 - Measure power use and interactive/windowed behavior of the opt-in precise wait before considering a default change.
-- Design non-perturbing per-stage GPU timestamps; whole-frame GPU timing and CPU stage spans are now available.
+- Design a non-perturbing D3D12 per-stage scheme; Vulkan stage timing, D3D12/Vulkan whole-frame timing, and CPU
+  stage spans are now available.
 - Check whether 72/82 fps simulation behaves like 60 in the [high-refresh campaign audit](testing.md#high-refresh-campaign-audit).
 - Play-test with Lossless Scaling at fixed 2x and adaptive modes; record judder and HUD artifacts.
 - In every SCES-52004 headless run here, and in the earlier SCES-52004 temporal runs, the mouse-aim hook never logged

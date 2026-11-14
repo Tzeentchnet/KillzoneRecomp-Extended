@@ -216,7 +216,9 @@ get past profile selection in this flow. Results and limitations are in
 window; `-WindowSize=WIDTHxHEIGHT` overrides that size. A fifth arm field can interleave `quality` and `balanced`
 automatic scale while keeping every other preset setting identical. `-GpuTiming` requires `-Timeline`, enables the
 renderer device's asynchronous whole-frame timestamp queries, and adds GPU count/p50/p95/p99/max plus CPU-stage p95
-values to the campaign summary:
+values to the campaign summary. Vulkan runs also require nonzero upload/draw, merge, presentation-upscale, and
+final-presentation GPU samples for a balanced headroom arm. `-DisableGpuStageTiming` retains whole-frame timing while
+disabling only those stage markers for an overhead control:
 
 ```powershell
 .\tools\scripts\present_pacing_campaign.ps1 -Card .\work\<profile-card> -Iso $env:KZ_ISO -Elf $env:KZ_GAME_ELF `
@@ -250,6 +252,8 @@ boundaries to be present in the trace. Explicitly set `KZ_TL_START` and `KZ_TL_E
 window; the campaign does this automatically. `--metrics-output` writes the selected window, vblank distribution,
 intervals above 25 ms, scheduler-wait counts, causes, requested durations, signed error and positive overshoot,
 whole-frame GPU time, and renderer CPU-stage distributions as JSON.
+For Vulkan traces it also writes GPU-stage distributions for upload/draw, merge, presentation upscaling, sharpening,
+and final presentation.
 `--vblank-hz` assumes that rate and its rounded host period stayed fixed throughout the selected trace and requires
 consecutive tick IDs. It uses the earliest observed phase to report a **lower bound** on vblank lateness. It also
 counts long intervals whose latest pacing-wait return was within 0.1 ms of the vblank and reported no posted event.
@@ -266,8 +270,15 @@ Set `KZ_GPU_TIMING=1` with `KZ_TIMELINE` for a direct run. D3D12 and Vulkan use 
 command-list timestamp queries; this does not add a screenshot readback or a wait for the current GPU frame.
 `GPU_FRAME.a` is the positive whole-frame result in microseconds. `GS_UPLOAD_DRAW.a` is accumulated GS-thread CPU
 time spent consuming GIF transfers, while `GS_MERGE_B/E`, `GS_UPSCALE_B/E`, `GS_SHARPEN_B/E`, and
-`GS_PRESENT_B/E` are CPU spans. These markers separate CPU-side command recording and presentation work; they are
-not per-stage GPU timestamps.
+`GS_PRESENT_B/E` are CPU spans.
+
+Vulkan additionally emits positive GPU microseconds in `GPU_UPLOAD_DRAW.a`, `GPU_MERGE.a`, `GPU_UPSCALE.a`,
+`GPU_SHARPEN.a`, and `GPU_PRESENT.a`. The queries are collected only after the associated command-buffer resource is
+reused. They do not measure desktop compositing or scanout. FSR1 EASU and RCAS are both inside `GPU_UPSCALE`; the
+headroom preset therefore normally has no separate `GPU_SHARPEN` samples. D3D12 remains whole-frame only because
+writing its timestamps inside these stages would force extra render-pass endings and change the measured workload.
+Set `KZ_GPU_STAGE_TIMING=0` alongside `KZ_GPU_TIMING=1`, or use the campaign's `-DisableGpuStageTiming`, to retain
+the whole-frame query while suppressing Vulkan stage markers.
 
 Windows 10/11 builds can opt into the high-resolution interruptible wait without changing the default:
 
