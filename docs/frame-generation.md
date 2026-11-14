@@ -274,6 +274,36 @@ This is a repeated matched result, not a universal GPU estimate: it used one RTX
 no-input scene, an automated hidden window, and V-Sync off. It does not cover a visible desktop compositor, other
 output resolutions, other GPUs, power, input latency, or perceived image quality.
 
+#### Matched D3D12 sharp-scaling versus Vulkan FSR1
+
+A second four-arm campaign compared the two balanced 1920x1080 presentation paths in Vulkan/D3D12/D3D12/Vulkan
+order. Every arm used 2x internal rendering, the same populated card, precise scheduler wait, V-Sync off, clean
+effects, and guest seconds 40-110. Vulkan used FSR1 EASU plus one 15% RCAS pass; D3D12 disabled the presentation
+upscaler and retained sharp final presentation scaling. Effective-config records verified those contracts, every
+arm produced the expected whole-frame and backend-supported stage samples, and no arm reported a campaign problem.
+
+| Metric | Vulkan FSR1 A / B | D3D12 sharp A / B |
+|---|---:|---:|
+| Whole-frame GPU median | 1.197 / 1.198 ms | **0.902 / 0.909 ms** |
+| Whole-frame GPU p95 | **1.270 / 1.288 ms** | 1.498 / **1.138 ms** |
+| Whole-frame GPU p99 | **1.294 / 1.388 ms** | 1.823 / **1.228 ms** |
+| Whole-frame GPU maximum | **1.674 / 1.519 ms** | 3.360 / 1.683 ms |
+| Final-presentation CPU p95 | 2.033 / 2.004 ms | **0.509 / 0.512 ms** |
+| Presentation interval p95 | 17.098 / 17.074 ms | 17.078 / 17.063 ms |
+| Guest-vblank interval p95 | 17.024 / 17.024 ms | 17.023 / 17.017 ms |
+| Measured stage-mean coverage | 102.54% / 101.04% | 99.80% / 100.41% |
+
+D3D12's average median was 24.4% lower, but the tail result did not repeat in one direction: its p95 was 17.9%
+higher in pair A and 11.6% lower in pair B. Averaging the two p95 values makes D3D12 only 3.0% higher, which is not
+a stable backend advantage. Both paths remained far below the provisional 12 ms budget, with p95 at or below
+1.50 ms and practically identical presentation and guest-vblank p95. D3D12's lower final-presentation CPU span was
+consistent, but backend-specific present behavior makes that a diagnostic observation rather than an input-latency
+claim.
+
+The campaign used metadata-only captures and therefore compares timing, not image quality. It also used an automated
+hidden window on one GPU, so visible compositor behavior, power, latency, and perceived sharp-scaling quality remain
+outside the evidence.
+
 #### Vulkan stage-timing validation
 
 A follow-up 1920x1080 balanced-preset smoke used the same populated card, executable, guest window (seconds 40-55),
@@ -307,8 +337,8 @@ individual samples.
 - Repeat matched gameplay segments with a window, real output sizes and render scales, V-Sync on and off, several
   runs per condition, and no in-window screenshot readbacks. Measure actual new game builds separately from presents.
 - Measure power use and interactive/windowed behavior of the opt-in precise wait before considering a default change.
-- Design a non-perturbing D3D12 per-stage scheme; Vulkan stage timing, D3D12/Vulkan whole-frame timing, and CPU
-  stage spans are now available.
+- Repeat D3D12 stage validation with the Windows Graphics Tools debug layer installed.
+- Compare visible D3D12 sharp scaling and Vulkan FSR1 image quality; the matched campaign above was readback-free.
 - Check whether 72/82 fps simulation behaves like 60 in the [high-refresh campaign audit](testing.md#high-refresh-campaign-audit).
 - Play-test with Lossless Scaling at fixed 2x and adaptive modes; record judder and HUD artifacts.
 - In every SCES-52004 headless run here, and in the earlier SCES-52004 temporal runs, the mouse-aim hook never logged

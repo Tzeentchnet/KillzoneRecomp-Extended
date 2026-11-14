@@ -239,7 +239,9 @@ get past profile selection in this flow. Results and limitations are in
 
 `-HeadroomPreset` writes the exact 60 FPS headroom renderer contract and defaults automation to a 1920x1080 hidden
 window; `-WindowSize=WIDTHxHEIGHT` overrides that size. A fifth arm field can interleave `quality` and `balanced`
-automatic scale while keeping every other preset setting identical. `-GpuTiming` requires `-Timeline`, enables the
+automatic scale while keeping every other preset setting identical. A sixth field can interleave `vulkan-fsr1` and
+`d3d12-sharp`: both use the same balanced internal scale and clean-effects contract, while the latter disables the
+presentation upscaler and retains sharp final presentation scaling. `-GpuTiming` requires `-Timeline`, enables the
 renderer device's asynchronous whole-frame timestamp queries, and adds GPU count/p50/p95/p99/max plus CPU-stage p95
 values to the campaign summary. Vulkan runs also require nonzero upload/draw, merge, presentation-upscale, and
 final-presentation GPU samples for a balanced headroom arm. `-DisableGpuStageTiming` retains whole-frame timing while
@@ -250,6 +252,15 @@ disabling only those stage markers for an overhead control:
   -Chapter 1 -FromGuestS 40 -ToGuestS 110 -Region us -ReadbackFree -Timeline -GpuTiming -HeadroomPreset `
   -Arms 'quality-a:60:0:1:quality','balanced-a:60:0:1:balanced',`
         'quality-b:60:0:1:quality','balanced-b:60:0:1:balanced'
+```
+
+For the matched backend comparison, interleave the two presentation paths:
+
+```powershell
+.\tools\scripts\present_pacing_campaign.ps1 -Card .\work\<profile-card> -Iso $env:KZ_ISO -Elf $env:KZ_GAME_ELF `
+  -Chapter 1 -FromGuestS 40 -ToGuestS 110 -Region us -ReadbackFree -Timeline -GpuTiming -HeadroomPreset `
+  -Arms 'vulkan-a:60:0:1:balanced:vulkan-fsr1','d3d12-a:60:0:1:balanced:d3d12-sharp',`
+        'd3d12-b:60:0:1:balanced:d3d12-sharp','vulkan-b:60:0:1:balanced:vulkan-fsr1'
 ```
 
 The campaign checks the recorded effective 1080p contract: quality is 3x with no presentation upscale, balanced is

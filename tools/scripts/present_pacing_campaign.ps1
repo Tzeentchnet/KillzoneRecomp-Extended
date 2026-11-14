@@ -10,8 +10,9 @@
 # The window is guest time, not gameplay time: on SCES-52004 the local player is not detected, so gameplay-relative
 # input ("g" script steps) and KZ_HEADLESS_GAMEPLAY_SECONDS never start. Check separate captures to confirm that the window
 # is gameplay; on SCES-52004 chapter 1 without input, gameplay is visible from about 40 s until the player dies near
-# 115 s. Arms are "name:fps:pacing[:precise-wait[:scale-policy]]", for example "fallback:60:0:0" and
-# "precise:60:0:1". The optional quality|balanced policy requires -HeadroomPreset and changes only its auto scale.
+# 115 s. Arms are "name:fps:pacing[:precise-wait[:scale-policy[:headroom-pipeline]]]", for example
+# "fallback:60:0:0" and "precise:60:0:1". The optional quality|balanced policy and
+# vulkan-fsr1|d3d12-sharp pipeline require -HeadroomPreset.
 # Example:
 #   present_pacing_campaign.ps1 -Card work\<card> -Iso <image> -Elf <SCES_520.04 or SCUS_974.02> -Chapter 1
 param(
@@ -52,7 +53,9 @@ if (-not $Region) {
 if ($Region -notin @('us', 'pal', 'eu')) { throw "-Region must be us, pal or eu." }
 if ($GpuTiming -and -not $Timeline) { throw "-GpuTiming requires -Timeline." }
 if ($DisableGpuStageTiming -and -not $GpuTiming) { throw "-DisableGpuStageTiming requires -GpuTiming." }
-if ($HeadroomPreset -and $Renderer -ne 'vulkan') { throw "-HeadroomPreset requires -Renderer vulkan." }
+if ($HeadroomPreset -and $Renderer -notin @('vulkan', 'd3d12')) {
+    throw "-HeadroomPreset requires -Renderer vulkan or d3d12."
+}
 if ($HeadroomPreset -and -not $WindowSize) { $WindowSize = '1920x1080' }
 if ($WindowSize -and $WindowSize -notmatch '^[1-9][0-9]*x[1-9][0-9]*$') {
     throw "-WindowSize must be WIDTHxHEIGHT with positive integers."
@@ -64,24 +67,37 @@ New-Item -ItemType Directory -Force $configDir | Out-Null
 $rows = @()
 foreach ($arm in $Arms) {
     $parts = $arm -split ':'
-    if ($parts.Count -notin @(3, 4, 5) -or $parts[1] -notmatch '^[0-9]+$' -or
+    if ($parts.Count -notin @(3, 4, 5, 6) -or $parts[1] -notmatch '^[0-9]+$' -or
         $parts[2] -notin @('0', '1') -or ($parts.Count -ge 4 -and $parts[3] -notin @('0', '1')) -or
-        ($parts.Count -eq 5 -and $parts[4] -notin @('quality', 'balanced'))) {
-        throw "Arm '$arm' must be name:fps:pacing[:precise-wait[:scale-policy]], with switches 0 or 1 and policy quality or balanced."
+        ($parts.Count -ge 5 -and $parts[4] -notin @('quality', 'balanced')) -or
+        ($parts.Count -eq 6 -and $parts[5] -notin @('vulkan-fsr1', 'd3d12-sharp'))) {
+        throw "Arm '$arm' must be name:fps:pacing[:precise-wait[:scale-policy[:headroom-pipeline]]], with switches 0 or 1, policy quality or balanced, and pipeline vulkan-fsr1 or d3d12-sharp."
     }
     $armName, $fps, $pacing = $parts[0..2]
     $preciseWait = if ($parts.Count -ge 4) { $parts[3] } else { $null }
     $effectivePreciseWait = if ($null -ne $preciseWait) { $preciseWait } else { '0' }
-    if ($parts.Count -eq 5 -and -not $HeadroomPreset) {
+    if ($parts.Count -ge 5 -and -not $HeadroomPreset) {
         throw "Arm '$arm' selects a scale policy without -HeadroomPreset."
     }
-    $scalePolicy = if ($parts.Count -eq 5) { $parts[4] } elseif ($HeadroomPreset) { 'balanced' } else { '' }
+    $scalePolicy = if ($parts.Count -ge 5) { $parts[4] } elseif ($HeadroomPreset) { 'balanced' } else { '' }
+    $headroomPipeline = if ($parts.Count -eq 6) {
+        $parts[5]
+    } elseif ($HeadroomPreset -and $Renderer -eq 'd3d12') {
+        'd3d12-sharp'
+    } elseif ($HeadroomPreset) {
+        'vulkan-fsr1'
+    } else {
+        ''
+    }
+    $armRenderer = if ($headroomPipeline -eq 'd3d12-sharp') { 'd3d12' } elseif ($headroomPipeline) { 'vulkan' } else { $Renderer }
     $runName = "${Name}_c{0:D2}_{1}" -f $Chapter, $armName
     $config = Join-Path $configDir "${armName}.ini"
     $configText = "[Config]`nVersion=3`n`n[Launcher]`nShow=0`n`n[Display]`nWindowMode=borderless`nVSync=0"
     if ($HeadroomPreset) {
-        $configText += "`nFpsLimit=60`n`n[Graphics]`nRenderer=vulkan`nRenderScalePolicy=$scalePolicy`nUpscale=0"
-        $configText += "`nUpscaler=fsr1`nUpscalerSharpening=15`nFSR3InputMode=strict`nAnisotropy=16"
+        $requestedUpscaler = if ($headroomPipeline -eq 'vulkan-fsr1') { 'fsr1' } else { 'off' }
+        $requestedUpscalerSharpening = if ($headroomPipeline -eq 'vulkan-fsr1') { 15 } else { 0 }
+        $configText += "`nFpsLimit=60`n`n[Graphics]`nRenderer=$armRenderer`nRenderScalePolicy=$scalePolicy`nUpscale=0"
+        $configText += "`nUpscaler=$requestedUpscaler`nUpscalerSharpening=$requestedUpscalerSharpening`nFSR3InputMode=strict`nAnisotropy=16"
         $configText += "`nMipmapping=ps2`nFXAA=0`nSMAA=0`nTextureReplacement=0`nBilinear=1"
         $configText += "`nSharpScaling=1`nSharpen=0`nNoiseFilter=0`nMotionBlur=0`nGlow=0`nLensBlur=0"
         $configText += "`nRenderDistance=1`nLodScale=1"
@@ -99,7 +115,7 @@ foreach ($arm in $Arms) {
         "KZ_CONFIG=$config",
         "KZ_START_LEVEL=$Chapter",
         "KZ_MC_ROOT=$runCard",
-        "KZ_RENDERER=$Renderer",
+        "KZ_RENDERER=$armRenderer",
         "KZ_AUDIO_DEVICE=0",
         "KZ_FPS=$fps",
         "KZ_FRAME_PACING=$pacing",
@@ -138,25 +154,32 @@ foreach ($arm in $Arms) {
         if (Test-Path -LiteralPath $captureLog) {
             $configRecord = Get-Content -LiteralPath $captureLog |
                 ForEach-Object { $_ | ConvertFrom-Json -ErrorAction Stop } |
-                Where-Object record -eq 'config' |
-                Select-Object -First 1
+                Where-Object { $null -ne $_.effective_config } |
+                Select-Object -Last 1
             if ($null -ne $configRecord) { $effectiveConfig = $configRecord.effective_config }
         }
         if ($null -eq $effectiveConfig) {
             $problems += 'no effective renderer config record'
         } else {
             $expectedScaleMode = if ($scalePolicy -eq 'balanced') { 'auto_balanced' } else { 'auto_output_height' }
+            $expectedRequestedUpscaler = if ($headroomPipeline -eq 'vulkan-fsr1') { 'fsr1' } else { 'off' }
             if ($effectiveConfig.render_scale.mode -ne $expectedScaleMode) {
                 $problems += "render scale mode is $($effectiveConfig.render_scale.mode), expected $expectedScaleMode"
             }
-            if ($effectiveConfig.presentation_upscaler.requested -ne 'fsr1' -or
+            if ($configRecord.renderer -ne $armRenderer -or
+                $effectiveConfig.presentation_upscaler.requested -ne $expectedRequestedUpscaler -or
+                $effectiveConfig.sharp_present -ne $true -or
                 $effectiveConfig.cas_sharpness -ne 0 -or $effectiveConfig.aa -ne 'none' -or
                 $effectiveConfig.texture_replacement -ne $false) {
                 $problems += 'headroom renderer contract mismatch'
             }
             if ($WindowSize -eq '1920x1080') {
                 $expectedScale = if ($scalePolicy -eq 'balanced') { 2 } else { 3 }
-                $expectedUpscaler = if ($scalePolicy -eq 'balanced') { 'fsr1' } else { 'off' }
+                $expectedUpscaler = if ($headroomPipeline -eq 'vulkan-fsr1' -and $scalePolicy -eq 'balanced') {
+                    'fsr1'
+                } else {
+                    'off'
+                }
                 if ($effectiveConfig.render_scale.effective -ne $expectedScale -or
                     $effectiveConfig.presentation_upscaler.effective -ne $expectedUpscaler -or
                     $effectiveConfig.output_resolution.width -ne 1920 -or
@@ -243,12 +266,15 @@ foreach ($arm in $Arms) {
         100.0 * $gpuStageMeanSum / $gpuFrame.mean
     } else { $null }
     if ($GpuTiming -and -not $DisableGpuStageTiming -and $HeadroomPreset -and $scalePolicy -eq 'balanced') {
-        foreach ($stage in @(
+        $requiredStages = @(
             [pscustomobject]@{ name = 'upload/draw'; metrics = $uploadDrawGpu },
             [pscustomobject]@{ name = 'merge'; metrics = $mergeGpu },
-            [pscustomobject]@{ name = 'presentation upscale'; metrics = $upscaleGpu },
             [pscustomobject]@{ name = 'final presentation'; metrics = $presentGpu }
-        )) {
+        )
+        if ($headroomPipeline -eq 'vulkan-fsr1') {
+            $requiredStages += [pscustomobject]@{ name = 'presentation upscale'; metrics = $upscaleGpu }
+        }
+        foreach ($stage in $requiredStages) {
             if ($null -eq $stage.metrics -or $stage.metrics.count -le 0) {
                 $problems += "no $($stage.name) GPU timing samples"
             }
@@ -261,7 +287,8 @@ foreach ($arm in $Arms) {
     $rows += [pscustomobject]@{
         arm = $armName; fps = [int]$fps; pacing = [int]$pacing; precise_wait = [int]$effectivePreciseWait
         gpu_stage_timing = [bool]($GpuTiming -and -not $DisableGpuStageTiming)
-        headroom_preset = [bool]$HeadroomPreset; render_scale_policy = $scalePolicy; window_size = $WindowSize
+        headroom_preset = [bool]$HeadroomPreset; renderer = $armRenderer; headroom_pipeline = $headroomPipeline
+        render_scale_policy = $scalePolicy; window_size = $WindowSize
         effective_scale = $effectiveConfig.render_scale.effective
         effective_upscaler = $effectiveConfig.presentation_upscaler.effective
         first_guest_s = $summary.capture_window.first_guest_s; last_guest_s = $summary.capture_window.last_guest_s
@@ -292,7 +319,7 @@ foreach ($key in @(
     "KZ_HEADLESS_GAMEPLAY_SECONDS", "KZ_SHOT_DIR", "KZ_SHOT_INTERVAL",
     "KZ_CAPTURE_METADATA_ONLY", "KZ_SHOT_GUEST_INTERVAL", "KZ_WINDOW_SIZE",
     "KZ_TIMELINE", "KZ_TL_START", "KZ_TL_END",
-    "KZ_GPU_TIMING", "PS2X_PRECISE_WAIT"
+    "KZ_GPU_TIMING", "KZ_GPU_STAGE_TIMING", "PS2X_PRECISE_WAIT"
 )) {
     Remove-Item "env:$key" -ErrorAction SilentlyContinue
 }
