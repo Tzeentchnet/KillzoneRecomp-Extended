@@ -10,12 +10,12 @@
     "repository_path": "ext/PS2Recomp",
     "patch_directory": "patches/ps2recomp",
     "base_commit": "75d729ce40d7eed9649fd4bb05628dee520f3d0c",
-    "target_commit": "bc60175edae53056d886522a3290f12037fe84fc",
-    "target_tree": "79bab11e7a7d6d8259136ca59f7edc485dfd5f9b",
+    "target_commit": "46708c5cd018f007185e3e975bd65ef0db065845",
+    "target_tree": "db9b4cca885a9b87460ae07dd6224c665fed9178",
     "canonical_patch": {
       "path": "patches/ps2recomp/combined.lock.diff",
-      "changed_paths": 77,
-      "sha256": "cf8fc0104a45668bc32c477e85436621aa225cfcee3a3491d74dc4fd4662bf3a"
+      "changed_paths": 83,
+      "sha256": "d144102aab9b87d68dbbd53ca8aec76de33438dd3ac248ca3064ba1a4ef86c9d"
     },
     "patches": [
       {
@@ -169,6 +169,18 @@
       {
         "path": "0039-Add-GPU-stage-timeline-events.patch",
         "sha256": "fe5badb127c515e873a499b5f1cfdc2bd124c1b207b54f99fbf087f48149900d"
+      },
+      {
+        "path": "0040-Dispatch-syscalls-0x79-0x7A-to-the-existing-SIF-regi.patch",
+        "sha256": "c556bc8603bfc03cfff1ddc21fa2d902aa51020007b63157c00ba3817e3b8b14"
+      },
+      {
+        "path": "0041-GIF-treat-FLG-3-like-IMAGE-everywhere-a-GIFtag-is-pa.patch",
+        "sha256": "792a9c7226b26d50f6b86cb26356a0248d0126fdcf011a7b1ee24fb150b5565c"
+      },
+      {
+        "path": "0042-Test-SIF-register-syscall-dispatch.patch",
+        "sha256": "e6f387e6bfc432bbee5e0aebd553c81907040bde28a15fc9acb74d3e6a07bc37"
       }
     ]
   },
@@ -177,7 +189,7 @@
       "id": "ps2recomp",
       "kind": "git-submodule",
       "source_url": "https://github.com/Tzeentchnet/PS2Recomp.git",
-      "revision": "bc60175edae53056d886522a3290f12037fe84fc",
+      "revision": "46708c5cd018f007185e3e975bd65ef0db065845",
       "publication_status": "unpublished",
       "license": "GPL-3.0-only",
       "redistribution": "Copyleft; distribute corresponding source and notices.",
@@ -192,7 +204,7 @@
       "id": "pcsx2",
       "kind": "git-checkout",
       "source_url": "https://github.com/Tzeentchnet/pcsx2.git",
-      "revision": "edf0ea1be194755e76abc067e9aa773eeada0c18",
+      "revision": "86c4e23e110d954a404ccd009f3587c558bbc7aa",
       "publication_status": "unpublished",
       "license": "GPL-3.0-or-later",
       "redistribution": "Copyleft; distribute corresponding source and notices.",

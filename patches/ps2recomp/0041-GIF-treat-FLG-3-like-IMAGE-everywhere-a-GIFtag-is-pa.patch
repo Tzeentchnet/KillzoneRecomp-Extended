@@ -1,0 +1,173 @@
+From 6db862776f488b2d0f7fab62196d5d32639e0b94 Mon Sep 17 00:00:00 2001
+From: Hekel1989 <github@securesimba.com>
+Date: Fri, 23 Oct 2026 01:47:58 +0100
+Subject: [PATCH 41/42] GIF: treat FLG=3 like IMAGE everywhere a GIFtag is
+ parsed (#384)
+
+The GIFtag FLG field has four encodings: PACKED (0), REGLIST (1),
+IMAGE (2) and 3, which the GS manual calls "disable" but documents as
+the same operation as IMAGE: NLOOP quadwords of image data follow the
+tag (PCSX2 calls it GIF_FLG_IMAGE2 and handles it as IMAGE).
+
+The runtime only recognised FLG=2 as image data, so a FLG=3 packet was
+mis-sized or rejected depending on the path:
+- VU1 XGKICK packet walker: reported a reserved instruction and
+  aborted the kick.
+- GIF arbiter: not classified as an IMAGE packet, so a PATH3 upload
+  could be pre-empted.
+- VIF1 interpreter DIRECT/DIRECTHL sizing: stopped walking the packet.
+- GS frontend: skipped the image data.
+- sceGifPk/sceVif1Pk packet close: divided the qword count by NREG.
+
+Seen in Suikoden Tactics, which sends FLG=3 packets through both VU1
+XGKICK and PATH3. Treat FLG=3 the same as FLG=2 in all five places, and
+add a GS test that uploads image data with a FLG=3 tag (fails before).
+
+Co-authored-by: Claude Opus 5.5 <noreply@anthropic.com>
+(cherry picked from commit e5636981a1c9de368f6b71e819c3dc188dfedbf4)
+---
+ ps2xRuntime/src/lib/Kernel/Stubs/GS.cpp      |  2 +-
+ ps2xRuntime/src/lib/gs/gs_frontend.cpp       |  3 +-
+ ps2xRuntime/src/lib/gs/ps2_gif_arbiter.cpp   |  3 +-
+ ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp |  2 +-
+ ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp      |  2 +-
+ ps2xTest/src/ps2_gs_tests.cpp                | 55 ++++++++++++++++++++
+ 6 files changed, 62 insertions(+), 5 deletions(-)
+
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/GS.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/GS.cpp
+index 9c54919..aed4cb5 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/GS.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/GS.cpp
+@@ -347,7 +347,7 @@ namespace ps2_stubs
+             {
+                 packetQwords >>= 1u;
+             }
+-            if (flag != 2u)
++            if (flag < 2u) // IMAGE (2) and FLG=3 count qwords directly, not NREG groups.
+             {
+                 uint32_t nreg = static_cast<uint32_t>((tagValue >> 60u) & 0xFu);
+                 if (nreg == 0u)
+diff --git a/ps2xRuntime/src/lib/gs/gs_frontend.cpp b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
+index 5658928..9281d5f 100644
+--- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
++++ b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
+@@ -725,8 +725,9 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
+             if ((nloop * nreg) & 1)
+                 offset += 8;
+         }
+-        else if (flg == GIF_FMT_IMAGE)
++        else if (flg == GIF_FMT_IMAGE || flg == GIF_FMT_DISABLED)
+         {
++            // FLG=3 ("disabled" in the GS manual) behaves exactly like IMAGE: NLOOP qwords of image data.
+             uint32_t imageBytes = nloop * 16;
+             if (offset + imageBytes > sizeBytes)
+                 imageBytes = sizeBytes - offset;
+diff --git a/ps2xRuntime/src/lib/gs/ps2_gif_arbiter.cpp b/ps2xRuntime/src/lib/gs/ps2_gif_arbiter.cpp
+index ce6b28e..da29d38 100644
+--- a/ps2xRuntime/src/lib/gs/ps2_gif_arbiter.cpp
++++ b/ps2xRuntime/src/lib/gs/ps2_gif_arbiter.cpp
+@@ -182,7 +182,8 @@ bool GifArbiter::isImagePacket(const uint8_t *data, uint32_t sizeBytes)
+     uint64_t tagLo = 0;
+     std::memcpy(&tagLo, data, sizeof(tagLo));
+     const uint8_t flg = static_cast<uint8_t>((tagLo >> 58) & 0x3u);
+-    return flg == 2u;
++    // FLG=3 ("disabled" in the GS manual) behaves exactly like IMAGE: NLOOP qwords of image data.
++    return flg == 2u || flg == 3u;
+ }
+ 
+ void GifArbiter::submit(GifPathId pathId, const uint8_t *data, uint32_t sizeBytes, bool path2DirectHl)
+diff --git a/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp b/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
+index 1c16183..9ff2665 100644
+--- a/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
++++ b/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
+@@ -646,7 +646,7 @@ namespace
+                 payloadBytes = static_cast<uint64_t>(nloop) * nreg * 8ull;
+                 payloadBytes = (payloadBytes + 15ull) & ~15ull;
+             }
+-            else if (flg == kGifFmtImage)
++            else if (flg == kGifFmtImage || flg == 3u) // FLG=3 ("disabled" in the GS manual) behaves exactly like IMAGE: NLOOP qwords of image data.
+             {
+                 payloadBytes = static_cast<uint64_t>(nloop) * 16ull;
+                 const uint64_t availableBytes = sizeBytes - offset;
+diff --git a/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp b/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
+index bd75bba..f19e281 100644
+--- a/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
++++ b/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
+@@ -879,7 +879,7 @@ void VU1Interpreter::progressXgkick()
+                 tagBytes += static_cast<uint64_t>(nloop) * nreg * 16u;
+             else if (format == 1u)
+                 tagBytes += ((static_cast<uint64_t>(nloop) * nreg + 1u) & ~1ull) * 8u;
+-            else if (format == 2u)
++            else if (format == 2u || format == 3u) // FLG=3 ("disabled" in the GS manual) behaves exactly like IMAGE: NLOOP qwords of image data.
+                 tagBytes += static_cast<uint64_t>(nloop) * 16u;
+             else
+             {
+diff --git a/ps2xTest/src/ps2_gs_tests.cpp b/ps2xTest/src/ps2_gs_tests.cpp
+index 0458a8c..113cc88 100644
+--- a/ps2xTest/src/ps2_gs_tests.cpp
++++ b/ps2xTest/src/ps2_gs_tests.cpp
+@@ -2170,6 +2170,61 @@ void register_ps2_gs_tests()
+             t.IsTrue(same, "GIF IMAGE transfer should write payload bytes into GS VRAM");
+         });
+ 
++        tc.Run("GIF FLG=3 (IMAGE2) packet writes host-to-local data like IMAGE", [](TestCase &t)
++        {
++            std::vector<uint8_t> vram(PS2_GS_VRAM_SIZE, 0u);
++            GS gs;
++            gs.init(vram.data(), static_cast<uint32_t>(vram.size()), nullptr);
++
++            // Setup for host->local transfer to DBP=0, DBW=1, PSMCT32, rect 2x2.
++            const uint64_t bitblt =
++                (static_cast<uint64_t>(0u) << 0) |      // SBP
++                (static_cast<uint64_t>(1u) << 16) |     // SBW
++                (static_cast<uint64_t>(0u) << 24) |     // SPSM
++                (static_cast<uint64_t>(0u) << 32) |     // DBP
++                (static_cast<uint64_t>(1u) << 48) |     // DBW
++                (static_cast<uint64_t>(0u) << 56);      // DPSM (CT32)
++            gs.writeRegister(GS_REG_BITBLTBUF, bitblt);
++            gs.writeRegister(GS_REG_TRXPOS, 0ull);
++            gs.writeRegister(GS_REG_TRXREG, (2ull << 0) | (2ull << 32));
++            gs.writeRegister(GS_REG_TRXDIR, 0ull);
++
++            std::vector<uint8_t> packet;
++            appendU64(packet, makeGifTag(1u, GIF_FMT_DISABLED, 0u, true));
++            appendU64(packet, 0ull);
++
++            const uint8_t payload[16] = {
++                0x10u, 0x11u, 0x12u, 0x13u,
++                0x20u, 0x21u, 0x22u, 0x23u,
++                0x30u, 0x31u, 0x32u, 0x33u,
++                0x40u, 0x41u, 0x42u, 0x43u,
++            };
++            packet.insert(packet.end(), payload, payload + sizeof(payload));
++
++            gs.processGIFPacket(packet.data(), static_cast<uint32_t>(packet.size()));
++
++            bool same = true;
++            for (uint32_t y = 0; y < 2u && same; ++y)
++            {
++                for (uint32_t x = 0; x < 2u; ++x)
++                {
++                    const uint32_t pixelIndex = y * 2u + x;
++                    const uint32_t off = referenceAddrPSMCT32(0u, 1u, x, y);
++                    for (uint32_t c = 0; c < 4u; ++c)
++                    {
++                        if (vram[off + c] != payload[pixelIndex * 4u + c])
++                        {
++                            same = false;
++                            break;
++                        }
++                    }
++                    if (!same)
++                        break;
++                }
++            }
++            t.IsTrue(same, "GIF FLG=3 transfer should write payload bytes into GS VRAM like IMAGE");
++        });
++
+         tc.Run("GIF load-image packet uses native upload fast path", [](TestCase &t)
+         {
+             std::vector<uint8_t> vram(PS2_GS_VRAM_SIZE, 0u);
+-- 
+2.55.0.windows.5
+

@@ -1,0 +1,69 @@
+From 7a8b37d6f605b3c04293cf7ba289c802ffef1289 Mon Sep 17 00:00:00 2001
+From: Louis-Philippe Le Sieur <llesieur99@hotmail.com>
+Date: Mon, 5 Oct 2026 15:21:27 -0400
+Subject: [PATCH 40/42] Dispatch syscalls 0x79/0x7A to the existing SIF
+ register handlers (#274)
+
+The dispatcher had no branch for 0x79/0x7A, so sceSifInitCmd fell through to
+"Unimplemented PS2 syscall" and never reached the SIF path. Measured on
+Ratchet & Clank (SCUS-97199): 31 254 "[Syscall TODO]" lines, all of them
+v1=0x7a, 7.8 MB of error stream in a 140-second run, zero frames and zero CD
+reads. After the change the same run logs 0 "[Syscall TODO]" and the SIF
+register path becomes reachable (sceSifGetReg / sceSifSetReg / sceSifSetDma).
+
+The mapping was read off the disassembly rather than guessed:
+
+  0x118B60: `li v1,0x79; syscall` called with (0x80000000, value) then
+            (0x80000001, address)  -> two arguments -> sceSifSetReg(reg,val)
+  0x118B70: `li v1,0x7A; syscall` called with (0x80000000), (4), (2)
+                                   -> one argument  -> sceSifGetReg(reg)
+
+The SDK agrees: 118 SifDmaStat, 119 SifSetDma, 120 SifSetDChain, 121
+SifSetReg, 122 SifGetReg. The three lower neighbours (0x76/0x77/0x78) are
+already dispatched a few lines above; only these two branches were missing.
+
+Both handlers already exist in Stubs/SIF.cpp and read a0/a1, which is the
+syscall convention, so only the dispatch branch was added. Bit 31 of the
+register number is the PS2 convention (0x80000000 | SIF register).
+
+Built and run locally against c5a9d02 (MSVC Release, exit 0).
+
+Co-authored-by: Louis-Philippe Le Sieur <llesieur99@users.noreply.github.com>
+(cherry picked from commit 2c5fbb9389e11dd95693385969490c9e8e6f57b4)
+---
+ .../src/lib/Kernel/Syscalls/Dispatcher.cpp    | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/ps2xRuntime/src/lib/Kernel/Syscalls/Dispatcher.cpp b/ps2xRuntime/src/lib/Kernel/Syscalls/Dispatcher.cpp
+index 3b2be31..121fcc7 100644
+--- a/ps2xRuntime/src/lib/Kernel/Syscalls/Dispatcher.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Syscalls/Dispatcher.cpp
+@@ -292,6 +292,25 @@ namespace ps2_syscalls
+         case static_cast<uint32_t>(-0x78):
+             ps2_stubs::sceSifSetDChain(rdram, ctx, runtime);
+             return true;
++        // SIF register syscalls. sceSifInitCmd (0x11A480) issues syscall 0x7A and the
++        // runtime answered "Unimplemented PS2 syscall" 11 271 times, with zero CD reads
++        // and a black screen (run168). Identified from the disassembly, not guessed:
++        //   0x118B60: `li v1,0x79; syscall` called with (0x80000000, value) then
++        //             (0x80000001, address) -> TWO arguments -> sceSifSetReg(reg,val)
++        //   0x118B70: `li v1,0x7A; syscall` called with (0x80000000), (4), (2)
++        //             -> ONE argument -> sceSifGetReg(reg)
++        // The neighbours confirm the family: 0x76 DmaStat, 0x77 SetDma, 0x78 SetDChain.
++        // Both handlers ALREADY exist in Stubs/SIF.cpp and read a0/a1, exactly the
++        // syscall convention - only the dispatch branch was missing.
++        // Bit 31 of `reg` is the PS2 convention (0x80000000 | SIF register number).
++        case 0x79:
++        case static_cast<uint32_t>(-0x79):
++            ps2_stubs::sceSifSetReg(rdram, ctx, runtime);
++            return true;
++        case 0x7A:
++        case static_cast<uint32_t>(-0x7A):
++            ps2_stubs::sceSifGetReg(rdram, ctx, runtime);
++            return true;
+         case 0x7F:
+             GetMemorySize(rdram, ctx, runtime);
+             return true;
+-- 
+2.55.0.windows.5
+

@@ -738,6 +738,15 @@ resulting tree to equal the pinned submodule tree.
 - **0039-Add-GPU-stage-timeline-events.patch** - reserves host timeline events for asynchronous Vulkan timestamp
   results covering upload/draw, merge, presentation upscaling, sharpening, and final presentation. Unsupported
   renderer backends do not emit these events.
+- **0040-Dispatch-syscalls-0x79-0x7A-to-the-existing-SIF-regi.patch** - backports canonical PS2Recomp
+  SIF register syscall dispatch. Numeric syscall IDs `0x79`/`0x7A` and their signed aliases now reach the existing
+  `sceSifSetReg`/`sceSifGetReg` handlers.
+- **0041-GIF-treat-FLG-3-like-IMAGE-everywhere-a-GIFtag-is-pa.patch** - backports canonical GIF IMAGE2
+  behavior across direct GS submission, GIF arbitration, fragmented VIF1 `DIRECT`, and VU1 XGKICK parsing.
+  `FLG=3` consumes `NLOOP` image qwords like `FLG=2`, with a focused host-to-local VRAM regression.
+- **0042-Test-SIF-register-syscall-dispatch.patch** - verifies both positive and signed SIF register syscall IDs
+  through the numeric dispatcher. The complete standalone PS2Recomp suite passes 454/454 with the canonical
+  SIF and IMAGE2 backports.
 - **experimental/ee-di-interrupt-gate.diff** (not applied; `git apply --directory=ext/PS2Recomp`) - makes
   `EeScheduler` honour Status.EIE: while the running context is inside `di`/`ei`, pending interrupt, SIF and stream
   invocations, time-slice preemption and event-driven thread switches wait for `ei` (50 ms safety valve,

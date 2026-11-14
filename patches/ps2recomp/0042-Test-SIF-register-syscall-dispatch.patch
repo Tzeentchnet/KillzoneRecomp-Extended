@@ -1,0 +1,53 @@
+From 46708c5cd018f007185e3e975bd65ef0db065845 Mon Sep 17 00:00:00 2001
+From: Tzeentchnet <58480142+Tzeentchnet@users.noreply.github.com>
+Date: Fri, 13 Nov 2026 22:02:20 -0800
+Subject: [PATCH 42/42] Test SIF register syscall dispatch
+
+---
+ ps2xTest/src/ps2_sif_dma_tests.cpp | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/ps2xTest/src/ps2_sif_dma_tests.cpp b/ps2xTest/src/ps2_sif_dma_tests.cpp
+index aace83c..a70dc55 100644
+--- a/ps2xTest/src/ps2_sif_dma_tests.cpp
++++ b/ps2xTest/src/ps2_sif_dma_tests.cpp
+@@ -342,6 +342,36 @@ void register_ps2_sif_dma_tests()
+             t.Equals(getReg(0x80000002u), 0u, "SIF mscom register should default to zero");
+         });
+ 
++        tc.Run("numeric SIF register syscalls dispatch positive and negative ids", [](TestCase &t)
++        {
++            TestEnv env;
++
++            auto setReg = [&](uint32_t syscall, uint32_t reg, uint32_t value)
++            {
++                setRegU32(env.ctx, 4, reg);
++                setRegU32(env.ctx, 5, value);
++                t.IsTrue(ps2_syscalls::dispatchNumericSyscall(
++                             syscall, env.rdram.data(), &env.ctx, &env.runtime),
++                         "SIF register set syscall should dispatch");
++            };
++            auto getReg = [&](uint32_t syscall, uint32_t reg) -> uint32_t
++            {
++                setRegU32(env.ctx, 4, reg);
++                t.IsTrue(ps2_syscalls::dispatchNumericSyscall(
++                             syscall, env.rdram.data(), &env.ctx, &env.runtime),
++                         "SIF register get syscall should dispatch");
++                return ::getRegU32(&env.ctx, 2);
++            };
++
++            setReg(0x79u, 0x80000000u, 0x12345678u);
++            t.Equals(getReg(0x7Au, 0x80000000u), 0x12345678u,
++                     "positive SIF register syscalls should preserve the written value");
++
++            setReg(static_cast<uint32_t>(-0x79), 0x80000001u, 0x89ABCDEFu);
++            t.Equals(getReg(static_cast<uint32_t>(-0x7A), 0x80000001u), 0x89ABCDEFu,
++                     "negative SIF register syscalls should preserve the written value");
++        });
++
+         tc.Run("sceSifExitCmd restores default boot-ready SIF registers", [](TestCase &t)
+         {
+             TestEnv env;
+-- 
+2.55.0.windows.5
+

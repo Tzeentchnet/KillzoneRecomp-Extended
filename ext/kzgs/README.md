@@ -6,9 +6,10 @@ replaced by small stubs in `shim/`, so the library needs no BIOS, EE/IOP, VIF, D
 
 - PCSX2 source: `ext/pcsx2`, pinned to the exact [Tzeentchnet/pcsx2](https://github.com/Tzeentchnet/pcsx2)
   companion revision in `config/dependencies.lock.json`. It includes generic presentation, Vulkan
-  device-negotiation, completed-frame, GS observation, and renderer-timing hooks. The current locked revision is
-  marked unpublished, so retain the local checkout until the companion branch is published. It is a separate
-  checkout, not the PS2Recomp submodule.
+  device-negotiation, completed-frame, GS observation, and renderer-timing hooks. It also selectively backports
+  upstream fixes for merge feedback-copy extents, bounded odd-width PSMT4 uploads, and D3D12 Tier-0 render-pass
+  fallback. The current locked revision is marked unpublished, so retain the local checkout until the companion
+  branch is published. It is a separate checkout, not the PS2Recomp submodule.
 - Dependencies: the official `pcsx2-windows-dependencies.7z` from the locked PCSX2 Windows dependency release,
   extracted to `ext/kzgs/deps` (so the headers are in
   `ext/kzgs/deps/deps/include`). It is not committed.

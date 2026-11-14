@@ -12,9 +12,9 @@ scheduler-pacing and GPU-profiling review was also completed that day. The basel
   [`e5636981a1c9de368f6b71e819c3dc188dfedbf4`](https://github.com/ran-j/PS2Recomp/commit/e5636981a1c9de368f6b71e819c3dc188dfedbf4).
 - PCSX2 `master` at
   [`0ab00c49b157be667a8a2f0bf4cda83f75a9198e`](https://github.com/PCSX2/pcsx2/commit/0ab00c49b157be667a8a2f0bf4cda83f75a9198e).
-- The locked local PS2Recomp revision `bc60175edae53056d886522a3290f12037fe84fc`; the latest published
+- The locked local PS2Recomp revision `46708c5cd018f007185e3e975bd65ef0db065845`; the latest published
   [`killzone` branch is still `fbde3f0`](https://github.com/Tzeentchnet/PS2Recomp/commit/fbde3f0cbbdec560201bd1001919eda4c59376d4).
-- The locked local PCSX2 revision `edf0ea1be194755e76abc067e9aa773eeada0c18`; the published
+- The locked local PCSX2 revision `86c4e23e110d954a404ccd009f3587c558bbc7aa`; the published
   [PCSX2 upscaler-foundation branch](https://github.com/Tzeentchnet/pcsx2/tree/feature/kzgs-upscaler-foundation)
   still ends at `1fb920189c12766af55bdc9178619c0c66eb1a5e`.
 
@@ -29,9 +29,10 @@ the dependency verifier therefore correctly reports both as unpublished.
 
 | Area | Decision | Evidence and scope |
 |---|---|---|
-| PS2Recomp canonical base | Keep the current patch base for now | Canonical `main` is still `e5636981`. Four behavior commits after the fork's `75d729ce` patch base are already represented semantically by the local resume-point, float, SIF, and GIF IMAGE2 work; the fifth only documents `.recomp.json`. Rebasing only to duplicate those changes would churn the 38-patch reconstruction series without adding behavior. |
-| PCSX2 VU slice | Integrated selectively | Upstream commits [`62a79afff`](https://github.com/PCSX2/pcsx2/commit/62a79afff984dcf919fbb5ba8bdb5679d181ca57), [`854604401`](https://github.com/PCSX2/pcsx2/commit/8546044011687f1d4d38d307cbd1c3d8355a4383), and [`222285122`](https://github.com/PCSX2/pcsx2/commit/2222851226644208117edf28754c821765098374) correct 64-bit XGKICK timing, interpreter cycle tracking, and the `nextBlockCycles` width. They are now in local companion `edf0ea1be`; KzVU passes 1,776 checks, the product self-test passes, and the MSVC product build completes. |
-| PCSX2 GS slice | Rebase on an isolated branch; do not cherry-pick the renderer piecemeal | The companion starts from `646df006`, while current `master` is 180 commits ahead of that base: 73 touch `pcsx2/GS`, three touch the KzVU slice, and none touch the KzIPU or KzSPU2 source slices. A merge probe found nine content-conflict hunks in `GSRenderer.cpp`, `GSDeviceVK.cpp`, and `GSTextureVK.cpp`. The new Vulkan render-pass/layout/feedback work is tightly coupled, so a coherent base refresh is safer than selecting individual GS commits. |
+| PS2Recomp canonical base | Keep the current patch base for now | Canonical `main` is still `e5636981`. The local resume-point and floating-point work already represents two post-`75d729ce` behavior changes. Canonical SIF dispatch [`2c5fbb9`](https://github.com/ran-j/PS2Recomp/commit/2c5fbb9389e11dd95693385969490c9e8e6f57b4) and GIF IMAGE2 [`e5636981`](https://github.com/ran-j/PS2Recomp/commit/e5636981a1c9de368f6b71e819c3dc188dfedbf4) are now exact backports, with an additional local dispatcher regression; the fifth upstream commit only documents `.recomp.json`. Rebasing only to duplicate those changes would churn the 41-topic reconstruction series without adding behavior. |
+| PCSX2 VU slice | Integrated selectively | Upstream commits [`62a79afff`](https://github.com/PCSX2/pcsx2/commit/62a79afff984dcf919fbb5ba8bdb5679d181ca57), [`854604401`](https://github.com/PCSX2/pcsx2/commit/8546044011687f1d4d38d307cbd1c3d8355a4383), and [`222285122`](https://github.com/PCSX2/pcsx2/commit/2222851226644208117edf28754c821765098374) correct 64-bit XGKICK timing, interpreter cycle tracking, and the `nextBlockCycles` width. They remain in local companion `86c4e23e1`; KzVU still passes all 1,776 JIT/interpreter/reference checks after the subsequent renderer backports. |
+| Isolated PCSX2 GS fixes | Integrated selectively | Upstream commits [`3c8df07e8`](https://github.com/PCSX2/pcsx2/commit/3c8df07e8e367caef8386fd949d6ca44bf2f7ad0), [`d1662db34`](https://github.com/PCSX2/pcsx2/commit/d1662db34afa310d2665b85af98405f61e440911), and [`2b5e9df73`](https://github.com/PCSX2/pcsx2/commit/2b5e9df7364c5e4e5de98281469a584fefd63927) fix DX12/Vulkan merge feedback-copy extents, bound odd-width PSMT4 uploads, and provide the D3D12 Tier-0 render-pass fallback. D3D11, D3D12, Vulkan, and software golden tests pass in local companion `86c4e23e1`. |
+| Full PCSX2 GS refresh | Rebase on an isolated branch; do not cherry-pick broad renderer changes piecemeal | The companion starts from `646df006`, while current `master` is 180 commits ahead of that base: 73 touch `pcsx2/GS`, three touch the KzVU slice, and none touch the KzIPU or KzSPU2 source slices. A merge probe found nine content-conflict hunks in `GSRenderer.cpp`, `GSDeviceVK.cpp`, and `GSTextureVK.cpp`. The broader Vulkan render-pass/layout/feedback work is tightly coupled, so a coherent base refresh is safer than selecting additional renderer commits. |
 | PCSX2 work still in review | Track, do not build on it yet | [PCSX2/pcsx2#15043](https://github.com/PCSX2/pcsx2/pull/15043) is a draft backend refactor and [PCSX2/pcsx2#14850](https://github.com/PCSX2/pcsx2/pull/14850) still proposes a broad TFX-shader unification. Re-evaluate them only after merge and after the current GS refresh is stable. |
 | Sampled EE guest-call profiling | Prototype as a separate diagnostic patch | Hardnyx's [`834f4965`](https://github.com/Hardnyx/PS2Recomp/commit/834f4965d6e5f8cc49f0fddedbc73e8ba9ed02f9) compiles out by default and samples dispatch entry/caller PCs without unwinding another thread. That directly addresses the unsafe mechanism behind the existing `KZ_PROFILE` crash history, but its output and overhead still need a matched Killzone run before retention. |
 | New PS2Recomp correctness reports | Track upstream; no current Killzone regeneration | [ran-j/PS2Recomp#439](https://github.com/ran-j/PS2Recomp/issues/439) fixes VU0 macro random-register semantics and [ran-j/PS2Recomp#440](https://github.com/ran-j/PS2Recomp/issues/440) fixes newlib-compatible `rand()`. Searches of the available US and SCES-52004 generated trees found no affected VU random operations or generated `rand`/`srand` calls. Revisit after an upstream implementation or evidence from the unavailable SCES-52893 executable. |
@@ -337,10 +338,11 @@ privacy, release-build cost, and integration with existing runtime error reporti
 | [ran-j/PS2Recomp#423](https://github.com/ran-j/PS2Recomp/issues/423) | Add Killzone deterministic-trace or exact wake evidence only after reproducing the timer/VBlank ordering difference locally. Do not claim that the precise host-wait backend fixes its guest-cycle ordering root cause. |
 
 Standalone-entry resume support, improved floating-point semantics, SIF syscall dispatch, and GIF IMAGE2 behavior are
-already represented by [#271](https://github.com/ran-j/PS2Recomp/pull/271),
+already represented upstream by [#271](https://github.com/ran-j/PS2Recomp/pull/271),
 [#272](https://github.com/ran-j/PS2Recomp/pull/272),
 [#274](https://github.com/ran-j/PS2Recomp/pull/274), and
-[#384](https://github.com/ran-j/PS2Recomp/pull/384). Do not refile the older fork patches for those behaviors.
+[#384](https://github.com/ran-j/PS2Recomp/pull/384). The local stack now carries exact backports of #274 and #384;
+do not refile the older fork patches for those behaviors.
 
 ### Poor upstream candidates without more evidence
 
