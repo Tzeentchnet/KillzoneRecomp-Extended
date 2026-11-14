@@ -94,6 +94,18 @@ namespace
     };
 
     constexpr uint64_t kWheelPulseMs = 60; // a wheel notch holds its button this long so the game sees one press
+    constexpr uint64_t kRumbleLeaseMs = 500;
+
+    struct RumbleState
+    {
+        uint8_t smallMotor = 0;
+        uint8_t largeMotor = 0;
+        uint64_t commandAt = 0;
+        uint64_t deadline = 0;
+        bool pending = false;
+        bool active = false;
+        bool errorReported = false;
+    };
 
     struct State
     {
@@ -122,6 +134,7 @@ namespace
         std::array<bool, SDL_SCANCODE_COUNT> consumed{}; // held keys that must not act as pad buttons until released
         SDL_Gamepad *gamepad = nullptr;
         KzControllerGlyphFamily controllerGlyphFamily = KzControllerGlyphFamily::Original;
+        RumbleState rumble;
         // latest gamepad snapshot, taken on the window thread
         uint16_t padButtons = 0; // active-high
         // [Input] SprintMode=Toggle (compose): latched sprint button, previous raw state, start of standing still
@@ -153,6 +166,108 @@ namespace
     {
         static State s;
         return s;
+    }
+
+    using RumbleGamepadFn = decltype(&SDL_RumbleGamepad);
+    RumbleGamepadFn g_rumbleGamepad = &SDL_RumbleGamepad;
+
+    struct RumbleTestCapture
+    {
+        int calls = 0;
+        Uint16 lowFrequency = 0;
+        Uint16 highFrequency = 0;
+        Uint32 durationMs = 0;
+    };
+
+    RumbleTestCapture g_rumbleTestCapture;
+
+    bool SDLCALL captureRumbleForTest(SDL_Gamepad *, Uint16 lowFrequency, Uint16 highFrequency, Uint32 durationMs)
+    {
+        ++g_rumbleTestCapture.calls;
+        g_rumbleTestCapture.lowFrequency = lowFrequency;
+        g_rumbleTestCapture.highFrequency = highFrequency;
+        g_rumbleTestCapture.durationMs = durationMs;
+        return true;
+    }
+
+    void logRumbleFailureLocked(State &s, const char *action)
+    {
+        if (s.rumble.errorReported)
+            return;
+        std::fprintf(stderr, "[kz-input] SDL gamepad rumble %s failed: %s\n", action, SDL_GetError());
+        s.rumble.errorReported = true;
+    }
+
+    void clearRumbleLocked(State &s)
+    {
+        s.rumble.smallMotor = 0u;
+        s.rumble.largeMotor = 0u;
+        s.rumble.commandAt = 0u;
+        s.rumble.deadline = 0u;
+        s.rumble.pending = false;
+        s.rumble.active = false;
+    }
+
+    void stopRumbleLocked(State &s)
+    {
+        const bool active = s.rumble.active;
+        clearRumbleLocked(s);
+        if (active && s.gamepad && !g_rumbleGamepad(s.gamepad, 0u, 0u, 0u))
+            logRumbleFailureLocked(s, "stop");
+    }
+
+    void queueRumbleLocked(State &s, uint8_t smallMotor, uint8_t largeMotor, uint64_t now)
+    {
+        s.rumble.smallMotor = smallMotor != 0u ? 1u : 0u;
+        s.rumble.largeMotor = largeMotor;
+        s.rumble.commandAt = now;
+        s.rumble.pending = true;
+    }
+
+    void applyRumbleLocked(State &s, uint64_t now)
+    {
+        if (!s.rumble.pending)
+        {
+            if (s.rumble.active && now >= s.rumble.deadline)
+                stopRumbleLocked(s);
+            return;
+        }
+
+        s.rumble.pending = false;
+        const uint64_t age = now >= s.rumble.commandAt ? now - s.rumble.commandAt : 0u;
+        if (!s.captured || !s.gamepad || age >= kRumbleLeaseMs)
+        {
+            stopRumbleLocked(s);
+            return;
+        }
+        if (s.rumble.smallMotor == 0u && s.rumble.largeMotor == 0u)
+        {
+            stopRumbleLocked(s);
+            return;
+        }
+
+        const Uint16 lowFrequency = static_cast<Uint16>(s.rumble.largeMotor * 257u);
+        const Uint16 highFrequency = s.rumble.smallMotor != 0u ? 0xFFFFu : 0u;
+        const Uint32 durationMs = static_cast<Uint32>(kRumbleLeaseMs - age);
+        if (!g_rumbleGamepad(s.gamepad, lowFrequency, highFrequency, durationMs))
+        {
+            logRumbleFailureLocked(s, "start");
+            clearRumbleLocked(s);
+            return;
+        }
+        s.rumble.active = true;
+        s.rumble.deadline = s.rumble.commandAt + kRumbleLeaseMs;
+    }
+
+    void setCapturedLocked(State &s, bool captured)
+    {
+        s.captured = captured;
+        if (!captured)
+        {
+            stopRumbleLocked(s);
+            s.keys.fill(false);
+            s.mouseButtons.fill(false);
+        }
     }
 
     double (*g_scriptClock)() = nullptr;
@@ -632,6 +747,7 @@ void kzInputShutdown()
 {
     State &s = state();
     std::lock_guard<std::mutex> lock(s.mutex);
+    stopRumbleLocked(s);
     if (s.gamepad)
         SDL_CloseGamepad(s.gamepad);
     s.gamepad = nullptr;
@@ -642,12 +758,7 @@ void kzInputSetCaptured(bool captured)
 {
     State &s = state();
     std::lock_guard<std::mutex> lock(s.mutex);
-    s.captured = captured;
-    if (!captured)
-    {
-        s.keys.fill(false);
-        s.mouseButtons.fill(false);
-    }
+    setCapturedLocked(s, captured);
 }
 
 void kzInputSetTextEntryActive()
@@ -840,6 +951,8 @@ void kzInputOnEvent(const SDL_Event &e)
         if (!s.gamepad)
         {
             s.gamepad = SDL_OpenGamepad(e.gdevice.which);
+            clearRumbleLocked(s);
+            s.rumble.errorReported = false;
             s.controllerGlyphFamily = s.gamepad ?
                 controllerGlyphFamily(SDL_GetGamepadType(s.gamepad)) : KzControllerGlyphFamily::Original;
             if (s.gamepad && !s.kbmSeen)
@@ -849,6 +962,7 @@ void kzInputOnEvent(const SDL_Event &e)
     case SDL_EVENT_GAMEPAD_REMOVED:
         if (s.gamepad && SDL_GetGamepadID(s.gamepad) == e.gdevice.which)
         {
+            stopRumbleLocked(s);
             SDL_CloseGamepad(s.gamepad);
             s.gamepad = nullptr;
             s.controllerGlyphFamily = KzControllerGlyphFamily::Original;
@@ -863,6 +977,7 @@ void kzInputPoll()
 {
     State &s = state();
     std::lock_guard<std::mutex> lock(s.mutex);
+    applyRumbleLocked(s, SDL_GetTicks());
     s.padButtons = 0;
     s.lx = s.ly = s.rx = s.ry = s.l2 = s.r2 = 0.0f;
     SDL_Gamepad *g = s.gamepad;
@@ -923,10 +1038,23 @@ bool kzPadProvider(int port, int slot, uint8_t *data, size_t size)
         data[4] = data[5] = data[6] = data[7] = 0x80;
         return true;
     }
+
     State &s = state();
     std::lock_guard<std::mutex> lock(s.mutex);
     compose(s, data, SDL_GetTicks());
     return true;
+}
+
+void kzPadRumbleProvider(int port, int slot, uint8_t smallMotor, uint8_t largeMotor)
+{
+    if (port != 0 || slot != 0)
+        return;
+
+    State &s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    if (!s.captured || !s.gamepad)
+        return;
+    queueRumbleLocked(s, smallMotor, largeMotor, SDL_GetTicks());
 }
 
 KzMouseDelta kzInputTakeMouseDelta()
@@ -994,6 +1122,50 @@ int kzInputSelfTest()
               controllerGlyphFamily(SDL_GAMEPAD_TYPE_PS5) == KzControllerGlyphFamily::Original &&
               controllerGlyphFamily(SDL_GAMEPAD_TYPE_GAMECUBE) == KzControllerGlyphFamily::Original,
           "controller glyph family: safe original fallback");
+
+    SDL_Gamepad *const savedGamepad = s.gamepad;
+    const bool savedCaptured = s.captured;
+    const RumbleState savedRumble = s.rumble;
+    const RumbleGamepadFn savedRumbleGamepad = g_rumbleGamepad;
+    s.gamepad = reinterpret_cast<SDL_Gamepad *>(uintptr_t{1});
+    s.captured = true;
+    s.rumble = {};
+    g_rumbleTestCapture = {};
+    g_rumbleGamepad = &captureRumbleForTest;
+    queueRumbleLocked(s, 1u, 0x80u, 1000u);
+    applyRumbleLocked(s, 1000u);
+    check(g_rumbleTestCapture.calls == 1 &&
+              g_rumbleTestCapture.lowFrequency == 0x8080u &&
+              g_rumbleTestCapture.highFrequency == 0xFFFFu &&
+              g_rumbleTestCapture.durationMs == kRumbleLeaseMs,
+          "rumble: DS2 motor mapping and bounded lease");
+    applyRumbleLocked(s, 1499u);
+    check(g_rumbleTestCapture.calls == 1 && s.rumble.active, "rumble: remains active before lease expiry");
+    applyRumbleLocked(s, 1500u);
+    check(g_rumbleTestCapture.calls == 2 &&
+              g_rumbleTestCapture.lowFrequency == 0u &&
+              g_rumbleTestCapture.highFrequency == 0u &&
+              g_rumbleTestCapture.durationMs == 0u &&
+              !s.rumble.active,
+          "rumble: stale command stops at lease expiry");
+    queueRumbleLocked(s, 1u, 0x40u, 2000u);
+    applyRumbleLocked(s, 2000u);
+    setCapturedLocked(s, false);
+    check(g_rumbleTestCapture.calls == 4 &&
+              g_rumbleTestCapture.lowFrequency == 0u &&
+              g_rumbleTestCapture.highFrequency == 0u &&
+              !s.rumble.active && !s.rumble.pending,
+          "rumble: focus loss stops and clears output");
+    s.captured = true;
+    queueRumbleLocked(s, 1u, 0x20u, 3000u);
+    applyRumbleLocked(s, 3500u);
+    check(g_rumbleTestCapture.calls == 4 && !s.rumble.active && !s.rumble.pending,
+          "rumble: already-stale commands are discarded");
+    g_rumbleGamepad = savedRumbleGamepad;
+    s.gamepad = savedGamepad;
+    s.captured = savedCaptured;
+    s.rumble = savedRumble;
+
     s.bindings.clear();
     for (const auto &[k, v] : kDefaultBindings)
     {

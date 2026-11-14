@@ -755,6 +755,10 @@ resulting tree to equal the pinned submodule tree.
   profiler header so instrumented runtime translation units do not import conflicting Win32 declarations. Both the
   compile-out and instrumented standalone suites pass 455/455; matched gameplay coverage and overhead remain
   unqualified until an authorized BYOD run is available.
+- **0045-Add-host-controller-rumble-forwarding.patch** - retains each pad port's six-byte actuator alignment and
+  forwards decoded small/large motor levels through a separate atomic host callback. Pad close, end, and
+  reinitialization publish explicit stop commands. Focused tests cover custom and unmapped alignment, digital and
+  analog motor values, invalid pointers and ports, and close-time shutoff; the standalone suite passes 456/456.
 - **experimental/ee-di-interrupt-gate.diff** (not applied; `git apply --directory=ext/PS2Recomp`) - makes
   `EeScheduler` honour Status.EIE: while the running context is inside `di`/`ei`, pending interrupt, SIF and stream
   invocations, time-slice preemption and event-driven thread switches wait for `ei` (50 ms safety valve,

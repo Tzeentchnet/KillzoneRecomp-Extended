@@ -311,6 +311,7 @@ int main(int argc, char *argv[])
 
         kzInputInit(kzConfigPath());
         ps2SetPadProvider(&kzPadProvider);
+        ps2SetPadRumbleProvider(&kzPadRumbleProvider);
 
         // The runtime's raylib window/present loop is replaced by our SDL window + kzgs, so the runtime always runs
         // window-less. Automation (PS2X_HEADLESS=1 already set by the caller) also skips our window: kzgs renders
@@ -620,6 +621,8 @@ int main(int argc, char *argv[])
             }
         }
         kzGsDetach();
+        ps2SetPadRumbleProvider(nullptr);
+        ps2SetPadProvider(nullptr);
         kzInputShutdown();
         if (window)
             SDL_DestroyWindow(window);

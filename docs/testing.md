@@ -9,8 +9,8 @@ The product self-test needs no retail content:
 ```
 
 It covers configuration migration and round-tripping, quality/balanced render-scale matrices, launcher preset
-contracts, field-of-view math, renderer contracts, input, launcher behavior, controller-family mapping and
-procedural controller glyphs, and other pure product checks.
+contracts, field-of-view math, renderer contracts, input, launcher behavior, controller-family mapping, bounded
+rumble mapping/expiry/focus-loss behavior, procedural controller glyphs, and other pure product checks.
 Presentation-upscaler checks include defaults, strict INI/environment/CLI validation and precedence, canonical
 saves, and one-run override non-persistence.
 

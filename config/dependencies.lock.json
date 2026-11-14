@@ -10,12 +10,12 @@
     "repository_path": "ext/PS2Recomp",
     "patch_directory": "patches/ps2recomp",
     "base_commit": "75d729ce40d7eed9649fd4bb05628dee520f3d0c",
-    "target_commit": "6b11b9b672bc275b902e15bf4b7ef9e30df84c51",
-    "target_tree": "73dafbe7af8fae7eff979333e0357bae634834d4",
+    "target_commit": "d7af7ca8a74add120b65e006a401ceaa60841a20",
+    "target_tree": "c4083fdce171d8dd586616a901f37a51e274bccc",
     "canonical_patch": {
       "path": "patches/ps2recomp/combined.lock.diff",
-      "changed_paths": 85,
-      "sha256": "f2a037005056988aac25aac192508d6c0ca14e087ab54c7a2b4b863d362def84"
+      "changed_paths": 86,
+      "sha256": "aac814854e5ae75796f5acb766d3f177d8575daeb7e93d57f0c9a693f2d01f70"
     },
     "patches": [
       {
@@ -189,6 +189,10 @@
       {
         "path": "0044-Isolate-EE-profiler-platform-clocks.patch",
         "sha256": "28296e854c89ef8fb3ae5ebd0ed00359bad5ff41daac9ca7a43d1ecac20b9526"
+      },
+      {
+        "path": "0045-Add-host-controller-rumble-forwarding.patch",
+        "sha256": "f0659ba1c4d0f753ea167d34a7fd29d4fc433a3bdc169ca51bf37decb700d710"
       }
     ]
   },
@@ -197,7 +201,7 @@
       "id": "ps2recomp",
       "kind": "git-submodule",
       "source_url": "https://github.com/Tzeentchnet/PS2Recomp.git",
-      "revision": "6b11b9b672bc275b902e15bf4b7ef9e30df84c51",
+      "revision": "d7af7ca8a74add120b65e006a401ceaa60841a20",
       "publication_status": "unpublished",
       "license": "GPL-3.0-only",
       "redistribution": "Copyleft; distribute corresponding source and notices.",

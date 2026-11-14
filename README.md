@@ -34,8 +34,8 @@ Windows x64.
 - Native 4:3 and 16:9 plus automatic, 21:9, and 32:9 ultrawide modes with centered HUD and menu presentation.
 - Independent world and weapon field-of-view controls with zoom-preserving tangent-space scaling.
 - High-refresh gameplay with real-time game-speed correction.
-- Raw mouse aim, rebindable keyboard controls, SDL3 controllers, adjustable dead zone/range, and dynamic button
-  prompts.
+- Raw mouse aim, rebindable keyboard controls, SDL3 controllers with DualShock 2 rumble, adjustable dead zone/range,
+  and dynamic button prompts.
 - Anisotropic filtering, FXAA, D3D11 SMAA, sharp scaling, CAS sharpening, and bounded 2x view distance.
 - Default-off Vulkan FSR 1 spatial presentation, available through
   [experimental configuration](docs/configuration.md#experimental-presentation-upscaler).

@@ -22,6 +22,8 @@ is disabled, run `killzone.exe --launcher` or set `[Launcher] Show=1`.
 Bindings are stored under `[Bindings]` and can be changed in the launcher's Controls tab. Mouse aim supports hold and
 toggle modes. Sprint defaults to hold; toggle sprint releases on a second press or after 300 ms without movement.
 Controller input uses the original PS2 layout with adjustable radial dead zone and PS2-style stick range.
+DualShock 2 motor commands drive SDL3 controller rumble; output stops on focus loss, controller removal, shutdown, or
+after a 500 ms command lease expires. Unsupported or failed rumble requests are reported once per connected device.
 Keyboard/mouse prompt replacement remains automatic by default. Controller-family glyph replacement is separately
 disabled by default; enable **Controller glyphs** or set `[Input] ControllerGlyphs=1` to use Xbox labels for SDL
 standard/Xbox devices and position-correct Nintendo labels for Switch devices. PlayStation, GameCube, unknown, and

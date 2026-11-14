@@ -2,8 +2,9 @@
 
 // Host input -> PS2 DualShock 2 state, plus raw mouse deltas for the engine aim patch.
 //
-// Threading: the window thread feeds events (kzInputOnEvent) and polls gamepads (kzInputPoll); the game thread reads
-// through kzPadProvider (registered with ps2SetPadProvider) and kzInputTakeMouseDelta. State is guarded by a mutex.
+// Threading: the window thread feeds events (kzInputOnEvent), polls gamepads, and applies rumble (kzInputPoll); the game
+// thread reads through kzPadProvider, publishes rumble through kzPadRumbleProvider, and takes mouse deltas. State is
+// guarded by a mutex.
 
 #include <cstddef>
 #include <cstdint>
@@ -44,6 +45,8 @@ void kzInputSetCaptured(bool captured); // mouse captured by the game window (re
 
 // Registered with ps2SetPadProvider. Port 0 slot 0 only; returns false for other ports so they report disconnected.
 bool kzPadProvider(int port, int slot, uint8_t *data, size_t size);
+// Registered with ps2SetPadRumbleProvider. Publishes DS2 small/large motor levels for the window thread.
+void kzPadRumbleProvider(int port, int slot, uint8_t smallMotor, uint8_t largeMotor);
 
 // Mouse motion accumulated since the last call, in counts, sensitivity/invert already applied.
 struct KzMouseDelta
